@@ -7,8 +7,9 @@ from telegram.ext import (
     ContextTypes, CallbackQueryHandler
 )
 
-TOKEN = os.getenv("Song")
+TOKEN = os.getenv("Song")  # Ваш токен в Render
 
+# ===================== YT-DLP =====================
 YDL_OPTS = {
     'format': 'bestaudio/best',
     'noplaylist': True,
@@ -18,29 +19,27 @@ YDL_OPTS = {
 }
 
 # ===================== ПРОГРЕСС =====================
+def build_bar(steps: int) -> str:
+    return f"{'🟩' * steps}{'⬛' * (10 - steps)} {steps*10}%"
 
-def build_bar(steps):
-    return "{}{} {}%".format('🟩' * steps, '⬛' * (10 - steps), steps * 10)
-
-async def progress_task(msg, query, done_event, step_delay=0.6):
+async def progress_task(msg, query: str, done_event: asyncio.Event, step_delay: float = 0.6):
     for step in range(1, 11):
         if done_event.is_set():
-            await msg.edit_text("🔍 Ищу песню: {} | {}".format(query, build_bar(10)))
+            await msg.edit_text(f"🔍 Ищу песню: {query} | {build_bar(10)}")
             return
-        await msg.edit_text("🔍 Ищу песню: {} | {}".format(query, build_bar(step)))
+        await msg.edit_text(f"🔍 Ищу песню: {query} | {build_bar(step)}")
         await asyncio.sleep(step_delay)
     if not done_event.is_set():
-        await msg.edit_text("🔍 Ищу песню: {} | {}".format(query, build_bar(10)))
+        await msg.edit_text(f"🔍 Ищу песню: {query} | {build_bar(10)}")
 
-def download_with_ytdlp(query):
+def download_with_ytdlp(query: str):
     with YoutubeDL(YDL_OPTS) as ydl:
-        info = ydl.extract_info("ytsearch:{}'.format(query), download=True)
+        info = ydl.extract_info(f"ytsearch:{query}", download=True)
         entry = info['entries'][0]
         filename = ydl.prepare_filename(entry)
         return entry, filename
 
 # ===================== МЕНЮ =====================
-
 def main_menu():
     keyboard = [
         [InlineKeyboardButton("🎵 Поиск песни", callback_data="search_help")],
@@ -53,14 +52,13 @@ def back_menu():
     return InlineKeyboardMarkup(keyboard)
 
 # ===================== КОМАНДЫ =====================
-
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = (update.effective_user.first_name or "друг")
+    user = update.effective_user.first_name or "друг"
     await update.message.reply_text(
-        "👋 Привет, {}!\n\n"
+        f"👋 Привет, {user}!\n\n"
         "Добро пожаловать в SongAura 🎶\n"
         "Я помогу найти и скачать музыку прямо здесь.\n\n"
-        "Выбери действие ниже:".format(user),
+        "Выбери действие ниже:",
         reply_markup=main_menu()
     )
 
@@ -70,7 +68,7 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     query = " ".join(context.args)
-    msg = await update.message.reply_text("🔍 Ищу песню: {} | {}".format(query, build_bar(0)))
+    msg = await update.message.reply_text(f"🔍 Ищу песню: {query} | {build_bar(0)}")
 
     done_event = asyncio.Event()
     progress = asyncio.create_task(progress_task(msg, query, done_event))
@@ -83,7 +81,7 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_audio(
             open(file_name, "rb"),
             title=entry.get('title', query),
-            caption="🎶 Создано с помощью @SongAuraBot\n✨ Делись с друзьями!"
+            caption="🎶 Сделано с помощью @SongAuraBot"
         )
         try:
             os.remove(file_name)
@@ -94,10 +92,9 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         done_event.set()
         if not progress.done():
             await progress
-        await msg.edit_text("❌ Ошибка при получении аудио: {}".format(e))
+        await msg.edit_text(f"❌ Ошибка при получении аудио: {e}")
 
 # ===================== ОБРАБОТЧИК КНОПОК =====================
-
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -124,13 +121,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     elif query.data == "back":
+        # Возврат на главное меню
         await query.edit_message_text(
-            "⬅️ Главное меню:",
+            "👋 Главное меню SongAura 🎶\nВыбери действие ниже:",
             reply_markup=main_menu()
         )
 
 # ===================== MAIN =====================
-
 if __name__ == "__main__":
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start_command))
