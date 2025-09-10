@@ -19,22 +19,22 @@ YDL_OPTS = {
 
 # ===================== ПРОГРЕСС =====================
 
-def build_bar(steps: int) -> str:
-    return f"{'🟩' * steps}{'⬛' * (10 - steps)} {steps*10}%"
+def build_bar(steps):
+    return "{}{} {}%".format('🟩' * steps, '⬛' * (10 - steps), steps * 10)
 
-async def progress_task(msg, query: str, done_event: asyncio.Event, step_delay: float = 0.6):
+async def progress_task(msg, query, done_event, step_delay=0.6):
     for step in range(1, 11):
         if done_event.is_set():
-            await msg.edit_text(f"🔍 Ищу песню: {query} | {build_bar(10)}")
+            await msg.edit_text("🔍 Ищу песню: {} | {}".format(query, build_bar(10)))
             return
-        await msg.edit_text(f"🔍 Ищу песню: {query} | {build_bar(step)}")
+        await msg.edit_text("🔍 Ищу песню: {} | {}".format(query, build_bar(step)))
         await asyncio.sleep(step_delay)
     if not done_event.is_set():
-        await msg.edit_text(f"🔍 Ищу песню: {query} | {build_bar(10)}")
+        await msg.edit_text("🔍 Ищу песню: {} | {}".format(query, build_bar(10)))
 
-def download_with_ytdlp(query: str):
+def download_with_ytdlp(query):
     with YoutubeDL(YDL_OPTS) as ydl:
-        info = ydl.extract_info(f"ytsearch:{query}", download=True)
+        info = ydl.extract_info("ytsearch:{}'.format(query), download=True)
         entry = info['entries'][0]
         filename = ydl.prepare_filename(entry)
         return entry, filename
@@ -55,13 +55,12 @@ def back_menu():
 # ===================== КОМАНДЫ =====================
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user.first_name or "друг"
+    user = (update.effective_user.first_name or "друг")
     await update.message.reply_text(
-        f"👋 Привет, {user}!
-\n"
+        "👋 Привет, {}!\n\n"
         "Добро пожаловать в SongAura 🎶\n"
         "Я помогу найти и скачать музыку прямо здесь.\n\n"
-        "Выбери действие ниже:",
+        "Выбери действие ниже:".format(user),
         reply_markup=main_menu()
     )
 
@@ -71,7 +70,7 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     query = " ".join(context.args)
-    msg = await update.message.reply_text(f"🔍 Ищу песню: {query} | {build_bar(0)}")
+    msg = await update.message.reply_text("🔍 Ищу песню: {} | {}".format(query, build_bar(0)))
 
     done_event = asyncio.Event()
     progress = asyncio.create_task(progress_task(msg, query, done_event))
@@ -95,7 +94,7 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         done_event.set()
         if not progress.done():
             await progress
-        await msg.edit_text(f"❌ Ошибка при получении аудио: {e}")
+        await msg.edit_text("❌ Ошибка при получении аудио: {}".format(e))
 
 # ===================== ОБРАБОТЧИК КНОПОК =====================
 
