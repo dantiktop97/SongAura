@@ -1,13 +1,13 @@
 import os
 import asyncio
-import threading
-import http.server
-import socketserver
 from yt_dlp import YoutubeDL
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, ContextTypes, CallbackQueryHandler
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
-TOKEN = "8484418743:AAHtyiloSsihzJU_JlVQI9hsfKmkTWZFKkU"
+# ===================== Токен и URL =====================
+TOKEN = os.getenv("Song")  # Используем секретку из Render
+WEBHOOK_URL = f"https://songaura.onrender.com/{TOKEN}"
+PORT = int(os.environ.get("PORT", 10000))
 
 # ===================== YT-DLP =====================
 YDL_OPTS = {
@@ -15,7 +15,7 @@ YDL_OPTS = {
     'noplaylist': True,
     'outtmpl': 'song.%(ext)s',
     'quiet': True,
-    'cookiefile': 'cookies.txt',  # Убедись, что куки в правильном формате
+    'cookiefile': 'cookies.txt',  # Убедись, что куки в формате Netscape
     'postprocessors': [{
         'key': 'FFmpegExtractAudio',
         'preferredcodec': 'mp3',
@@ -166,17 +166,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ===================== MAIN =====================
 if __name__ == "__main__":
-    # Указываем порт Render
-    PORT = int(os.environ.get("PORT", 10000))
-
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("search", search_command))
     app.add_handler(CallbackQueryHandler(button_handler))
-
-    # ===================== WEBHOOK =====================
-    # URL должен быть HTTPS
-    WEBHOOK_URL = f"https://yourapp.onrender.com/{TOKEN}"
 
     print("Бот SongAura запущен через webhook...")
     app.run_webhook(
