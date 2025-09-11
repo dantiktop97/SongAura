@@ -4,7 +4,7 @@ from yt_dlp import YoutubeDL
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, ContextTypes, CallbackQueryHandler
 
-TOKEN = os.getenv("Song")  # Используй секрет в Render
+TOKEN = os.getenv("Song")  # Секрет Render
 
 # ===================== YT-DLP =====================
 YDL_OPTS = {
@@ -12,12 +12,14 @@ YDL_OPTS = {
     'noplaylist': True,
     'outtmpl': 'song.%(ext)s',
     'quiet': True,
-    'cookiefile': 'cookies.txt',  # Файл cookies в формате Netscape
     'postprocessors': [{
         'key': 'FFmpegExtractAudio',
         'preferredcodec': 'mp3',
         'preferredquality': '192'
     }],
+    # Принудительно использовать только публичные видео
+    'ignoreerrors': True,
+    'geo_bypass': True,
 }
 
 # ===================== ПРОГРЕСС =====================
@@ -45,6 +47,8 @@ async def progress_task(msg, query: str, done_event: asyncio.Event, step_delay: 
 def download_with_ytdlp(query: str):
     with YoutubeDL(YDL_OPTS) as ydl:
         info = ydl.extract_info(f"ytsearch:{query}", download=True)
+        if not info or not info.get('entries'):
+            raise Exception("Видео не найдено или доступ к нему запрещён")
         entry = info['entries'][0]
         filename = ydl.prepare_filename(entry).replace(".webm", ".mp3").replace(".m4a", ".mp3")
         return entry, filename
@@ -76,7 +80,6 @@ def full_greeting(user_name: str) -> str:
         "Автор: @SongAuraBot"
     )
 
-# ===================== БЕЗОПАСНОЕ РЕДАКТИРОВАНИЕ =====================
 async def safe_edit_message(query, text, reply_markup=None, parse_mode=None):
     try:
         await query.edit_message_text(text=text, reply_markup=reply_markup, parse_mode=parse_mode)
@@ -164,14 +167,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ===================== MAIN =====================
 if __name__ == "__main__":
     PORT = int(os.environ.get("PORT", 10000))
-
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("search", search_command))
     app.add_handler(CallbackQueryHandler(button_handler))
 
-    # ===================== WEBHOOK =====================
-    WEBHOOK_URL = "https://songaura.onrender.com/" + TOKEN  # Твой URL Render + токен
+    WEBHOOK_URL = f"https://songaura.onrender.com/{TOKEN}"  # Твой URL Render + токен
 
     print("Бот SongAura запущен через webhook...")
     app.run_webhook(
