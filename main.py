@@ -2,12 +2,9 @@ import os
 import asyncio
 from yt_dlp import YoutubeDL
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
+from telegram.ext import Application, CommandHandler, ContextTypes, CallbackQueryHandler
 
-# ===================== Токен и URL =====================
-TOKEN = os.getenv("Song")  # Используем секретку из Render
-WEBHOOK_URL = f"https://songaura.onrender.com/{TOKEN}"
-PORT = int(os.environ.get("PORT", 10000))
+TOKEN = os.getenv("Song")  # Используй секрет в Render
 
 # ===================== YT-DLP =====================
 YDL_OPTS = {
@@ -15,7 +12,7 @@ YDL_OPTS = {
     'noplaylist': True,
     'outtmpl': 'song.%(ext)s',
     'quiet': True,
-    'cookiefile': 'cookies.txt',  # Убедись, что куки в формате Netscape
+    'cookiefile': 'cookies.txt',  # Файл cookies в формате Netscape
     'postprocessors': [{
         'key': 'FFmpegExtractAudio',
         'preferredcodec': 'mp3',
@@ -166,10 +163,15 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ===================== MAIN =====================
 if __name__ == "__main__":
+    PORT = int(os.environ.get("PORT", 10000))
+
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("search", search_command))
     app.add_handler(CallbackQueryHandler(button_handler))
+
+    # ===================== WEBHOOK =====================
+    WEBHOOK_URL = "https://songaura.onrender.com/" + TOKEN  # Твой URL Render + токен
 
     print("Бот SongAura запущен через webhook...")
     app.run_webhook(
