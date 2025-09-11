@@ -1,14 +1,10 @@
 import os
 import asyncio
-import threading
-import http.server
-import socketserver
 from yt_dlp import YoutubeDL
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler
 
 TOKEN = os.getenv("Song")  # Твой токен бота
-PORT = int(os.getenv("PORT", 10000))  # Для Render
 
 # ===================== YT-DLP =====================
 YDL_OPTS = {
@@ -17,14 +13,16 @@ YDL_OPTS = {
     'outtmpl': 'song.%(ext)s',
     'quiet': True,
     'cookiefile': 'cookies.txt',
-    'postprocessors': [
-        {'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '192'}
-    ],
+    'postprocessors': [{
+        'key': 'FFmpegExtractAudio',
+        'preferredcodec': 'mp3',
+        'preferredquality': '192'
+    }],
 }
 
 # ===================== ПРОГРЕСС =====================
 def build_bar(steps: int) -> str:
-    return f"{'✅'*steps}{'⬜'*(10-steps)} {steps*10}%"
+    return f"{'✅' * steps}{'⬜' * (10 - steps)} {steps*10}%"
 
 async def progress_task(msg, query: str, done_event: asyncio.Event, step_delay: float = 0.5):
     last_text = ""
@@ -72,7 +70,7 @@ def full_greeting(user_name: str) -> str:
         "📌 Основные команды:\n"
         "- /start — открыть главное меню\n"
         "- /search текст — найти песню по названию\n\n"
-        "💡 Совет: точное название песни ускоряет поиск.\n"
+        "💡 Совет: точное название песни или добавление исполнителя ускоряет поиск.\n"
         "🎵 Используй кнопки ниже для удобного управления.\n\n"
         "🎉 Приятного прослушивания!\n"
         "Автор: @SongAuraBot"
@@ -163,19 +161,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=main_menu()
         )
 
-# ===================== DUMMY SERVER ДЛЯ RENDER =====================
-def run_dummy_server():
-    handler = http.server.SimpleHTTPRequestHandler
-    with socketserver.TCPServer(("", PORT), handler) as httpd:
-        httpd.serve_forever()
-
 # ===================== MAIN =====================
 if __name__ == "__main__":
-    threading.Thread(target=run_dummy_server, daemon=True).start()
-
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("search", search_command))
     app.add_handler(CallbackQueryHandler(button_handler))
-    print("Бот SongAura запущен и работает без Updater!")
+
+    print("Бот SongAura запущен...")
     app.run_polling()
