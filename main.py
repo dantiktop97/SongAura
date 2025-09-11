@@ -7,8 +7,7 @@ from yt_dlp import YoutubeDL
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, ContextTypes, CallbackQueryHandler
 
-# Токен берём из переменной окружения Render
-TOKEN = os.getenv("Song")  
+TOKEN = "8484418743:AAHtyiloSsihzJU_JlVQI9hsfKmkTWZFKkU"
 
 # ===================== YT-DLP =====================
 YDL_OPTS = {
@@ -16,10 +15,12 @@ YDL_OPTS = {
     'noplaylist': True,
     'outtmpl': 'song.%(ext)s',
     'quiet': True,
-    'cookiefile': 'cookies.txt',  # убедись, что файл правильного формата Netscape
-    'postprocessors': [
-        {'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '192'}
-    ],
+    'cookiefile': 'cookies.txt',  # Убедись, что куки в правильном формате
+    'postprocessors': [{
+        'key': 'FFmpegExtractAudio',
+        'preferredcodec': 'mp3',
+        'preferredquality': '192'
+    }],
 }
 
 # ===================== ПРОГРЕСС =====================
@@ -97,7 +98,6 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     query_text = " ".join(context.args)
     msg = await update.message.reply_text(f"🔍 Ищу песню: {query_text}\n{build_bar(0)}")
-
     done_event = asyncio.Event()
     progress = asyncio.create_task(progress_task(msg, query_text, done_event))
 
@@ -164,28 +164,24 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=main_menu()
         )
 
-# ===================== DUMMY SERVER ДЛЯ RENDER =====================
-def run_dummy_server():
-    port = int(os.getenv("PORT", 10000))
-    handler = http.server.SimpleHTTPRequestHandler
-    with socketserver.TCPServer(("", port), handler) as httpd:
-        httpd.serve_forever()
-
 # ===================== MAIN =====================
 if __name__ == "__main__":
-    threading.Thread(target=run_dummy_server, daemon=True).start()
-
-    PORT = int(os.getenv("PORT", 10000))
-    WEBHOOK_URL = f"https://songaura.onrender.com/{TOKEN}"  # заменяешь на свой Render URL
+    # Указываем порт Render
+    PORT = int(os.environ.get("PORT", 10000))
 
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("search", search_command))
     app.add_handler(CallbackQueryHandler(button_handler))
 
-    print("Бот SongAura запущен на webhook...")
+    # ===================== WEBHOOK =====================
+    # URL должен быть HTTPS
+    WEBHOOK_URL = f"https://yourapp.onrender.com/{TOKEN}"
+
+    print("Бот SongAura запущен через webhook...")
     app.run_webhook(
         listen="0.0.0.0",
         port=PORT,
+        url_path=TOKEN,
         webhook_url=WEBHOOK_URL
     )
