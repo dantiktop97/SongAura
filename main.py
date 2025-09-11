@@ -1,10 +1,13 @@
 import os
 import asyncio
+import threading
+import http.server
+import socketserver
 from yt_dlp import YoutubeDL
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler
 
-TOKEN = os.getenv("Song")  # переменная окружения с токеном бота
+TOKEN = os.getenv("Song")  # Переменная окружения с токеном
 
 # ===================== YT-DLP =====================
 YDL_OPTS = {
@@ -12,9 +15,9 @@ YDL_OPTS = {
     'noplaylist': True,
     'outtmpl': 'song.%(ext)s',
     'quiet': True,
-    'cookiefile': 'Cookies/cookies.txt',  # <-- путь к твоим cookies
+    'cookiefile': 'cookies.txt',  # <-- используем cookies
     'postprocessors': [
-        {   
+        {   # конвертируем в mp3
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
             'preferredquality': '192'
@@ -163,8 +166,18 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=main_menu()
         )
 
+# ===================== DUMMY SERVER ДЛЯ RENDER =====================
+def run_dummy_server():
+    port = int(os.getenv("PORT", 10000))
+    handler = http.server.SimpleHTTPRequestHandler
+    with socketserver.TCPServer(("", port), handler) as httpd:
+        httpd.serve_forever()
+
 # ===================== MAIN =====================
 if __name__ == "__main__":
+    # Запускаем фейковый веб-сервер, чтобы Render не ругался
+    threading.Thread(target=run_dummy_server, daemon=True).start()
+
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("search", search_command))
