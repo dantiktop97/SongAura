@@ -4,7 +4,7 @@ from yt_dlp import YoutubeDL
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, ContextTypes, CallbackQueryHandler
 
-TOKEN = os.getenv("Song")  # Секретный токен в Render
+TOKEN = os.getenv("Song")  # Используем секрет из Render
 
 # ===================== YT-DLP =====================
 YDL_OPTS = {
@@ -12,13 +12,21 @@ YDL_OPTS = {
     'noplaylist': True,
     'outtmpl': 'song.%(ext)s',
     'quiet': True,
-    'cookiefile': 'cookies.txt',  # Cookies в формате Netscape
     'postprocessors': [{
         'key': 'FFmpegExtractAudio',
         'preferredcodec': 'mp3',
-        'preferredquality': '192'
+        'preferredquality': '192',
     }],
 }
+
+def download_from_rutube(url: str):
+    """
+    Загружает аудио с RuTube по прямой ссылке на видео.
+    """
+    with YoutubeDL(YDL_OPTS) as ydl:
+        info = ydl.extract_info(url, download=True)
+        filename = ydl.prepare_filename(info).replace(".webm", ".mp3").replace(".m4a", ".mp3")
+        return info, filename
 
 # ===================== ПРОГРЕСС =====================
 def build_bar(steps: int) -> str:
@@ -42,20 +50,10 @@ async def progress_task(msg, query: str, done_event: asyncio.Event, step_delay: 
         if final_text != last_text:
             await msg.edit_text(final_text)
 
-# ===================== ЗАГРУЗКА YOUTUBE =====================
-def download_with_ytdlp(query: str):
-    with YoutubeDL(YDL_OPTS) as ydl:
-        info = ydl.extract_info(f"ytsearch:{query}", download=True)
-        if not info or not info.get('entries') or len(info['entries']) == 0:
-            raise Exception("Песня не найдена или доступ к ней запрещён")
-        entry = info['entries'][0]
-        filename = ydl.prepare_filename(entry).replace(".webm", ".mp3").replace(".m4a", ".mp3")
-        return entry, filename
-
 # ===================== МЕНЮ =====================
 def main_menu():
     keyboard = [
-        [InlineKeyboardButton("🎵 Поиск песни", callback_data="search_help")],
+        [InlineKeyboardButton("🎵 Инструкция по поиску", callback_data="search_help")],
         [InlineKeyboardButton("ℹ️ О боте", callback_data="about")]
     ]
     return InlineKeyboardMarkup(keyboard)
@@ -69,12 +67,11 @@ def full_greeting(user_name: str) -> str:
     return (
         f"👋 Привет, {user_name}!\n\n"
         "🎶 Добро пожаловать в SongAura — твой музыкальный помощник в Telegram!\n"
-        "🚀 Я быстро нахожу песни на YouTube и присылаю их прямо сюда.\n\n"
+        "🚀 Я могу загружать аудио с RuTube по ссылке.\n\n"
         "📌 Основные команды:\n"
         "- /start — открыть главное меню\n"
-        "- /search текст — найти песню по названию\n\n"
-        "💡 Совет: точное название песни или добавление исполнителя ускоряет поиск.\n"
-        "🎵 Используй кнопки ниже для удобного управления.\n\n"
+        "- /search <ссылка_на_RuTube> — получить аудио\n\n"
+        "🎵 Используй кнопки ниже для удобного управления.\n"
         "🎉 Приятного прослушивания!\n"
         "Автор: @SongAuraBot"
     )
@@ -93,22 +90,22 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
-        await update.message.reply_text("Используй: /search Название песни 🎵")
+        await update.message.reply_text("Используй: /search <ссылка на RuTube> 🎵")
         return
 
-    query_text = " ".join(context.args)
-    msg = await update.message.reply_text(f"🔍 Ищу песню: {query_text}\n{build_bar(0)}")
+    url = context.args[0]
+    msg = await update.message.reply_text(f"🔍 Загружаю аудио с RuTube...\n{build_bar(0)}")
     done_event = asyncio.Event()
-    progress = asyncio.create_task(progress_task(msg, query_text, done_event))
+    progress = asyncio.create_task(progress_task(msg, url, done_event))
 
     try:
-        entry, file_name = await asyncio.to_thread(download_with_ytdlp, query_text)
+        info, file_name = await asyncio.to_thread(download_from_rutube, url)
         done_event.set()
         await progress
 
         await update.message.reply_audio(
             open(file_name, "rb"),
-            title=entry.get('title', query_text),
+            title=info.get('title', 'Аудио с RuTube'),
             caption="🎶 Сделано с помощью @SongAuraBot"
         )
         try:
@@ -120,7 +117,7 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         done_event.set()
         if not progress.done():
             await progress
-        await msg.edit_text(f"❌ Ошибка: {e}")
+        await msg.edit_text(f"❌ Ошибка при получении аудио: {e}")
 
 # ===================== ОБРАБОТЧИК КНОПОК =====================
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -131,11 +128,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if query.data == "search_help":
         await safe_edit_message(
             query,
-            "🎵 Чтобы найти песню, используй команду:\n\n"
-            "`/search название_песни`\n\n"
-            "Пример: `/search ты похож на кота`\n\n"
-            "💡 Совет: добавление исполнителя ускоряет поиск.\n"
-            "🎶 Попробуй прямо сейчас!",
+            "🎵 Чтобы получить аудио, отправь команду:\n\n"
+            "`/search ссылка_на_RuTube`\n\n"
+            "Пример: `/search https://rutube.ru/video/xxxxxx`\n\n"
+            "💡 Видео должно быть открытое!",
             parse_mode="Markdown",
             reply_markup=back_menu()
         )
@@ -145,12 +141,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             query,
             "ℹ️ *О SongAura*\n\n"
             "🎶 SongAura — это твой музыкальный помощник в Telegram!\n"
-            "🚀 Быстро ищет песни на YouTube и присылает их прямо сюда.\n\n"
-            "📌 Основные команды:\n"
-            "- /start — открыть главное меню\n"
-            "- /search текст — найти песню\n\n"
-            "💡 Совет: точное название песни ускоряет поиск.\n"
-            "🎵 Используй кнопки ниже для удобного управления.\n\n"
+            "🚀 Загружает аудио с RuTube без необходимости авторизации.\n\n"
             "Автор: @SongAuraBot\n"
             "🎉 Приятного прослушивания!",
             parse_mode="Markdown",
@@ -173,7 +164,8 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("search", search_command))
     app.add_handler(CallbackQueryHandler(button_handler))
 
-    WEBHOOK_URL = f"https://songaura.onrender.com/{TOKEN}"  # Render URL + токен
+    # ===================== WEBHOOK =====================
+    WEBHOOK_URL = "https://songaura.onrender.com/" + TOKEN  # Твой URL Render + токен
 
     print("Бот SongAura запущен через webhook...")
     app.run_webhook(
