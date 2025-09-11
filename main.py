@@ -3,14 +3,12 @@ import asyncio
 import threading
 import http.server
 import socketserver
-import time
 import requests
 from yt_dlp import YoutubeDL
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler
+from telegram.ext import Application, CommandHandler, ContextTypes, CallbackQueryHandler
 
-TOKEN = os.getenv("Song")  # Твой токен бота
-KEEP_ALIVE_URL = os.getenv("KEEP_ALIVE_URL", "https://songaura.onrender.com")  # URL сайта Render
+TOKEN = os.getenv("Song")  # Твой токен бота из Render
 
 # ===================== YT-DLP =====================
 YDL_OPTS = {
@@ -84,23 +82,12 @@ def full_greeting(user_name: str) -> str:
         "Автор: @SongAuraBot"
     )
 
-# ===================== KEEP-ALIVE =====================
-def keep_alive():
-    def ping():
-        while True:
-            try:
-                r = requests.get(KEEP_ALIVE_URL)
-                print(f"[KEEP-ALIVE] Ping {KEEP_ALIVE_URL} → {r.status_code}")
-            except Exception as e:
-                print(f"[KEEP-ALIVE] Ошибка: {e}")
-            time.sleep(300)  # каждые 5 минут
-    threading.Thread(target=ping, daemon=True).start()
-
 # ===================== БЕЗОПАСНОЕ РЕДАКТИРОВАНИЕ =====================
 async def safe_edit_message(query, text, reply_markup=None, parse_mode=None):
-    if query.message.text == text and query.message.reply_markup == reply_markup:
-        return
-    await query.edit_message_text(text=text, reply_markup=reply_markup, parse_mode=parse_mode)
+    try:
+        await query.edit_message_text(text=text, reply_markup=reply_markup, parse_mode=parse_mode)
+    except Exception:
+        pass
 
 # ===================== КОМАНДЫ =====================
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -190,13 +177,12 @@ def run_dummy_server():
 
 # ===================== MAIN =====================
 if __name__ == "__main__":
-    keep_alive()  # запуск пингера
     threading.Thread(target=run_dummy_server, daemon=True).start()
 
-    app = ApplicationBuilder().token(TOKEN).build()
+    app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("search", search_command))
     app.add_handler(CallbackQueryHandler(button_handler))
 
     print("Бот SongAura запущен...")
-    app.run_polling()
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
