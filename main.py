@@ -1,5 +1,8 @@
 import os
 import asyncio
+import threading
+import http.server
+import socketserver
 from yt_dlp import YoutubeDL
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler
@@ -13,11 +16,13 @@ YDL_OPTS = {
     'outtmpl': 'song.%(ext)s',
     'quiet': True,
     'cookiefile': 'cookies.txt',
-    'postprocessors': [{
-        'key': 'FFmpegExtractAudio',
-        'preferredcodec': 'mp3',
-        'preferredquality': '192'
-    }],
+    'postprocessors': [
+        {
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': 'mp3',
+            'preferredquality': '192'
+        }
+    ],
 }
 
 # ===================== ПРОГРЕСС =====================
@@ -161,8 +166,17 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=main_menu()
         )
 
+# ===================== DUMMY SERVER ДЛЯ RENDER =====================
+def run_dummy_server():
+    port = int(os.getenv("PORT", 10000))
+    handler = http.server.SimpleHTTPRequestHandler
+    with socketserver.TCPServer(("", port), handler) as httpd:
+        httpd.serve_forever()
+
 # ===================== MAIN =====================
 if __name__ == "__main__":
+    threading.Thread(target=run_dummy_server, daemon=True).start()
+
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("search", search_command))
