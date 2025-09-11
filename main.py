@@ -177,6 +177,7 @@ def run_dummy_server():
 if __name__ == "__main__":
     threading.Thread(target=run_dummy_server, daemon=True).start()
 
+    # Создание приложения без Updater
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("search", search_command))
