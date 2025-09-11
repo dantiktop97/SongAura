@@ -7,7 +7,7 @@ from yt_dlp import YoutubeDL
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler
 
-TOKEN = os.getenv("Song")  # Переменная окружения с токеном
+TOKEN = os.getenv("Song")  # переменная окружения с токеном
 
 # ===================== YT-DLP =====================
 YDL_OPTS = {
@@ -15,14 +15,8 @@ YDL_OPTS = {
     'noplaylist': True,
     'outtmpl': 'song.%(ext)s',
     'quiet': True,
-    'cookiefile': 'cookies.txt',  # <-- используем cookies
-    'postprocessors': [
-        {
-            'key': 'FFmpegExtractAudio',
-            'preferredcodec': 'mp3',
-            'preferredquality': '192'
-        }
-    ],
+    'cookiefile': 'cookies.txt',
+    'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '192'}],
 }
 
 # ===================== ПРОГРЕСС =====================
@@ -113,10 +107,7 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             title=entry.get('title', query_text),
             caption="🎶 Сделано с помощью @SongAuraBot"
         )
-        try:
-            os.remove(file_name)
-        except Exception:
-            pass
+        os.remove(file_name)
 
     except Exception as e:
         done_event.set()
@@ -146,7 +137,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await safe_edit_message(
             query,
             "ℹ️ *О SongAura*\n\n"
-            "🎶 SongAura — это твой музыкальный помощник в Telegram!\n"
+            "🎶 SongAura — твой музыкальный помощник в Telegram!\n"
             "🚀 Быстро ищет песни на YouTube и присылает их прямо сюда.\n\n"
             "📌 Основные команды:\n"
             "- /start — открыть главное меню\n"
@@ -175,12 +166,12 @@ def run_dummy_server():
 
 # ===================== MAIN =====================
 if __name__ == "__main__":
-    # Фейковый веб-сервер для Render
     threading.Thread(target=run_dummy_server, daemon=True).start()
 
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("search", search_command))
     app.add_handler(CallbackQueryHandler(button_handler))
+    
     print("Бот SongAura запущен...")
     app.run_polling()
