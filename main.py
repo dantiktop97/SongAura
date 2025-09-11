@@ -5,9 +5,9 @@ import http.server
 import socketserver
 from yt_dlp import YoutubeDL
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler
 
-TOKEN = os.getenv("Song")  # Токен бота
+TOKEN = os.getenv("Song")  # Твой токен бота
 
 # ===================== YT-DLP =====================
 YDL_OPTS = {
@@ -15,9 +15,9 @@ YDL_OPTS = {
     'noplaylist': True,
     'outtmpl': 'song.%(ext)s',
     'quiet': True,
-    'cookiefile': 'cookies.txt',  # cookies для авторизации
+    'cookiefile': 'cookies.txt',  # <-- используем cookies
     'postprocessors': [
-        {
+        {   # конвертируем в mp3
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
             'preferredquality': '192'
@@ -175,10 +175,9 @@ def run_dummy_server():
 
 # ===================== MAIN =====================
 if __name__ == "__main__":
-    # Запускаем dummy server для Render
+    # Фейковый сервер, чтобы Render не ругался
     threading.Thread(target=run_dummy_server, daemon=True).start()
 
-    # Старт бота через ApplicationBuilder (новый способ)
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("search", search_command))
