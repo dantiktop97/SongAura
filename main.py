@@ -7,7 +7,7 @@ from yt_dlp import YoutubeDL
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler
 
-TOKEN = os.getenv("Song")  # Твой токен бота
+TOKEN = os.getenv("Song")  # Переменная окружения с токеном
 
 # ===================== YT-DLP =====================
 YDL_OPTS = {
@@ -17,7 +17,7 @@ YDL_OPTS = {
     'quiet': True,
     'cookiefile': 'cookies.txt',  # <-- используем cookies
     'postprocessors': [
-        {   # конвертируем в mp3
+        {
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
             'preferredquality': '192'
@@ -175,7 +175,7 @@ def run_dummy_server():
 
 # ===================== MAIN =====================
 if __name__ == "__main__":
-    # Фейковый сервер, чтобы Render не ругался
+    # Фейковый веб-сервер для Render
     threading.Thread(target=run_dummy_server, daemon=True).start()
 
     app = ApplicationBuilder().token(TOKEN).build()
