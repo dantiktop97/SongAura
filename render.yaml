@@ -1,5 +1,5 @@
 services:
-  - type: worker
+  - type: web
     name: songaura-bot
     env: python
     plan: free
@@ -7,3 +7,6 @@ services:
       apt-get update && apt-get install -y ffmpeg
       pip install -r requirements.txt
     startCommand: python main.py
+    envVars:
+      - key: PORT
+        value: 10000
