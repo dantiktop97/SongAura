@@ -3,13 +3,11 @@ import asyncio
 import threading
 import http.server
 import socketserver
-import requests
 from yt_dlp import YoutubeDL
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, ContextTypes, CallbackQueryHandler
 
-TOKEN = os.getenv("Song")  # Твой токен бота из Render
-APP_URL = os.getenv("APP_URL", "https://songaura.onrender.com")  # URL сервиса на Render
+TOKEN = os.getenv("Song")  # Твой токен бота
 
 # ===================== YT-DLP =====================
 YDL_OPTS = {
@@ -17,7 +15,7 @@ YDL_OPTS = {
     'noplaylist': True,
     'outtmpl': 'song.%(ext)s',
     'quiet': True,
-    'cookiefile': 'cookies.txt',  # должен быть в Netscape формате
+    'cookiefile': 'cookies.txt',  # Убедись, что файл в формате Netscape
     'postprocessors': [
         {
             'key': 'FFmpegExtractAudio',
@@ -111,13 +109,11 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         done_event.set()
         await progress
 
-        # Безопасное открытие файла
-        with open(file_name, "rb") as audio_file:
-            await update.message.reply_audio(
-                audio_file,
-                title=entry.get('title', query_text),
-                caption="🎶 Сделано с помощью @SongAuraBot"
-            )
+        await update.message.reply_audio(
+            open(file_name, "rb"),
+            title=entry.get('title', query_text),
+            caption="🎶 Сделано с помощью @SongAuraBot"
+        )
         try:
             os.remove(file_name)
         except Exception:
@@ -178,27 +174,16 @@ def run_dummy_server():
     with socketserver.TCPServer(("", port), handler) as httpd:
         httpd.serve_forever()
 
-# ===================== ПИНГ САМ СЕБЯ =====================
-async def ping_self():
-    while True:
-        try:
-            requests.get(APP_URL)
-        except Exception:
-            pass
-        await asyncio.sleep(600)  # каждые 10 минут
-
 # ===================== MAIN =====================
 if __name__ == "__main__":
     threading.Thread(target=run_dummy_server, daemon=True).start()
 
-    app = Application.builder().token(TOKEN).concurrent_updates(True).build()
+    # Создаем приложение Telegram без Updater, используя новый стиль Application
+    app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("search", search_command))
     app.add_handler(CallbackQueryHandler(button_handler))
 
-    # Запускаем задачу пинга
-    loop = asyncio.get_event_loop()
-    loop.create_task(ping_self())
-
     print("Бот SongAura запущен...")
+    # Используем polling, разрешая все типы обновлений
     app.run_polling(allowed_updates=Update.ALL_TYPES)
