@@ -7,7 +7,7 @@ from yt_dlp import YoutubeDL
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler
 
-TOKEN = os.getenv("Song")  # Токен бота из переменной окружения
+TOKEN = os.getenv("Song")  # Твой токен бота
 
 # ===================== YT-DLP =====================
 YDL_OPTS = {
@@ -17,7 +17,7 @@ YDL_OPTS = {
     'quiet': True,
     'cookiefile': 'cookies.txt',  # <-- используем cookies
     'postprocessors': [
-        {   # конвертируем в mp3
+        {
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
             'preferredquality': '192'
@@ -175,16 +175,11 @@ def run_dummy_server():
 
 # ===================== MAIN =====================
 if __name__ == "__main__":
-    # Запускаем dummy server для Render
     threading.Thread(target=run_dummy_server, daemon=True).start()
 
-    # Создаём бота через ApplicationBuilder
     app = ApplicationBuilder().token(TOKEN).build()
-
-    # Регистрируем команды и обработчики
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("search", search_command))
     app.add_handler(CallbackQueryHandler(button_handler))
-
     print("Бот SongAura запущен...")
     app.run_polling()
