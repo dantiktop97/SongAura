@@ -1,144 +1,130 @@
 import os
 import random
-import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
+# ===================== КОНФИГ =====================
 TOKEN = os.getenv("Song")  # Токен бота
-ADMIN_ID = 6525179440       # Твой Telegram ID
+ADMIN_ID = 6525179440       # Твой Telegram ID (Danya)
 
-# ===================== ДАННЫЕ =====================
-quotes = [f"💬 Цитата #{i+1} — Это пример бесконечной цитаты {i+1}" for i in range(100000)]
-jokes = [
-    "😂 Почему программисты любят темную тему? Потому что светлая — для слабаков!",
-    "😂 Жизнь — как код: иногда работает, иногда баги.",
-    "😂 Учёные доказали: смех продлевает жизнь, особенно над багами."
-]
+# ===================== ЦИТАТЫ =====================
+# Генерируем "бесконечные" цитаты для примера
+def generate_quote(n: int) -> str:
+    return f"💬 Цитата #{n} — Это пример бесконечной цитаты {n}"
 
+# ===================== ХРАНЕНИЕ =====================
 used_quotes = set()
-used_jokes = set()
-user_history = []
+quote_counter = 1
+unique_users = set()
+last_users = []
 
 # ===================== КЛАВИАТУРЫ =====================
-def main_menu(user_id=None):
+def main_menu():
     keyboard = [
         [InlineKeyboardButton("💬 Случайная цитата", callback_data="random_quote")],
         [InlineKeyboardButton("😂 Юмор", callback_data="humor")],
         [InlineKeyboardButton("ℹ️ О боте", callback_data="about")]
     ]
-    # Добавляем админ меню если это админ
-    if user_id == ADMIN_ID:
-        keyboard.append([InlineKeyboardButton("🛠 Меню админа", callback_data="admin")])
     return InlineKeyboardMarkup(keyboard)
 
-def back_menu(user_id=None):
-    keyboard = [[InlineKeyboardButton("⬅️ Вернуться назад", callback_data="back")]]
-    # Админ кнопка
-    if user_id == ADMIN_ID:
-        keyboard.append([InlineKeyboardButton("🛠 Меню админа", callback_data="admin")])
-    return InlineKeyboardMarkup(keyboard)
+def back_menu():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("⬅️ Вернуться назад", callback_data="back")]
+    ])
 
-def quote_menu(user_id=None):
-    keyboard = [
+def quote_menu():
+    return InlineKeyboardMarkup([
         [InlineKeyboardButton("📌 Ещё одна цитата", callback_data="random_quote")],
         [InlineKeyboardButton("⬅️ Вернуться назад", callback_data="back")]
-    ]
-    if user_id == ADMIN_ID:
-        keyboard.append([InlineKeyboardButton("🛠 Меню админа", callback_data="admin")])
-    return InlineKeyboardMarkup(keyboard)
+    ])
 
-def joke_menu(user_id=None):
-    keyboard = [
-        [InlineKeyboardButton("😂 Ещё один юмор", callback_data="humor")],
+def admin_menu():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📊 Статистика пользователей", callback_data="stats")],
         [InlineKeyboardButton("⬅️ Вернуться назад", callback_data="back")]
-    ]
-    if user_id == ADMIN_ID:
-        keyboard.append([InlineKeyboardButton("🛠 Меню админа", callback_data="admin")])
-    return InlineKeyboardMarkup(keyboard)
+    ])
 
 # ===================== ПРИВЕТСТВИЕ =====================
 def full_greeting(user_name: str) -> str:
     return (
         f"👋 Привет, {user_name}!\n\n"
-        "Добро пожаловать в QuotesAuraBot — твой бот с цитатами и юмором!\n\n"
-        "💡 Используй кнопки ниже или команды:\n"
-        "- /start — открыть главное меню\n"
-        "- Выбери случайную цитату или юмор\n\n"
+        "Добро пожаловать в QuotesAura — твой бот с цитатами и юмором!\n\n"
+        "💡 Используй кнопки ниже:\n"
+        "- Случайная цитата\n"
+        "- Юмор\n"
+        "- О боте\n\n"
         "🎉 Наслаждайся!"
     )
 
 # ===================== ФУНКЦИИ =====================
-def get_random_quote() -> str:
-    global used_quotes
-    available = list(set(quotes) - used_quotes)
-    if not available:
-        used_quotes.clear()
-        available = list(quotes)
-    quote = random.choice(available)
-    used_quotes.add(quote)
+def get_random_quote():
+    global quote_counter
+    quote = generate_quote(quote_counter)
+    quote_counter += 1
     return quote
 
-def get_random_joke() -> str:
-    global used_jokes
-    available = list(set(jokes) - used_jokes)
-    if not available:
-        used_jokes.clear()
-        available = list(jokes)
-    joke = random.choice(available)
-    used_jokes.add(joke)
-    return joke
-
-def update_user_history(user):
-    global user_history
-    if user.username and user.username not in user_history:
-        user_history.append(user.username)
-        # Ограничим до последних 100 пользователей для хранения
-        if len(user_history) > 100:
-            user_history = user_history[-100:]
+def add_user(user):
+    global unique_users, last_users
+    if user.id not in unique_users:
+        unique_users.add(user.id)
+        last_users.append(f"@{user.username}" if user.username else user.first_name)
+        if len(last_users) > 10:  # храним только последних 10 пользователей
+            last_users.pop(0)
 
 # ===================== КОМАНДЫ =====================
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    update_user_history(user)
-    markup = main_menu(user.id)
-    await update.message.reply_text(full_greeting(user.first_name or "друг"), reply_markup=markup)
+    add_user(user)
+    await update.message.reply_text(
+        full_greeting(user.first_name or "друг"),
+        reply_markup=main_menu()
+    )
 
 # ===================== ОБРАБОТЧИК КНОПОК =====================
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    user = query.from_user
-    update_user_history(user)
     await query.answer()
-    
+    user = query.from_user
+    add_user(user)
+    user_name = user.first_name or "друг"
+
     if query.data == "random_quote":
         quote = get_random_quote()
-        await query.edit_message_text(
-            text=quote,
-            reply_markup=quote_menu(user.id)
-        )
+        await query.edit_message_text(text=quote, reply_markup=quote_menu())
+
     elif query.data == "humor":
-        joke = get_random_joke()
-        await query.edit_message_text(
-            text=joke,
-            reply_markup=joke_menu(user.id)
-        )
+        joke = "😂 Почему программисты любят темную тему? Потому что светлая — для слабаков!"
+        await query.edit_message_text(text=joke, reply_markup=back_menu())
+
     elif query.data == "about":
         text = (
             "ℹ️ *О QuotesAuraBot*\n\n"
             "Этот бот присылает случайные цитаты и юмор.\n"
-            "💡 Цитаты и юмор не повторяются, пока все не будут показаны.\n"
+            "💡 Цитаты бесконечны и не повторяются сразу.\n"
             "🎉 Приятного пользования!"
         )
-        await query.edit_message_text(text=text, parse_mode="Markdown", reply_markup=back_menu(user.id))
-    elif query.data == "admin" and user.id == ADMIN_ID:
-        stats = "\n".join(user_history[-10:]) if user_history else "Пока нет пользователей"
-        await query.edit_message_text(
-            text=f"🛠 *Меню админа*\n\n📊 Последние уникальные пользователи:\n{stats}",
-            parse_mode="Markdown",
-            reply_markup=back_menu(user.id)
-        )
+        await query.edit_message_text(text=text, parse_mode="Markdown", reply_markup=back_menu())
+
     elif query.data == "back":
-        await query.edit_message_text(full_greeting(user.first_name or "друг"), reply_markup=main_menu(user.id))
+        # Добавляем кнопку админа, если это твой ID
+        if user.id == ADMIN_ID:
+            keyboard = main_menu().inline_keyboard + [[InlineKeyboardButton("🛠 Меню админа", callback_data="admin")]]
+            await query.edit_message_text(full_greeting(user_name), reply_markup=InlineKeyboardMarkup(keyboard))
+        else:
+            await query.edit_message_text(full_greeting(user_name), reply_markup=main_menu())
+
+    elif query.data == "admin":
+        if user.id == ADMIN_ID:
+            await query.edit_message_text("🛠 Меню администратора", reply_markup=admin_menu())
+        else:
+            await query.edit_message_text("❌ У вас нет доступа к админ-меню.", reply_markup=back_menu())
+
+    elif query.data == "stats":
+        if user.id == ADMIN_ID:
+            users_text = "\n".join(last_users[-10:]) if last_users else "Нет пользователей"
+            await query.edit_message_text(f"📊 Последние уникальные пользователи:\n{users_text}", reply_markup=admin_menu())
+        else:
+            await query.edit_message_text("❌ У вас нет доступа к статистике.", reply_markup=back_menu())
 
 # ===================== MAIN =====================
 if __name__ == "__main__":
