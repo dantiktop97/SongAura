@@ -1,118 +1,68 @@
 import os
-import json
-import random
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, ContextTypes, CallbackQueryHandler
+from telethon import TelegramClient, events, Button
+from keep_alive import keep_alive
 
-TOKEN = os.getenv("Song")  # Твой токен
-ADMIN_ID = 6525179440       # Только для тебя
+api_id = int(os.getenv("API_ID"))
+api_hash = os.getenv("API_HASH")
+session_path = "sessions/me.session"
 
-# ===================== Загрузка цитат =====================
-with open("quotes.json", encoding="utf-8") as f:
-    quotes = json.load(f)
+if not os.path.exists("sessions"):
+    os.mkdir("sessions")
 
-used_quotes = set()
+client = TelegramClient(session_path, api_id, api_hash)
 
-# ===================== История пользователей =====================
-USERS_FILE = "users.json"
-if os.path.exists(USERS_FILE):
-    with open(USERS_FILE, "r", encoding="utf-8") as f:
-        users = json.load(f)
-else:
-    users = []
+selected_chat = None
 
-# ===================== Клавиатуры =====================
-def main_menu():
-    keyboard = [
-        [InlineKeyboardButton("💬 Случайная цитата", callback_data="random_quote")],
-        [InlineKeyboardButton("😂 Юмор", callback_data="humor")],
-        [InlineKeyboardButton("ℹ️ О боте", callback_data="about")]
+# Приветствие с инлайн кнопками
+@client.on(events.NewMessage(pattern="/start"))
+async def start(event):
+    name = event.sender.first_name or "друг"
+    buttons = [
+        [Button.inline("💬 Выбрать чат", b"set_chat")],
+        [Button.inline("✉️ Отправить сообщение", b"send_msg")],
+        [Button.inline("ℹ️ Помощь", b"help")]
     ]
-    if ADMIN_ID:
-        keyboard.append([InlineKeyboardButton("🛠 Меню админа", callback_data="admin")])
-    return InlineKeyboardMarkup(keyboard)
+    await event.reply(f"👋 Привет, {name}!\nВыбери действие:", buttons=buttons)
 
-def back_menu():
-    return InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Вернуться назад", callback_data="back")]])
+# Обработка нажатий кнопок
+@client.on(events.CallbackQuery)
+async def callback(event):
+    global selected_chat
+    data = event.data.decode("utf-8")
 
-def quote_menu():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📌 Ещё одна цитата", callback_data="random_quote")],
-        [InlineKeyboardButton("⬅️ Вернуться назад", callback_data="back")]
-    ])
+    if data == "set_chat":
+        await event.edit("✏️ Введи команду:\n/set <chat_id или @username>")
+    elif data == "send_msg":
+        if not selected_chat:
+            await event.edit("⚠️ Сначала выбери чат через /set")
+        else:
+            await event.edit("✏️ Введи команду:\n/send <текст>")
+    elif data == "help":
+        await event.edit("📌 Команды:\n/set <chat_id или @username>\n/send <текст>\n/help")
 
-# ===================== Приветствие =====================
-def full_greeting(user_name: str) -> str:
-    return (
-        f"👋 Привет, {user_name}!\n\n"
-        "Добро пожаловать в QuotesAuraBot!\n"
-        "💡 Используй кнопки ниже для навигации.\n"
-    )
+# Основной функционал
+@client.on(events.NewMessage)
+async def handler(event):
+    global selected_chat
+    text = event.raw_text.strip()
 
-# ===================== Выдача цитат =====================
-def get_random_quote():
-    global used_quotes
-    available = list(set(quotes) - used_quotes)
-    if not available:
-        used_quotes.clear()
-        available = quotes.copy()
-    quote = random.choice(available)
-    used_quotes.add(quote)
-    return quote
+    if text.startswith("/set "):
+        selected_chat = text.split(" ", 1)[1].strip()
+        await event.reply(f"✅ Чат {selected_chat} выбран!")
+    elif text.startswith("/send "):
+        if not selected_chat:
+            await event.reply("⚠️ Сначала выбери чат через /set")
+            return
+        message = text.split(" ", 1)[1].strip()
+        try:
+            await client.send_message(selected_chat, message)
+            await event.reply(f"✅ Сообщение отправлено в {selected_chat}")
+        except Exception as e:
+            await event.reply(f"⚠️ Ошибка: {e}")
+    elif text == "/help":
+        await event.reply("📌 Команды:\n/set <chat_id или @username>\n/send <текст>\n/help")
 
-# ===================== Команды =====================
-async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_name = update.effective_user.first_name or "друг"
-    user_id = update.effective_user.id
-    username = update.effective_user.username or str(user_id)
-
-    # Сохраняем пользователя
-    if username not in users:
-        users.append(username)
-        with open(USERS_FILE, "w", encoding="utf-8") as f:
-            json.dump(users, f, ensure_ascii=False, indent=2)
-
-    await update.message.reply_text(full_greeting(user_name), reply_markup=main_menu())
-
-# ===================== Обработка кнопок =====================
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    user_name = query.from_user.first_name or "друг"
-    user_id = query.from_user.id
-
-    if query.data == "random_quote":
-        quote = get_random_quote()
-        await query.edit_message_text(f"💬 {quote}", reply_markup=quote_menu())
-
-    elif query.data == "humor":
-        joke = "😂 Почему программисты любят темную тему? Потому что светлая — для слабаков!"
-        await query.edit_message_text(joke, reply_markup=back_menu())
-
-    elif query.data == "about":
-        text = "ℹ️ Этот бот присылает случайные цитаты и юмор.\n🎉 Наслаждайся!"
-        await query.edit_message_text(text, reply_markup=back_menu())
-
-    elif query.data == "admin" and user_id == ADMIN_ID:
-        last_users = "\n".join(users[-10:])
-        text = f"📊 Последние 10 уникальных пользователей:\n{last_users}"
-        await query.edit_message_text(text, reply_markup=back_menu())
-
-    elif query.data == "back":
-        await query.edit_message_text(full_greeting(user_name), reply_markup=main_menu())
-
-# ===================== MAIN =====================
 if __name__ == "__main__":
-    PORT = int(os.environ.get("PORT", 10000))
-    app = Application.builder().token(TOKEN).build()
-    app.add_handler(CommandHandler("start", start_command))
-    app.add_handler(CallbackQueryHandler(button_handler))
-
-    WEBHOOK_URL = f"https://songaura.onrender.com/{TOKEN}"
-    print("QuotesAuraBot запущен через webhook...")
-    app.run_webhook(
-        listen="0.0.0.0",
-        port=PORT,
-        url_path=TOKEN,
-        webhook_url=WEBHOOK_URL
-    )
+    keep_alive()
+    client.start()
+    client.run_until_disconnected()
