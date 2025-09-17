@@ -1,19 +1,15 @@
-import threading
-import time
-import requests
-import os
+from flask import Flask
+from threading import Thread
 
-URL = os.getenv("KEEP_ALIVE_URL", "https://songaura.onrender.com")
+app = Flask("")
 
-def ping():
-    while True:
-        try:
-            r = requests.get(URL)
-            print(f"[KEEP-ALIVE] Ping {URL} → {r.status_code}")
-        except Exception as e:
-            print(f"[KEEP-ALIVE] Ошибка: {e}")
-        time.sleep(300)  # каждые 5 минут
+@app.route("/")
+def home():
+    return "Bot is running"
+
+def run():
+    app.run(host="0.0.0.0", port=8080)
 
 def keep_alive():
-    t = threading.Thread(target=ping, daemon=True)
+    t = Thread(target=run)
     t.start()
