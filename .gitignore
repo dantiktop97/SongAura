@@ -2,7 +2,7 @@
 # Python Byte-compiled / optimized / DLL files
 # ----------------------------
 __pycache__/
-*.py[codz]
+*.py[cod]
 *$py.class
 
 # ----------------------------
@@ -126,13 +126,14 @@ venv.bak/
 .vscode/
 .spyderproject
 .spyproject
-.ropeproject
+.ropeproject/
 .idea/
 
 # ----------------------------
 # Telethon / Userbot session
 # ----------------------------
-# sessions/
+# теперь Git будет отслеживать сессии!
+sessions/
 targets.json
 
 # ----------------------------
