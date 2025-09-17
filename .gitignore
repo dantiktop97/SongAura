@@ -132,7 +132,7 @@ venv.bak/
 # ----------------------------
 # Telethon / Userbot session
 # ----------------------------
-sessions/
+# sessions/
 targets.json
 
 # ----------------------------
