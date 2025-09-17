@@ -1,4 +1,5 @@
-python-telegram-bot[webhooks]==20.3
-yt-dlp
-beautifulsoup4
-requests
+telethon
+flask   # если используешь keep_alive.py для Render
+requests   # если будешь делать HTTP-запросы
+beautifulsoup4   # если планируешь парсить сайты
+yt-dlp   # если будешь скачивать видео/аудио
