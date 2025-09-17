@@ -1,80 +1,69 @@
+import asyncio
+import json
+from telethon import TelegramClient, events
 import os
-from telethon import TelegramClient, events, functions, types
-from telethon.tl.custom import Button
 
-# ==== Переменные окружения ====
+# Подключение через сессию (userbot)
 api_id = int(os.getenv("API_ID"))
 api_hash = os.getenv("API_HASH")
-session_path = "sessions/me.session"  # путь к твоей сессии
+session_file = "sessions/me.session"  # твоя сессия в GitHub
 
-client = TelegramClient(session_path, api_id, api_hash)
+client = TelegramClient(session_file, api_id, api_hash)
 
-# ==== Словарь для хранения выбранных чатов ====
-selected_chats = {}
+# Файл для хранения списка групп
+GROUPS_FILE = "groups.json"
 
-# ==== Команда /start ====
-@client.on(events.NewMessage(pattern='/start'))
-async def start_handler(event):
-    user_name = event.sender.first_name or "друг"
-    buttons = [
-        [Button.inline("📋 Показать мои чаты", b"show_chats")],
-        [Button.inline("✉️ Отправить сообщение", b"send_message")]
+# Загружаем список групп
+if os.path.exists(GROUPS_FILE):
+    with open(GROUPS_FILE, "r", encoding="utf-8") as f:
+        GROUPS = json.load(f)
+else:
+    GROUPS = [
+        -1001300573578,
+        -1001966255283,
+        -1002423716563,
+        -1002633910583,
+        -1002489693744,
+        -1002942057666
     ]
-    await event.respond(f"👋 Привет, {user_name}!\nВыбери действие:", buttons=buttons)
+    with open(GROUPS_FILE, "w", encoding="utf-8") as f:
+        json.dump(GROUPS, f, ensure_ascii=False, indent=2)
 
-# ==== Обработчик кнопок ====
-@client.on(events.CallbackQuery)
-async def callback_handler(event):
-    global selected_chats
+# Текст для авто-рассылки
+MESSAGE = "⭐🎮💸 Привет! Нашёл бот, где можно зарабатывать звёзды за друзей и выводить на баланс или деньги! Много игр и заданий!\n👉 https://t.me/STARS_SNOW_bot?start=6525179440"
 
-    if event.data == b"show_chats":
-        # Получаем список чатов
-        dialogs = await client.get_dialogs()
-        buttons = []
-        for d in dialogs:
-            if d.is_group or d.is_channel:
-                # отмечаем выбранные чаты
-                mark = "✅" if selected_chats.get(d.id) else "❌"
-                buttons.append([Button.inline(f"{mark} {d.name}", f"toggle_{d.id}")])
-        buttons.append([Button.inline("⬅️ Назад", b"back")])
-        await event.edit("Выбери чаты для рассылки:", buttons=buttons)
+async def auto_broadcast():
+    while True:
+        for group_id in GROUPS:
+            try:
+                await client.send_message(group_id, MESSAGE)
+                print(f"✅ Сообщение отправлено в группу {group_id}")
+            except Exception as e:
+                print(f"❌ Ошибка при отправке в группу {group_id}: {e}")
+        await asyncio.sleep(300)  # пауза 5 минут
 
-    elif event.data.startswith(b"toggle_"):
-        chat_id = int(event.data.decode().split("_")[1])
-        selected_chats[chat_id] = not selected_chats.get(chat_id, False)
-        await callback_handler(event)  # обновляем список кнопок
+# Команда для добавления новой группы
+@client.on(events.NewMessage(pattern=r"/addgroup (\-?\d+)"))
+async def add_group(event):
+    sender = await event.get_sender()
+    if sender.id != client.get_me().id:
+        return  # Только владелец бота может добавлять группы
 
-    elif event.data == b"send_message":
-        await event.respond("Отправь мне сообщение, я разошлю его в выбранные чаты.")
-
-    elif event.data == b"back":
-        buttons = [
-            [Button.inline("📋 Показать мои чаты", b"show_chats")],
-            [Button.inline("✉️ Отправить сообщение", b"send_message")]
-        ]
-        await event.edit("Главное меню:", buttons=buttons)
-
-# ==== Обработка текста для рассылки ====
-@client.on(events.NewMessage)
-async def message_handler(event):
-    if event.text and selected_chats:
-        text = event.text
-        count = 0
-        for chat_id, send in selected_chats.items():
-            if send:
-                try:
-                    await client.send_message(chat_id, text)
-                    count += 1
-                except:
-                    pass
-        if count > 0:
-            await event.respond(f"✅ Сообщение отправлено в {count} чат(ов).")
-        else:
-            await event.respond("⚠️ Не выбрано ни одного чата для рассылки.")
+    new_group = int(event.pattern_match.group(1))
+    if new_group not in GROUPS:
+        GROUPS.append(new_group)
+        with open(GROUPS_FILE, "w", encoding="utf-8") as f:
+            json.dump(GROUPS, f, ensure_ascii=False, indent=2)
+        await event.reply(f"✅ Группа {new_group} добавлена в список рассылки.")
     else:
-        pass  # обычные сообщения без рассылки игнорируем
+        await event.reply("⚠️ Эта группа уже есть в списке.")
 
-# ==== Запуск бота ====
-print("Бот запущен!")
-client.start()
-client.run_until_disconnected()
+async def main():
+    await client.start()
+    print("Бот запущен! Авто-рассылка каждые 5 минут.")
+    asyncio.create_task(auto_broadcast())
+    # Клиент остаётся на прослушивании команд
+    await client.run_until_disconnected()
+
+if __name__ == "__main__":
+    client.loop.run_until_complete(main())
