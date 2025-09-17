@@ -1,7 +1,2 @@
-python-telegram-bot[webhooks]==20.3
-yt-dlp
-beautifulsoup4
-requests
-telethon
-flask
-asyncio
+  telethon
+  requests
