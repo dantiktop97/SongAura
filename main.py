@@ -15,13 +15,11 @@ from aiogram import Router
 # === Конфигурация через переменные окружения ===
 TOKEN = os.getenv("PLAY", "").strip()       # токен бота
 CHANNEL = os.getenv("CHANNEL", "").strip()  # id канала (например -1003079638308)
-ADMIN_ID = os.getenv("ADMIN_ID", "").strip()
 
-if not TOKEN or not CHANNEL or not ADMIN_ID:
-    raise RuntimeError("Нужно задать PLAY, CHANNEL и ADMIN_ID в переменных окружения")
+if not TOKEN or not CHANNEL:
+    raise RuntimeError("Нужно задать PLAY и CHANNEL в переменных окружения")
 
 CHANNEL_ID = int(CHANNEL)
-ADMIN_ID = int(ADMIN_ID)
 
 # === Логи и CSV ===
 LOG_FILE = "logins.txt"
@@ -122,14 +120,6 @@ async def handle_code(message: Message, state: FSMContext, bot: Bot):
     user_last_submit[uid] = now
     await send_and_delete(message, "✅ Данные отправлены.")
     await state.clear()
-
-# === /stats (только админ) ===
-@router.message(F.text == "/stats")
-async def cmd_stats(message: Message):
-    if message.from_user.id != ADMIN_ID:
-        return
-    count = len(user_last_submit)
-    await send_and_delete(message, f"📈 Сегодня отправлено логинов: {count}")
 
 # === Запуск ===
 async def main():
