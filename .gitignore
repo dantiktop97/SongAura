@@ -1,3 +1,6 @@
 __pycache__/
-logins.txt
+*.pyc
 .env
+sessions/*.session.json
+.vscode/
+.env.local
