@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
-# main.py — BotPromoter (aiogram 3.22.0 compatible)
+# main.py — BotPromoter final (aiogram 3.22.0 compatible)
 # - Inline navigation only, max 2 buttons per row
-# - Exception logging middleware (BaseMiddleware import fixed)
-# - Safe send/edit helpers to avoid parse_mode issues
+# - Robust exception middleware that sends full traceback to ADMIN_ID
+# - Safe send/edit helpers
 # - Polling by default; USE_WEBHOOK=1 enables webhook mode
-# - SQLite storage auto-init
+# - When polling starts, any existing webhook is removed automatically
+# - SQLite storage auto-init, scheduler, simple admin panel
 #
 # ENV:
 # PLAY (required) - bot token
-# ADMIN_ID (optional) - admin telegram id
+# ADMIN_ID (optional) - admin telegram id (numeric)
 # CHANNEL (optional) - channel username or id for publishing
 # DB_PATH (optional) - sqlite file path (default botpromoter.db)
 # PORT (optional) - web server port (default 8000)
@@ -20,9 +21,11 @@ import os
 import asyncio
 import logging
 import sqlite3
+import traceback
 from datetime import datetime
 from typing import Optional
 
+import aiohttp
 from aiogram import Bot, Dispatcher
 from aiogram.types import Message, CallbackQuery, Update
 from aiogram.filters import Command
@@ -33,12 +36,12 @@ from aiogram.dispatcher.middlewares.base import BaseMiddleware
 
 # ====== Config & Logging ======
 BOT_TOKEN = os.getenv("PLAY")
-ADMIN_ID = int(os.getenv("ADMIN_ID", "0")) if os.getenv("ADMIN_ID") else None
-CHANNEL = os.getenv("CHANNEL", "") or None
+ADMIN_ID = int(os.getenv("ADMIN_ID")) if os.getenv("ADMIN_ID") else None
+CHANNEL = os.getenv("CHANNEL") or None
 DB_PATH = os.getenv("DB_PATH", "botpromoter.db")
 PORT = int(os.getenv("PORT", "8000"))
 USE_WEBHOOK = os.getenv("USE_WEBHOOK", "0") == "1"
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # e.g. https://your-service.onrender.com
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 WEBHOOK_PATH = os.getenv("WEBHOOK_PATH", "/webhook")
 
 if not BOT_TOKEN:
@@ -207,21 +210,27 @@ def admin_kb():
     return mk_row({"text":"🔔 Ожидающие заявки","callback_data":"admin:pending"},
                   {"text":"⚙️ Настройки","callback_data":"admin:settings"})
 
-# ====== Exception logging middleware ======
+# ====== Exception logging middleware (detailed) ======
 class ExceptionLoggerMiddleware(BaseMiddleware):
     async def __call__(self, handler, event, data):
         try:
             return await handler(event, data)
-        except Exception:
-            logger.exception("Unhandled exception in handler")
+        except Exception as exc:
+            tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+            logger.error("Unhandled exception in handler:\n%s", tb)
             if ADMIN_ID:
                 try:
-                    await bot.send_message(ADMIN_ID, "⚠️ В боте произошла ошибка. Проверь логи.")
+                    short = f"⚠️ Ошибка: {type(exc).__name__}: {str(exc)[:300]}"
+                    await bot.send_message(ADMIN_ID, short)
+                    max_len = 3800
+                    for i in range(0, len(tb), max_len):
+                        chunk = tb[i:i+max_len]
+                        await bot.send_message(ADMIN_ID, f"<pre>{chunk}</pre>", parse_mode="HTML")
                 except Exception:
-                    logger.exception("Failed to notify admin")
+                    logger.exception("Failed to notify admin about exception")
             raise
 
-# register middleware for update processing
+# register middleware
 dp.update.middleware(ExceptionLoggerMiddleware())
 
 # ====== Wizard state ======
@@ -249,7 +258,6 @@ async def handle_menu(callback: CallbackQuery):
     cmd = callback.data.split(":",1)[1]
     if cmd == "profile":
         await safe_edit(callback.message, "👤 Профиль\n\nЗдесь твоя информация.", reply_markup=profile_kb())
-        await safe_send(callback.message.chat.id, None)  # no-op to satisfy some clients
     elif cmd == "ads":
         await safe_edit(callback.message, "📢 Реклама\n\nУправление объявлениями.", reply_markup=ads_kb())
     elif cmd == "stats":
@@ -298,7 +306,6 @@ async def handle_profile(callback: CallbackQuery):
     if cmd == "edit":
         await safe_edit(callback.message, "✏️ Редактирование профиля — пока недоступно.", reply_markup=mk_back_kb())
     elif cmd == "my_ads":
-        # reuse ads:mine flow
         await handle_ads(callback)
     else:
         await safe_edit(callback.message, "Неизвестная опция профиля.", reply_markup=mk_back_kb())
@@ -553,22 +560,32 @@ async def start_web():
 
 # ====== Startup ======
 async def on_startup():
+    # create admin user record if admin exists
     if ADMIN_ID:
         create_user_if_not_exists(ADMIN_ID, "admin")
     asyncio.create_task(start_web())
     asyncio.create_task(scheduled_runner())
-    if USE_WEBHOOK:
-        if WEBHOOK_URL:
-            try:
-                url = f"{WEBHOOK_URL.rstrip('/')}{WEBHOOK_PATH}"
-                import aiohttp as _aiohttp
-                async with _aiohttp.ClientSession() as s:
-                    async with s.post(f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook", data={"url": url}) as resp:
-                        logger.info("setWebhook result: %s", await resp.text())
-            except Exception:
-                logger.exception("Webhook registration failed")
-        else:
-            logger.warning("USE_WEBHOOK=1 but WEBHOOK_URL not set; webhook not registered")
+
+    # If running polling mode, ensure webhook is deleted to avoid conflicts
+    if not USE_WEBHOOK:
+        try:
+            async with aiohttp.ClientSession() as s:
+                async with s.get(f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook") as resp:
+                    txt = await resp.text()
+                    logger.info("deleteWebhook result: %s", txt)
+        except Exception:
+            logger.exception("Failed to delete webhook at startup")
+
+    # If running webhook mode, register webhook if WEBHOOK_URL provided
+    if USE_WEBHOOK and WEBHOOK_URL:
+        try:
+            url = f"{WEBHOOK_URL.rstrip('/')}{WEBHOOK_PATH}"
+            async with aiohttp.ClientSession() as s:
+                async with s.post(f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook", data={"url": url}) as resp:
+                    txt = await resp.text()
+                    logger.info("setWebhook result: %s", txt)
+        except Exception:
+            logger.exception("Webhook registration failed")
 
 # ====== Entrypoint ======
 if __name__ == "__main__":
