@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-# main.py — BotPromoter (clean, structured, safe)
-# - aiogram (Bot API) + aiohttp (web for webhook / health)
-# - sqlite3 storage
-# - inline navigation only, max 2 buttons per row
-# - safe message sending, exception logging + admin alerts
-# - USE_WEBHOOK=1 enables webhook mode; otherwise polling
+# main.py — BotPromoter (aiogram 3.22.0 compatible)
+# - Inline navigation only, max 2 buttons per row
+# - Exception logging middleware (BaseMiddleware import fixed)
+# - Safe send/edit helpers to avoid parse_mode issues
+# - Polling by default; USE_WEBHOOK=1 enables webhook mode
+# - SQLite storage auto-init
 #
 # ENV:
 # PLAY (required) - bot token
@@ -13,6 +13,8 @@
 # DB_PATH (optional) - sqlite file path (default botpromoter.db)
 # PORT (optional) - web server port (default 8000)
 # USE_WEBHOOK (optional) - "1" to use webhook mode; otherwise polling
+# WEBHOOK_URL (optional) - public url (used only if USE_WEBHOOK=1)
+# WEBHOOK_PATH (optional) - path to receive updates (default /webhook)
 
 import os
 import asyncio
@@ -25,7 +27,9 @@ from aiogram import Bot, Dispatcher
 from aiogram.types import Message, CallbackQuery, Update
 from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from aiogram.dispatcher.middlewares import BaseMiddleware
+
+# fixed import for BaseMiddleware in aiogram 3.22.0
+from aiogram.dispatcher.middlewares.base import BaseMiddleware
 
 # ====== Config & Logging ======
 BOT_TOKEN = os.getenv("PLAY")
@@ -34,21 +38,21 @@ CHANNEL = os.getenv("CHANNEL", "") or None
 DB_PATH = os.getenv("DB_PATH", "botpromoter.db")
 PORT = int(os.getenv("PORT", "8000"))
 USE_WEBHOOK = os.getenv("USE_WEBHOOK", "0") == "1"
-WEBHOOK_PATH = os.getenv("WEBHOOK_PATH", "/webhook")  # used when webhook enabled
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # e.g. https://your-service.onrender.com
+WEBHOOK_PATH = os.getenv("WEBHOOK_PATH", "/webhook")
 
 if not BOT_TOKEN:
     raise RuntimeError("Set PLAY env var with bot token")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(name)s | %(message)s")
 logger = logging.getLogger("botpromoter")
-# more verbose for aiogram when debugging
 logging.getLogger("aiogram").setLevel(logging.INFO)
 
 # ====== Bot and Dispatcher ======
 bot = Bot(BOT_TOKEN)
 dp = Dispatcher()
 
-# ====== Database (sqlite) ======
+# ====== DB init ======
 def now_iso():
     return datetime.utcnow().isoformat()
 
@@ -147,10 +151,9 @@ def list_scheduled_ready():
     cur.execute("SELECT id FROM ads WHERE status='approved' AND scheduled_at IS NOT NULL AND scheduled_at<=?", (now_iso(),))
     return [r[0] for r in cur.fetchall()]
 
-# ====== Safe send helpers ======
+# ====== Safe send/edit helpers ======
 async def safe_send(chat_id: int, text: str, **kwargs):
     try:
-        # avoid parse_mode issues by not forcing HTML/Markdown globally
         return await bot.send_message(chat_id, text, **kwargs)
     except Exception:
         logger.exception("Failed to send message to %s", chat_id)
@@ -167,10 +170,10 @@ async def safe_edit(message_obj, text:str, **kwargs):
             pass
         return None
 
-# ====== UI builders (2 buttons per row) ======
-def kb_row(*buttons):
+# ====== UI builders (max 2 per row) ======
+def mk_row(*btns):
     kb = InlineKeyboardBuilder()
-    for b in buttons:
+    for b in btns:
         kb.button(**b)
     return kb.as_markup(row_width=2)
 
@@ -186,35 +189,23 @@ def mk_main_kb():
     return kb.as_markup(row_width=2)
 
 def mk_back_kb():
-    return kb_row({"text":"Назад🔙","callback_data":"back:main"})
+    return mk_row({"text":"Назад🔙","callback_data":"back:main"})
 
 def profile_kb():
-    kb = InlineKeyboardBuilder()
-    kb.button(text="✏️ Редактировать профиль", callback_data="profile:edit")
-    kb.button(text="📜 Мои объявления", callback_data="profile:my_ads")
-    kb.button(text="Назад🔙", callback_data="back:main")
-    return kb.as_markup(row_width=2)
+    return mk_row({"text":"✏️ Редактировать профиль","callback_data":"profile:edit"},
+                  {"text":"📜 Мои объявления","callback_data":"profile:my_ads"})
 
 def ads_kb():
-    kb = InlineKeyboardBuilder()
-    kb.button(text="➕ Подать рекламу", callback_data="ads:new")
-    kb.button(text="📌 Мои объявления", callback_data="ads:mine")
-    kb.button(text="Назад🔙", callback_data="back:main")
-    return kb.as_markup(row_width=2)
+    return mk_row({"text":"➕ Подать рекламу","callback_data":"ads:new"},
+                  {"text":"📌 Мои объявления","callback_data":"ads:mine"})
 
 def stats_kb():
-    kb = InlineKeyboardBuilder()
-    kb.button(text="🔗 Моя реф‑ссылка", callback_data="stats:ref")
-    kb.button(text="📈 Общая статистика", callback_data="stats:global")
-    kb.button(text="Назад🔙", callback_data="back:main")
-    return kb.as_markup(row_width=2)
+    return mk_row({"text":"🔗 Моя реф‑ссылка","callback_data":"stats:ref"},
+                  {"text":"📈 Общая статистика","callback_data":"stats:global"})
 
 def admin_kb():
-    kb = InlineKeyboardBuilder()
-    kb.button(text="🔔 Ожидающие заявки", callback_data="admin:pending")
-    kb.button(text="⚙️ Настройки", callback_data="admin:settings")
-    kb.button(text="Назад🔙", callback_data="back:main")
-    return kb.as_markup(row_width=2)
+    return mk_row({"text":"🔔 Ожидающие заявки","callback_data":"admin:pending"},
+                  {"text":"⚙️ Настройки","callback_data":"admin:settings"})
 
 # ====== Exception logging middleware ======
 class ExceptionLoggerMiddleware(BaseMiddleware):
@@ -223,7 +214,6 @@ class ExceptionLoggerMiddleware(BaseMiddleware):
             return await handler(event, data)
         except Exception:
             logger.exception("Unhandled exception in handler")
-            # notify admin
             if ADMIN_ID:
                 try:
                     await bot.send_message(ADMIN_ID, "⚠️ В боте произошла ошибка. Проверь логи.")
@@ -231,9 +221,10 @@ class ExceptionLoggerMiddleware(BaseMiddleware):
                     logger.exception("Failed to notify admin")
             raise
 
+# register middleware for update processing
 dp.update.middleware(ExceptionLoggerMiddleware())
 
-# ====== Wizard state (in-memory simple) ======
+# ====== Wizard state ======
 wizard_states = {}  # {tg_id: {"step":..., "fields": {...}}}
 
 # ====== Handlers ======
@@ -257,23 +248,18 @@ async def handle_menu(callback: CallbackQuery):
     await callback.answer()
     cmd = callback.data.split(":",1)[1]
     if cmd == "profile":
-        text = "👤 Профиль\n\nЗдесь твоя информация."
-        await safe_edit(callback.message, text, reply_markup=profile_kb())
+        await safe_edit(callback.message, "👤 Профиль\n\nЗдесь твоя информация.", reply_markup=profile_kb())
+        await safe_send(callback.message.chat.id, None)  # no-op to satisfy some clients
     elif cmd == "ads":
-        text = "📢 Реклама\n\nУправление объявлениями."
-        await safe_edit(callback.message, text, reply_markup=ads_kb())
+        await safe_edit(callback.message, "📢 Реклама\n\nУправление объявлениями.", reply_markup=ads_kb())
     elif cmd == "stats":
-        text = "📊 Статистика\n\nПосмотри рефы и общую аналитику."
-        await safe_edit(callback.message, text, reply_markup=stats_kb())
+        await safe_edit(callback.message, "📊 Статистика\n\nПосмотри рефы и общую аналитику.", reply_markup=stats_kb())
     elif cmd == "about":
-        text = (
-            "ℹ️ О боте\n\nBotPromoter помогает подать рекламу бота, пройти модерацию и опубликовать в канал.\n\n"
-            "Все переходы — через кнопки. Назад — возвращает в главное меню."
-        )
-        await safe_edit(callback.message, text, reply_markup=mk_back_kb())
+        txt = ("ℹ️ О боте\n\nBotPromoter помогает подать рекламу бота, пройти модерацию и опубликовать в канал.\n\n"
+               "Все переходы — через кнопки. Назад — возвращает в главное меню.")
+        await safe_edit(callback.message, txt, reply_markup=mk_back_kb())
     elif cmd == "help":
-        text = "❓ Помощь\n\nИспользуй кнопки — всё управляется через интерфейс."
-        await safe_edit(callback.message, text, reply_markup=mk_back_kb())
+        await safe_edit(callback.message, "❓ Помощь\n\nИспользуй кнопки — всё управляется через интерфейс.", reply_markup=mk_back_kb())
     elif cmd == "admin":
         if ADMIN_ID and callback.from_user.id == ADMIN_ID:
             await safe_edit(callback.message, "🔐 Панель администратора", reply_markup=admin_kb())
@@ -312,7 +298,8 @@ async def handle_profile(callback: CallbackQuery):
     if cmd == "edit":
         await safe_edit(callback.message, "✏️ Редактирование профиля — пока недоступно.", reply_markup=mk_back_kb())
     elif cmd == "my_ads":
-        await handle_ads(callback)  # reuse
+        # reuse ads:mine flow
+        await handle_ads(callback)
     else:
         await safe_edit(callback.message, "Неизвестная опция профиля.", reply_markup=mk_back_kb())
 
@@ -385,7 +372,7 @@ async def handle_admin_actions(callback: CallbackQuery):
                 try:
                     await safe_send(r[0], f"✅ Ваша заявка #{aid} одобрена модератором.")
                 except Exception:
-                    pass
+                    logger.exception("Notify owner failed")
             await safe_edit(callback.message, f"✅ Заявка #{aid} одобрена.", reply_markup=mk_back_kb())
         elif action == "reject":
             set_ad_status(aid, "rejected")
@@ -396,7 +383,7 @@ async def handle_admin_actions(callback: CallbackQuery):
                 try:
                     await safe_send(r[0], f"❌ Ваша заявка #{aid} отклонена.")
                 except Exception:
-                    pass
+                    logger.exception("Notify owner failed")
             await safe_edit(callback.message, f"❌ Заявка #{aid} отклонена.", reply_markup=mk_back_kb())
         elif action == "postnow":
             await safe_edit(callback.message, "🚀 Публикация запускается...")
@@ -420,7 +407,7 @@ async def handle_back(callback: CallbackQuery):
     else:
         await safe_edit(callback.message, "🔙 Возврат", reply_markup=mk_main_kb())
 
-# ====== Wizard message flow (text inputs) ======
+# ====== Wizard message flow ======
 @dp.message()
 async def wizard_messages(message: Message):
     uid = message.from_user.id
@@ -441,7 +428,6 @@ async def wizard_messages(message: Message):
             kb.button(text="Назад🔙", callback_data="back:main")
             await safe_send(message.chat.id, "Выберите пакет размещения:", reply_markup=kb.as_markup(row_width=2))
             return
-    # fallback
     await safe_send(message.chat.id, "Используйте меню для действий. Назад🔙", reply_markup=mk_main_kb())
 
 @dp.callback_query(lambda c: c.data and c.data.startswith("pkg:"))
@@ -516,7 +502,7 @@ async def scheduled_runner():
             logger.exception("scheduled_runner error")
         await asyncio.sleep(30)
 
-# ====== Web server for health + webhook redirect (if needed) ======
+# ====== Web server for health + webhook handling ======
 async def start_web():
     try:
         from aiohttp import web
@@ -544,7 +530,6 @@ async def start_web():
         except Exception:
             return web.Response(text="Redirect unavailable", status=500)
 
-    # webhook endpoint (receive updates) if USE_WEBHOOK
     async def handle_update(request):
         try:
             data = await request.json()
@@ -572,33 +557,25 @@ async def on_startup():
         create_user_if_not_exists(ADMIN_ID, "admin")
     asyncio.create_task(start_web())
     asyncio.create_task(scheduled_runner())
-    # webhook registration when USE_WEBHOOK
     if USE_WEBHOOK:
-        try:
-            bot_info = await bot.get_me()
-            bot_username = bot_info.username
-            # setWebhook via API (Render public url must be provided via WEBHOOK_URL env)
-            WEBHOOK_URL = os.getenv("WEBHOOK_URL")
-            if WEBHOOK_URL:
+        if WEBHOOK_URL:
+            try:
                 url = f"{WEBHOOK_URL.rstrip('/')}{WEBHOOK_PATH}"
                 import aiohttp as _aiohttp
                 async with _aiohttp.ClientSession() as s:
                     async with s.post(f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook", data={"url": url}) as resp:
                         logger.info("setWebhook result: %s", await resp.text())
-            else:
-                logger.warning("USE_WEBHOOK=1 but WEBHOOK_URL not set; webhook not registered")
-        except Exception:
-            logger.exception("Webhook registration failed")
+            except Exception:
+                logger.exception("Webhook registration failed")
+        else:
+            logger.warning("USE_WEBHOOK=1 but WEBHOOK_URL not set; webhook not registered")
 
 # ====== Entrypoint ======
 if __name__ == "__main__":
     loop = asyncio.get_event_loop()
     loop.create_task(on_startup())
-    # Choose mode: webhook -> do not run polling; polling -> run polling
     if USE_WEBHOOK:
         logger.info("Starting bot in webhook mode")
-        # web server is started in on_startup which processes incoming POST updates
-        # keep process alive
         try:
             loop.run_forever()
         except KeyboardInterrupt:
