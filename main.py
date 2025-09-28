@@ -1,15 +1,27 @@
 #!/usr/bin/env python3
-# main.py — Dev Tools Bot (aiogram polling)
-# - весь интерфейс через inline-кнопки
-# - много функций: статус, логи, deploy, добавить/удалить сервис, история действий, симуляция, help
-# - короткая цепочка "Назад🔙" возвращает в главное меню
-# - эмодзи и дружелюбные тексты
+# main.py — BotPromoter (ad submission + moderation + scheduled posting + referral tracking)
+# - aiogram polling + aiohttp web for Render (web service)
+# - SQLite storage created automatically
+# - All UI via inline buttons, universal "Назад🔙" navigation back to /start greeting
+# - If CHANNEL env is empty, bot sends post preview to ADMIN_ID instead of posting to channel
+# - Friendly texts and emojis, greeting with username, "О боте" page, everywhere "Назад🔙" returns to /start
+#
+# ENV:
+# PLAY (required) — Telegram bot token
+# ADMIN_ID (recommended) — telegram numeric id of admin (for approvals & previews)
+# CHANNEL (optional) — target channel for auto posting (e.g. "@mychannel" or "-100123...")
+# DB_PATH (optional) — path to sqlite file (default botpromoter.db)
+# PORT (optional) — port for web health server (default 8000)
+#
+# Notes:
+# - Test the bot with a throwaway bot first.
+# - If CHANNEL is set, bot must be added to that channel and have posting rights.
+
 import os
 import asyncio
 import logging
-import random
 import sqlite3
-import json
+import random
 from datetime import datetime
 from typing import Optional
 
@@ -21,15 +33,16 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 # ====== Config ======
 BOT_TOKEN = os.getenv("PLAY")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
-DB_PATH = os.getenv("DB_PATH", "devtools_full.db")
-HEALTH_PORT = int(os.getenv("PORT", "8000"))
+CHANNEL = os.getenv("CHANNEL", "")  # if empty, publish previews to ADMIN_ID
+DB_PATH = os.getenv("DB_PATH", "botpromoter.db")
+PORT = int(os.getenv("PORT", "8000"))
 
 if not BOT_TOKEN:
     raise RuntimeError("Set PLAY env var with bot token")
 
 # ====== Logging ======
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("botpromoter")
 
 # ====== Bot / Dispatcher ======
 bot = Bot(BOT_TOKEN)
@@ -43,26 +56,37 @@ def init_db(path=DB_PATH):
     conn = sqlite3.connect(path, check_same_thread=False)
     cur = conn.cursor()
     cur.executescript("""
-    CREATE TABLE IF NOT EXISTS services (
+    CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY,
-        name TEXT UNIQUE,
+        tg_id INTEGER UNIQUE,
+        username TEXT,
+        created_at TEXT,
+        ref_code TEXT
+    );
+    CREATE TABLE IF NOT EXISTS ads (
+        id INTEGER PRIMARY KEY,
+        user_id INTEGER,
+        title TEXT,
+        text TEXT,
+        media_json TEXT,
+        package TEXT,
+        target_channel TEXT,
+        scheduled_at TEXT,
         status TEXT,
-        last_checked TEXT
-    );
-    CREATE TABLE IF NOT EXISTS logs (
-        id INTEGER PRIMARY KEY,
-        service_name TEXT,
-        level TEXT,
-        message TEXT,
         created_at TEXT
     );
-    CREATE TABLE IF NOT EXISTS actions (
+    CREATE TABLE IF NOT EXISTS clicks (
         id INTEGER PRIMARY KEY,
-        service_name TEXT,
-        action TEXT,
-        user_tg INTEGER,
-        result TEXT,
-        created_at TEXT
+        ad_id INTEGER,
+        clicked_at TEXT,
+        from_user INTEGER
+    );
+    CREATE TABLE IF NOT EXISTS referrals (
+        id INTEGER PRIMARY KEY,
+        ref_code TEXT UNIQUE,
+        owner_user INTEGER,
+        clicks INTEGER DEFAULT 0,
+        signups INTEGER DEFAULT 0
     );
     """)
     conn.commit()
@@ -71,368 +95,452 @@ def init_db(path=DB_PATH):
 db = init_db()
 
 # ====== Helpers ======
-def is_admin(user_id: int) -> bool:
-    return ADMIN_ID and int(user_id) == int(ADMIN_ID)
-
-def ensure_service(name: str):
+def create_user_if_not_exists(tg_id:int, username:Optional[str]=None):
     cur = db.cursor()
-    cur.execute("SELECT name FROM services WHERE name=?", (name,))
+    cur.execute("SELECT id FROM users WHERE tg_id=?", (tg_id,))
     if not cur.fetchone():
-        cur.execute("INSERT INTO services (name,status,last_checked) VALUES (?,?,?)", (name, "unknown", now_iso()))
+        cur.execute("INSERT INTO users (tg_id,username,created_at) VALUES (?,?,?)", (tg_id, username or "", now_iso()))
         db.commit()
 
-def list_services():
+def get_user_by_tg(tg_id:int):
     cur = db.cursor()
-    cur.execute("SELECT name,status FROM services ORDER BY name")
-    return cur.fetchall()
+    cur.execute("SELECT id,tg_id,username,ref_code FROM users WHERE tg_id=?", (tg_id,))
+    return cur.fetchone()
 
-def write_log(service: str, level: str, message: str):
+def set_user_ref(tg_id:int, ref_code:str):
     cur = db.cursor()
-    cur.execute("INSERT INTO logs (service_name,level,message,created_at) VALUES (?,?,?,?)",
-                (service, level, message, now_iso()))
+    cur.execute("UPDATE users SET ref_code=? WHERE tg_id=?", (ref_code, tg_id))
+    cur.execute("INSERT OR IGNORE INTO referrals (ref_code, owner_user) VALUES (?, (SELECT id FROM users WHERE tg_id=?))", (ref_code, tg_id))
     db.commit()
 
-def read_logs(service: str, limit: int = 50):
+def save_ad(user_id:int, title:str, text:str, media_json:str, package:str, target_channel:Optional[str], scheduled_at:Optional[str]):
     cur = db.cursor()
-    cur.execute("SELECT created_at, level, message FROM logs WHERE service_name=? ORDER BY id DESC LIMIT ?", (service, limit))
+    cur.execute("""INSERT INTO ads
+        (user_id,title,text,media_json,package,target_channel,scheduled_at,status,created_at)
+        VALUES (?,?,?,?,?,?,?,?,?)""",
+        (user_id,title,text,media_json,package,target_channel,scheduled_at,"pending", now_iso()))
+    db.commit()
+    return cur.lastrowid
+
+def list_pending_ads():
+    cur = db.cursor()
+    cur.execute("SELECT id, user_id, title, package, created_at FROM ads WHERE status='pending' ORDER BY created_at")
     return cur.fetchall()
 
-def set_service_status(name: str, status: str):
+def get_ad(ad_id:int):
     cur = db.cursor()
-    cur.execute("UPDATE services SET status=?, last_checked=? WHERE name=?", (status, now_iso(), name))
+    cur.execute("SELECT id,user_id,title,text,media_json,package,target_channel,scheduled_at,status FROM ads WHERE id=?", (ad_id,))
+    return cur.fetchone()
+
+def set_ad_status(ad_id:int, status:str):
+    cur = db.cursor()
+    cur.execute("UPDATE ads SET status=? WHERE id=?", (status, ad_id))
     db.commit()
 
-def get_service_status(name: str):
+def record_click(ad_id:int, from_user:Optional[int]):
     cur = db.cursor()
-    cur.execute("SELECT status,last_checked FROM services WHERE name=?", (name,))
-    r = cur.fetchone()
-    return r if r else ("unknown", None)
-
-def record_action(service: str, action: str, user: int, result: str):
-    cur = db.cursor()
-    cur.execute("INSERT INTO actions (service_name,action,user_tg,result,created_at) VALUES (?,?,?,?,?)",
-                (service, action, user, result, now_iso()))
+    cur.execute("INSERT INTO clicks (ad_id, clicked_at, from_user) VALUES (?,?,?)", (ad_id, now_iso(), from_user))
     db.commit()
 
-def read_actions(service: str, limit: int = 20):
+def list_scheduled_ready():
     cur = db.cursor()
-    cur.execute("SELECT created_at, action, user_tg, result FROM actions WHERE service_name=? ORDER BY id DESC LIMIT ?", (service, limit))
-    return cur.fetchall()
+    cur.execute("SELECT id FROM ads WHERE status='approved' AND scheduled_at IS NOT NULL AND scheduled_at<=?", (now_iso(),))
+    return [r[0] for r in cur.fetchall()]
 
-# ====== UI builders ======
-def main_menu_kb():
+# ====== UI builders (all back buttons use text "Назад🔙" and callback "back:main") ======
+def main_greeting_text(user):
+    uname = user[2] if user and user[2] else "друг"
+    text = (
+        f"👋 Привет, {uname}!\n\n"
+        "Добро пожаловать в BotPromoter — место, где ты можешь продвигать своего Telegram‑бота, "
+        "отправлять заявки, отслеживать статус и получать реф‑клики. 🚀\n\n"
+        "Нажми кнопку ниже, чтобы начать. Все шаги простые, быстрые и управляются кнопками. 🔘"
+    )
+    return text
+
+def mk_main_kb():
     kb = InlineKeyboardBuilder()
-    kb.button(text="🔎 Состояние сервиса", callback_data="ui:status")
-    kb.button(text="📜 Логи", callback_data="ui:logs")
-    kb.button(text="🚀 Deploy", callback_data="ui:deploy")
-    kb.button(text="🛠 Сервисы", callback_data="ui:services")
-    kb.button(text="📈 История действий", callback_data="ui:history")
-    kb.button(text="⚙️ Симуляция логов", callback_data="ui:simulate")
-    kb.button(text="❓ Помощь", callback_data="ui:help")
+    kb.button(text="📝 Подать рекламу", callback_data="flow:new_ad")
+    kb.button(text="📦 Мои объявления", callback_data="flow:my_ads")
+    kb.button(text="🔗 Моя реф‑ссылка / Статистика", callback_data="flow:ref")
+    kb.button(text="🧾 О боте", callback_data="flow:about")
+    kb.button(text="❓ Помощь", callback_data="flow:help")
+    if ADMIN_ID:
+        kb.button(text="🔔 Ожидающие (админ)", callback_data="admin:pending")
     return kb.as_markup(row_width=2)
 
-def services_list_kb():
+def mk_back_kb():
     kb = InlineKeyboardBuilder()
-    rows = list_services()
-    if not rows:
-        kb.button(text="➕ Добавить сервис", callback_data="svc:add")
-        kb.button(text="🔙 Назад", callback_data="back:main")
-        return kb.as_markup()
-    for name, status in rows:
-        kb.button(text=f"{'🟢' if status=='ok' else '🟡' if status=='degraded' else '🔴'} {name}",
-                  callback_data=f"svc:open:{name}")
-    kb.button(text="➕ Добавить сервис", callback_data="svc:add")
-    kb.button(text="🗑 Удалить сервис", callback_data="svc:remove")
-    kb.button(text="🔙 Назад", callback_data="back:main")
-    return kb.as_markup(row_width=1)
-
-def service_kb(name: str):
-    kb = InlineKeyboardBuilder()
-    kb.button(text="🔎 Check status", callback_data=f"svc:check:{name}")
-    kb.button(text="📜 Показать логи", callback_data=f"svc:logs:{name}")
-    kb.button(text="🚀 Deploy", callback_data=f"svc:deploy:{name}")
-    kb.button(text="📈 История", callback_data=f"svc:history:{name}")
-    kb.button(text="🔙 Назад", callback_data="ui:services")
-    return kb.as_markup(row_width=2)
-
-def confirm_kb(prefix: str, val: str):
-    kb = InlineKeyboardBuilder()
-    kb.button(text="✅ Подтвердить", callback_data=f"{prefix}:confirm:{val}")
-    kb.button(text="❌ Отмена", callback_data=f"{prefix}:cancel:{val}")
+    kb.button(text="Назад🔙", callback_data="back:main")
     return kb.as_markup()
 
-# ====== Commands and menu ======
-@dp.message(Command("start"))
-async def cmd_start(message: Message):
-    ensure_service("web-app")
-    text = (
-        "👋 Привет! Я Dev Tools Bot — помощник разработчика.\n"
-        "Выбирай действие кнопкой ниже. Всё через inline‑кнопки, быстро и удобно.\n\n"
-        "🔐 Если ты — админ, у тебя будут дополнительные действия (deploy, удаление)."
-    )
-    await message.answer(text, reply_markup=main_menu_kb())
+def ad_preview_kb(ad_id:int):
+    kb = InlineKeyboardBuilder()
+    kb.button(text="✅ Одобрить", callback_data=f"admin:approve:{ad_id}")
+    kb.button(text="❌ Отклонить", callback_data=f"admin:reject:{ad_id}")
+    kb.button(text="🚀 Опубликовать сейчас", callback_data=f"admin:postnow:{ad_id}")
+    kb.button(text="Назад🔙", callback_data="back:main")
+    return kb.as_markup(row_width=2)
 
-@dp.callback_query(lambda c: c.data and c.data.startswith("ui:"))
-async def handle_ui(callback: CallbackQuery):
+def my_ads_kb(user_id:int):
+    kb = InlineKeyboardBuilder()
+    cur = db.cursor()
+    cur.execute("SELECT id,title,status FROM ads WHERE user_id=? ORDER BY created_at DESC", (user_id,))
+    rows = cur.fetchall()
+    if not rows:
+        kb.button(text="Назад🔙", callback_data="back:main")
+        return kb.as_markup()
+    for aid, title, status in rows:
+        kb.button(text=f"{title} [{status}]", callback_data=f"flow:my_ad:{aid}")
+    kb.button(text="Назад🔙", callback_data="back:main")
+    return kb.as_markup(row_width=1)
+
+# ====== Wizard state in memory (simple) ======
+wizard_states = {}  # {tg_id: {"step":..., "fields": {...}}}
+
+# ====== Handlers ======
+@dp.message(Command("start"))
+async def cmd_start(message:Message):
+    args = (message.get_args() or "").strip()
+    create_user_if_not_exists(message.from_user.id, message.from_user.username or "")
+    user = get_user_by_tg(message.from_user.id)
+    if args:
+        # treat as referral param (e.g., t.me/BOT?start=ref_ad123)
+        if args.startswith("ref_"):
+            ref = args
+            set_user_ref(message.from_user.id, ref)
+            cur = db.cursor()
+            cur.execute("UPDATE referrals SET clicks = clicks+1 WHERE ref_code=?", (ref,))
+            db.commit()
+            await message.answer(f"🔗 Спасибо! Реф ссылка зарегистрирована: {ref}")
+    greeting = main_greeting_text(user)
+    extra = (
+        "\n\n📌 Кратко — как работает бот:\n"
+        "• Подашь рекламу — она попадёт в очередь модерации. ✅\n"
+        "• Админ одобрит — объявление можно опубликовать в канал или получить превью. 📣\n"
+        "• В конце поста будет твоя реф‑ссылка, клики по ней учитываются. 🔎\n\n"
+        "Нажми кнопку ниже, чтобы продолжить."
+    )
+    await message.answer(greeting + extra, reply_markup=mk_main_kb())
+
+@dp.callback_query(lambda c: c.data and c.data.startswith("flow:"))
+async def handle_flow(callback:CallbackQuery):
     await callback.answer()
-    cmd = callback.data.split(":", 1)[1]
-    if cmd == "status":
-        await callback.message.edit_text("🔎 Введите /status <service> или нажмите Сервисы → выбрать сервис.", reply_markup=main_menu_kb())
-    elif cmd == "logs":
-        await callback.message.edit_text("📜 Введите /logs <service> [n] или нажмите Сервисы → выбрать сервис.", reply_markup=main_menu_kb())
-    elif cmd == "deploy":
-        await callback.message.edit_text("🚀 Deploy — выбери сервис в разделе Сервисы, затем нажми Deploy.", reply_markup=main_menu_kb())
-    elif cmd == "services":
-        await callback.message.edit_text("🛠 Список сервисов:", reply_markup=services_list_kb())
-    elif cmd == "history":
-        await callback.message.edit_text("📈 История действий — выберите сервис в Сервисы → История.", reply_markup=main_menu_kb())
-    elif cmd == "simulate":
-        await callback.message.edit_text("⚙️ Симуляция логов включена — периодически будут появляться случайные логи.", reply_markup=main_menu_kb())
+    parts = callback.data.split(":", 2)
+    cmd = parts[1]
+    user = get_user_by_tg(callback.from_user.id)
+    if cmd == "new_ad":
+        await callback.message.edit_text(
+            "📝 Отлично! Давай создадим объявление.\n\n"
+            "Шаг 1: Введите заголовок объявления (коротко, 80 символов максимум).",
+            reply_markup=mk_back_kb()
+        )
+        wizard_states[callback.from_user.id] = {"step":"title", "fields":{}}
+    elif cmd == "my_ads":
+        if not user:
+            await callback.message.edit_text("Ошибка: пользователь не найден.", reply_markup=mk_back_kb())
+            return
+        uid = user[0]
+        await callback.message.edit_text("📦 Ваши объявления:", reply_markup=my_ads_kb(uid))
+    elif cmd == "ref":
+        cur = db.cursor()
+        cur.execute("SELECT ref_code FROM users WHERE tg_id=?", (callback.from_user.id,))
+        r = cur.fetchone()
+        ref = r[0] if r else None
+        cur.execute("SELECT ref_code,clicks,signups FROM referrals WHERE ref_code=?", (ref,))
+        rr = cur.fetchone()
+        text = "🔗 Ваша реф‑ссылка и статистика:\n\n"
+        text += f"Реф: {ref or '—'}\n"
+        if rr:
+            text += f"Клики: {rr[1]}, Регистрации: {rr[2]}"
+        else:
+            text += "Клики и регистрации пока отсутствуют."
+        text += "\n\nНазад — возвращает в главное меню."
+        await callback.message.edit_text(text, reply_markup=mk_back_kb())
     elif cmd == "help":
         await callback.message.edit_text(
-            "❓ Помощь:\n"
-            "/status <service> — проверить статус\n"
-            "/logs <service> [n] — последние n строк лога\n"
-            "/deploy <service> — запустить mock deploy (только админ)\n\n"
-            "Используйте меню Сервисы для быстрого доступа.\n🔙 Кнопка Назад возвращает в главное меню.",
-            reply_markup=main_menu_kb()
+            "❓ Помощь и подсказки:\n\n"
+            "• Подать рекламу — через кнопку 'Подать рекламу'.\n"
+            "• Мои объявления — посмотреть статус и отозвать.\n"
+            "• Админ видит список ожидающих и может одобрять/публиковать.\n\n"
+            "Все экраны содержат кнопку 'Назад🔙', которая возвращает в меню /start.",
+            reply_markup=mk_back_kb()
         )
+    elif cmd == "about":
+        about_text = (
+            "🤖 О боте — BotPromoter\n\n"
+            "Этот бот помогает размещать рекламу Telegram‑ботов и отслеживать рекламу через реф‑ссылки. "
+            "Ключевые возможности:\n"
+            "• Подача объявления через удобный wizard; 📝\n"
+            "• Модерация заявок админом с превью и одобрением; ✅\n"
+            "• Автопубликация в канал (если указан CHANNEL) или превью админу; 📣\n"
+            "• Трекер кликов по реф‑ссылкам и простая статистика; 📊\n\n"
+            "Правила: модерация обязательна, не размещаем спам или запрещённый контент. "
+            "Если у тебя вопрос — пиши администратору. Удачи и больших кликов! 🚀"
+        )
+        await callback.message.edit_text(about_text, reply_markup=mk_back_kb())
     else:
-        await callback.message.edit_text("Неизвестная команда меню.", reply_markup=main_menu_kb())
+        await callback.message.edit_text("Неизвестная опция. Назад🔙", reply_markup=mk_back_kb())
 
-# ====== Service navigation callbacks ======
-@dp.callback_query(lambda c: c.data and c.data.startswith("svc:"))
-async def handle_svc(callback: CallbackQuery):
+@dp.callback_query(lambda c: c.data and c.data.startswith("admin:"))
+async def handle_admin(callback:CallbackQuery):
     await callback.answer()
-    parts = callback.data.split(":", 2)
+    if not (ADMIN_ID and callback.from_user.id == ADMIN_ID):
+        await callback.message.edit_text("⛔ Доступ запрещён. Только админ может это делать.", reply_markup=mk_back_kb())
+        return
+    parts = callback.data.split(":",2)
     action = parts[1]
-    arg = parts[2] if len(parts) > 2 else None
-
-    if action == "open" and arg:
-        svc = arg
-        status, last = get_service_status(svc)
-        await callback.message.edit_text(f"📌 Сервис: {svc}\nСтатус: {status}\nПоследняя проверка: {last}",
-                                         reply_markup=service_kb(svc))
-    elif action == "check" and arg:
-        svc = arg
-        # simulate check
-        status = random.choice(["ok", "degraded", "down"])
-        set_service_status(svc, status)
-        write_log(svc, "INFO", f"Status checked -> {status}")
-        await callback.message.edit_text(f"🔎 Результат проверки: {svc} — {status}", reply_markup=service_kb(svc))
-    elif action == "logs" and arg:
-        svc = arg
-        rows = read_logs(svc, limit=50)
+    arg = parts[2] if len(parts)>2 else None
+    if action == "pending":
+        rows = list_pending_ads()
         if not rows:
-            await callback.message.edit_text("📭 Нет логов для этого сервиса.", reply_markup=service_kb(svc))
+            await callback.message.edit_text("Нет ожидающих заявок. Назад🔙", reply_markup=mk_back_kb())
             return
-        text = f"📜 Логи для {svc} (последние {min(len(rows),50)}):\n" + "\n".join([f"{r[0]} [{r[1]}] {r[2]}" for r in rows[:40]])
-        await callback.message.edit_text(text, reply_markup=service_kb(svc))
-    elif action == "deploy" and arg:
-        svc = arg
-        if not is_admin(callback.from_user.id):
-            await callback.message.edit_text("⛔ Доступ запрещён. Только админ может запускать deploy.", reply_markup=service_kb(svc))
-            return
-        await callback.message.edit_text(f"🚀 Подготовка к deploy для {svc}...", reply_markup=confirm_kb("deploy", svc))
-    elif action == "add":
-        # short prompt: ask user to send "add:<name>"
-        await callback.message.edit_text("➕ Введите имя нового сервиса в сообщении в формате: add:<имя>\nПример: add:api-server", reply_markup=InlineKeyboardBuilder().button(text="🔙 Назад", callback_data="back:main").as_markup())
-    elif action == "remove":
-        # list services with delete buttons
-        rows = list_services()
-        if not rows:
-            await callback.message.edit_text("Нет сервисов для удаления.", reply_markup=services_list_kb())
-            return
+        text = "🔔 Ожидающие заявки:\n\n" + "\n".join([f"#{r[0]} • {r[2]} • {r[3]} • {r[4]}" for r in rows])
         kb = InlineKeyboardBuilder()
-        for name, _ in rows:
-            kb.button(text=f"🗑 Удалить {name}", callback_data=f"svc:del:{name}")
-        kb.button(text="🔙 Назад", callback_data="back:main")
-        await callback.message.edit_text("Выберите сервис для удаления:", reply_markup=kb.as_markup(row_width=1))
-    elif action == "del" and arg:
-        svc = arg
+        for aid, uid, title, package, created in rows:
+            kb.button(text=f"#{aid} {title}", callback_data=f"admin:preview:{aid}")
+        kb.button(text="Назад🔙", callback_data="back:main")
+        await callback.message.edit_text(text, reply_markup=kb.as_markup(row_width=1))
+    elif action == "preview" and arg:
+        ad = get_ad(int(arg))
+        if not ad:
+            await callback.message.edit_text("Объявление не найдено. Назад🔙", reply_markup=mk_back_kb()); return
+        aid, uid, title, text_body, media_json, package, target_channel, scheduled_at, status = ad
+        preview = f"🔎 Заявка #{aid}\n\n{title}\n\n{(text_body[:800] + '...') if len(text_body)>800 else text_body}\n\nПакет: {package}\nСтатус: {status}\n"
+        await callback.message.edit_text(preview, reply_markup=ad_preview_kb(aid))
+    elif action == "approve" and arg:
+        aid = int(arg)
+        set_ad_status(aid, "approved")
         cur = db.cursor()
-        cur.execute("DELETE FROM services WHERE name=?", (svc,))
-        cur.execute("DELETE FROM logs WHERE service_name=?", (svc,))
-        cur.execute("DELETE FROM actions WHERE service_name=?", (svc,))
-        db.commit()
-        await callback.message.edit_text(f"🗑 Сервис {svc} и связанные данные удалены.", reply_markup=services_list_kb())
-    else:
-        await callback.message.edit_text("Неизвестное действие сервиса.", reply_markup=main_menu_kb())
-
-# ====== Deploy confirm/cancel ======
-@dp.callback_query(lambda c: c.data and c.data.startswith("deploy:"))
-async def handle_deploy_confirm(callback: CallbackQuery):
-    await callback.answer()
-    parts = callback.data.split(":", 2)
-    action = parts[1]
-    svc = parts[2] if len(parts) > 2 else None
-    if action == "confirm" and svc:
-        await callback.message.edit_text(f"🚀 Deploy для {svc} запущен... Это симуляция.")
-        record_action(svc, "deploy", callback.from_user.id, "started")
-        # simulate steps
-        await asyncio.sleep(1)
-        write_log(svc, "INFO", "Deploy: pulling")
-        await asyncio.sleep(1)
-        write_log(svc, "INFO", "Deploy: migrating")
-        await asyncio.sleep(1)
-        ok = random.random() > 0.15
+        cur.execute("SELECT tg_id FROM users WHERE id=(SELECT user_id FROM ads WHERE id=?)", (aid,))
+        r = cur.fetchone()
+        if r and r[0]:
+            try:
+                asyncio.create_task(bot.send_message(r[0], f"✅ Ваша заявка #{aid} одобрена модератором."))
+            except Exception:
+                pass
+        await callback.message.edit_text(f"✅ Заявка #{aid} одобрена. Назад🔙", reply_markup=mk_back_kb())
+    elif action == "reject" and arg:
+        aid = int(arg)
+        set_ad_status(aid, "rejected")
+        cur = db.cursor()
+        cur.execute("SELECT tg_id FROM users WHERE id=(SELECT user_id FROM ads WHERE id=?)", (aid,))
+        r = cur.fetchone()
+        if r and r[0]:
+            try:
+                asyncio.create_task(bot.send_message(r[0], f"❌ Ваша заявка #{aid} отклонена."))
+            except Exception:
+                pass
+        await callback.message.edit_text(f"❌ Заявка #{aid} отклонена. Назад🔙", reply_markup=mk_back_kb())
+    elif action == "postnow" and arg:
+        aid = int(arg)
+        await callback.message.edit_text("🚀 Публикация запускается...")
+        ok = await publish_ad(aid)
         if ok:
-            write_log(svc, "INFO", "Deploy finished: success")
-            set_service_status(svc, "ok")
-            record_action(svc, "deploy", callback.from_user.id, "success")
-            await callback.message.edit_text(f"✅ Deploy для {svc} завершён успешно.", reply_markup=service_kb(svc))
+            await callback.message.edit_text(f"✅ Объявление #{aid} опубликовано. Назад🔙", reply_markup=mk_back_kb())
         else:
-            write_log(svc, "ERROR", "Deploy failed: healthcheck")
-            set_service_status(svc, "degraded")
-            record_action(svc, "deploy", callback.from_user.id, "failed")
-            await callback.message.edit_text(f"❌ Deploy для {svc} завершился с ошибкой.", reply_markup=service_kb(svc))
+            await callback.message.edit_text(f"❌ Ошибка при публикации #{aid}. Назад🔙", reply_markup=mk_back_kb())
     else:
-        await callback.message.edit_text("❌ Deploy отменён.", reply_markup=main_menu_kb())
+        await callback.message.edit_text("Неизвестная админская команда. Назад🔙", reply_markup=mk_back_kb())
 
-# ====== Back navigation (короткая цепочка) ======
+@dp.callback_query(lambda c: c.data and c.data.startswith("flow:my_ad:"))
+async def handle_my_ad(callback:CallbackQuery):
+    await callback.answer()
+    parts = callback.data.split(":",2)
+    aid = int(parts[2])
+    ad = get_ad(aid)
+    if not ad:
+        await callback.message.edit_text("Объявление не найдено. Назад🔙", reply_markup=mk_back_kb()); return
+    aid, uid, title, text_body, media_json, package, target_channel, scheduled_at, status = ad
+    s = f"📌 #{aid} • {title}\nСтатус: {status}\nЗапланировано: {scheduled_at}\n\n{(text_body[:1000] + '...') if len(text_body)>1000 else text_body}"
+    kb = InlineKeyboardBuilder()
+    if status == "pending":
+        kb.button(text="🗑 Отозвать заявку", callback_data=f"user:withdraw:{aid}")
+    kb.button(text="Назад🔙", callback_data="back:main")
+    await callback.message.edit_text(s, reply_markup=kb.as_markup())
+
+@dp.callback_query(lambda c: c.data and c.data.startswith("user:"))
+async def handle_user_actions(callback:CallbackQuery):
+    await callback.answer()
+    parts = callback.data.split(":",2)
+    action = parts[1]
+    arg = parts[2] if len(parts)>2 else None
+    if action == "withdraw" and arg:
+        aid = int(arg)
+        cur = db.cursor()
+        cur.execute("SELECT user_id FROM ads WHERE id=?", (aid,))
+        r = cur.fetchone()
+        user = get_user_by_tg(callback.from_user.id)
+        if not r or not user or r[0] != user[0]:
+            await callback.message.edit_text("⛔ Нельзя отменить — не ваш пост. Назад🔙", reply_markup=mk_back_kb()); return
+        set_ad_status(aid, "rejected")
+        await callback.message.edit_text("🗑 Заявка отозвана. Назад🔙", reply_markup=mk_back_kb())
+    else:
+        await callback.message.edit_text("Неизвестное действие. Назад🔙", reply_markup=mk_back_kb())
+
 @dp.callback_query(lambda c: c.data and c.data.startswith("back:"))
-async def handle_back(callback: CallbackQuery):
+async def handle_back(callback:CallbackQuery):
     await callback.answer()
-    dest = callback.data.split(":", 1)[1]
+    dest = callback.data.split(":",1)[1]
     if dest == "main":
-        await callback.message.edit_text("🔙 Возвращено в главное меню.", reply_markup=main_menu_kb())
+        user = get_user_by_tg(callback.from_user.id)
+        greeting = main_greeting_text(user)
+        extra = "\n\nНажми кнопку, чтобы продолжить."
+        await callback.message.edit_text(greeting + extra, reply_markup=mk_main_kb())
     else:
-        await callback.message.edit_text("🔙 Возвращено.", reply_markup=main_menu_kb())
+        await callback.message.edit_text("🔙 Возврат в меню", reply_markup=mk_main_kb())
 
-# ====== Text commands for convenience ======
-@dp.message(Command("status"))
-async def cmd_status(message: Message):
-    parts = message.text.split(maxsplit=1)
-    if len(parts) < 2:
-        await message.answer("Использование: /status <service>")
-        return
-    svc = parts[1].strip()
-    ensure_service(svc)
-    status = random.choice(["ok", "degraded", "down"])
-    set_service_status(svc, status)
-    write_log(svc, "INFO", f"Status checked -> {status}")
-    await message.answer(f"🔎 Service {svc}: {status}", reply_markup=InlineKeyboardBuilder().button(text="🔙 Назад", callback_data="back:main").as_markup())
-
-@dp.message(Command("logs"))
-async def cmd_logs(message: Message):
-    parts = message.text.split()
-    if len(parts) < 2:
-        await message.answer("Использование: /logs <service> [n]")
-        return
-    svc = parts[1]
-    n = 50
-    if len(parts) >= 3:
-        try:
-            n = int(parts[2])
-        except Exception:
-            pass
-    ensure_service(svc)
-    rows = read_logs(svc, limit=n)
-    if not rows:
-        await message.answer("📭 Нет логов.", reply_markup=InlineKeyboardBuilder().button(text="🔙 Назад", callback_data="back:main").as_markup())
-        return
-    text = f"📜 Логи для {svc}:\n" + "\n".join([f"{r[0]} [{r[1]}] {r[2]}" for r in rows[:40]])
-    await message.answer(text, reply_markup=InlineKeyboardBuilder().button(text="🔙 Назад", callback_data="back:main").as_markup())
-
-@dp.message(Command("deploy"))
-async def cmd_deploy_text(message: Message):
-    parts = message.text.split(maxsplit=1)
-    if len(parts) < 2:
-        await message.answer("Использование: /deploy <service>")
-        return
-    svc = parts[1].strip()
-    if not is_admin(message.from_user.id):
-        await message.answer("⛔ Только админ может запускать deploy.")
-        return
-    ensure_service(svc)
-    await message.answer(f"Подтвердите deploy для {svc}:", reply_markup=confirm_kb("deploy", svc))
-
-# Quick add via text: add:<name>
+# ====== Wizard message flow handler ======
 @dp.message()
-async def text_handler(message: Message):
-    text = (message.text or "").strip()
-    if text.startswith("add:"):
-        name = text.split(":",1)[1].strip()
-        if not name:
-            await message.answer("Неверный формат. Пример: add:api-server")
+async def wizard_messages(message:Message):
+    uid = message.from_user.id
+    if uid in wizard_states:
+        st = wizard_states[uid]
+        step = st.get("step")
+        if step == "title":
+            st.setdefault("fields", {})["title"] = message.text.strip()[:120]
+            st["step"] = "text"
+            await message.answer("✍️ Шаг 2: Отправьте текст объявления (до 800 символов).", reply_markup=mk_back_kb())
             return
-        ensure_service(name)
-        await message.answer(f"➕ Сервис {name} добавлен.", reply_markup=services_list_kb())
+        if step == "text":
+            st["fields"]["text"] = message.text.strip()[:800]
+            st["step"] = "package"
+            kb = InlineKeyboardBuilder()
+            kb.button(text="Free (очередь) 🕒", callback_data="pkg:free")
+            kb.button(text="Featured (приоритет) ⭐", callback_data="pkg:featured")
+            kb.button(text="Назад🔙", callback_data="back:main")
+            await message.answer("Выберите пакет размещения:", reply_markup=kb.as_markup())
+            return
+    # convenience quick-add: add:title|text
+    if message.text and message.text.startswith("add:"):
+        parts = message.text.split(":",1)[1].split("|",1)
+        title = parts[0].strip()
+        text_body = parts[1].strip() if len(parts)>1 else "—"
+        create_user_if_not_exists(uid, message.from_user.username or "")
+        user = get_user_by_tg(uid)
+        aid = save_ad(user[0], title, text_body, "", "free", CHANNEL or None, None)
+        await message.answer(f"✅ Заявка создана #{aid}. Ожидает модерации. Назад🔙", reply_markup=mk_main_kb())
         return
-    # fallback friendly reply
-    await message.answer("Не распознал команду. Используйте главное меню или /help.", reply_markup=main_menu_kb())
+    # if not in wizard, just remind to use menu
+    await message.answer("Используй меню для действий или /start, чтобы вернуться. Назад🔙", reply_markup=mk_main_kb())
 
-# ====== History handler ======
-@dp.callback_query(lambda c: c.data and c.data.startswith("svc:history:") or (c.data and c.data.startswith("ui:history")))
-async def handle_history(callback: CallbackQuery):
+@dp.callback_query(lambda c: c.data and c.data.startswith("pkg:"))
+async def handle_pkg(callback:CallbackQuery):
     await callback.answer()
-    parts = callback.data.split(":", 2)
-    if len(parts) == 3 and parts[1] == "history":
-        svc = parts[2]
-        rows = read_actions(svc, limit=30)
-        if not rows:
-            await callback.message.edit_text(f"📉 Для {svc} нет действий.", reply_markup=service_kb(svc))
-            return
-        text = f"📈 История действий для {svc}:\n" + "\n".join([f"{r[0]} | {r[1]} by {r[2]} -> {r[3]}" for r in rows])
-        await callback.message.edit_text(text, reply_markup=service_kb(svc))
-    else:
-        await callback.message.edit_text("Выберите сервис и нажмите История.", reply_markup=main_menu_kb())
+    pkg = callback.data.split(":",1)[1]
+    uid = callback.from_user.id
+    st = wizard_states.get(uid)
+    if not st or not st.get("fields"):
+        await callback.message.edit_text("Ошибка состояния, начните заново. Назад🔙", reply_markup=mk_back_kb())
+        wizard_states.pop(uid, None)
+        return
+    fields = st["fields"]
+    create_user_if_not_exists(uid, callback.from_user.username or "")
+    user = get_user_by_tg(uid)
+    aid = save_ad(user[0], fields["title"], fields["text"], "", pkg, CHANNEL or None, None)
+    wizard_states.pop(uid, None)
+    await callback.message.edit_text(f"🎉 Готово! Заявка #{aid} отправлена на модерацию. Ожидайте. Назад🔙", reply_markup=mk_main_kb())
 
-# ====== Health HTTP server (optional) ======
-async def start_health_server():
+# ====== Publish logic (uses CHANNEL if set, otherwise sends preview to ADMIN_ID) ======
+async def publish_ad(ad_id:int):
+    ad = get_ad(ad_id)
+    if not ad:
+        return False
+    aid, uid, title, text_body, media_json, package, target_channel, scheduled_at, status = ad
+    try:
+        bot_info = await bot.get_me()
+        bot_username = bot_info.username
+    except Exception:
+        bot_username = None
+    ref_link = f"https://t.me/{bot_username}?start=ref_ad{aid}" if bot_username else f"ref_ad{aid}"
+    post_text = f"✨ {title}\n\n{text_body}\n\n▶ Попробовать: {ref_link}\n\n❤️ Поддержите автора через реф‑ссылку!"
+    success = False
+    publish_target = target_channel or (CHANNEL if CHANNEL else None)
+    try:
+        if publish_target:
+            await bot.send_message(publish_target, post_text)
+            success = True
+            logger.info("Posted ad %s to channel %s", aid, publish_target)
+        else:
+            if ADMIN_ID:
+                await bot.send_message(ADMIN_ID, f"🔔 Preview for ad #{aid}:\n\n{post_text}")
+            success = True
+            logger.info("Preview for ad %s sent to admin", aid)
+    except Exception:
+        logger.exception("publish_ad send failed")
+        success = False
+    if success:
+        set_ad_status(ad_id, "posted")
+        cur = db.cursor()
+        cur.execute("SELECT tg_id FROM users WHERE id=?", (uid,))
+        r = cur.fetchone()
+        if r and r[0]:
+            try:
+                if publish_target:
+                    await bot.send_message(r[0], f"✅ Ваша реклама #{aid} опубликована в {publish_target}.")
+                else:
+                    await bot.send_message(r[0], f"✅ Ваша реклама #{aid} готова. Администратор получил превью.")
+            except Exception:
+                pass
+    return success
+
+# ====== Scheduled runner for scheduled posts ======
+async def scheduled_runner():
+    while True:
+        try:
+            ready = list_scheduled_ready()
+            for aid in ready:
+                logger.info("Scheduled publish for ad %s", aid)
+                await publish_ad(aid)
+        except Exception:
+            logger.exception("scheduled_runner error")
+        await asyncio.sleep(30)
+
+# ====== Minimal aiohttp health + redirect (for Render web service) ======
+async def start_web():
     try:
         from aiohttp import web
     except Exception:
-        logger.info("aiohttp not installed; skipping health server")
+        logger.info("aiohttp not installed; skipping web server")
         return
+    app = web.Application()
+
     async def health(req):
         return web.Response(text="ok")
-    app = web.Application()
+
+    async def redirect_ref(req):
+        ref = req.match_info.get("ref")
+        if ref and ref.startswith("ref_ad"):
+            try:
+                aid = int(ref.split("ref_ad",1)[1])
+                record_click(aid, None)
+            except Exception:
+                pass
+        try:
+            bot_info = await bot.get_me()
+            bot_username = bot_info.username
+            return web.HTTPFound(f"https://t.me/{bot_username}?start={ref}")
+        except Exception:
+            return web.Response(text="Redirect unavailable", status=500)
+
     app.router.add_get("/", health)
+    app.router.add_get("/r/{ref}", redirect_ref)
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", HEALTH_PORT)
+    site = web.TCPSite(runner, "0.0.0.0", PORT)
     await site.start()
-    logger.info("Health server started on port %s", HEALTH_PORT)
-
-# ====== Background filler: simulate logs periodically ======
-async def filler_task():
-    while True:
-        try:
-            cur = db.cursor()
-            cur.execute("SELECT name FROM services")
-            rows = cur.fetchall()
-            for (name,) in rows:
-                if random.random() < 0.4:
-                    lvl = random.choice(["INFO", "WARN", "ERROR"])
-                    msg = random.choice([
-                        "heartbeat ok",
-                        "connection pool saturated",
-                        "cache miss rate increased",
-                        "external API timeout",
-                        "request processed",
-                        "DB connection restored",
-                        "rate limit approaching"
-                    ])
-                    write_log(name, lvl, msg)
-        except Exception:
-            logger.exception("filler_task error")
-        await asyncio.sleep(8)
+    logger.info("Web server started on port %s", PORT)
 
 # ====== Startup ======
 async def on_startup():
-    ensure_service("web-app")
-    asyncio.create_task(start_health_server())
-    asyncio.create_task(filler_task())
+    if ADMIN_ID:
+        create_user_if_not_exists(ADMIN_ID, "admin")
+    asyncio.create_task(start_web())
+    asyncio.create_task(scheduled_runner())
 
 if __name__ == "__main__":
-    try:
-        loop = asyncio.get_event_loop()
-        loop.create_task(on_startup())
-        logger.info("Starting polling")
-        dp.run_polling(bot)
-    finally:
-        try:
-            loop.run_until_complete(bot.session.close())
-        except Exception:
-            pass
+    loop = asyncio.get_event_loop()
+    loop.create_task(on_startup())
+    logger.info("Starting polling")
+    dp.run_polling(bot)
