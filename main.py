@@ -1,22 +1,22 @@
 #!/usr/bin/env python3
-# main.py — BotPromoter (single-file final)
+# main.py — BotPromoter (final single-file)
 # - aiogram 3.22.0 compatible
-# - Strict layout: max 2 inline buttons per row everywhere (mk_kb_strict)
-# - Back button in a separate bottom row on every screen
+# - Strict layout: EXACTLY max 2 inline buttons per row everywhere (mk_kb_strict)
+# - "Назад🔙" as separate bottom row on every screen
 # - Full texts with emojis
-# - Referral created on first /start and shown in Stats
+# - Ref generation on first /start and visible in Stats
 # - Wizard: title -> text -> package
-# - Admin: preview, approve, reject, publish; approved ads are published to CHANNEL (if set) or previewed to ADMIN_ID
-# - Safe send/edit helpers, detailed exception middleware (sends traceback to ADMIN_ID)
+# - Admin: preview, approve, reject, postnow; approved ads auto-publish to CHANNEL (if set) and also send preview to ADMIN_ID
+# - Safe send/edit helpers, exception middleware sending full traceback to ADMIN_ID (if set)
 # - Polling by default; optional webhook mode (USE_WEBHOOK=1)
 # - SQLite DB auto-init
 #
-# ENV vars required/optional:
+# ENV:
 # PLAY (required) - bot token
 # ADMIN_ID (optional) - numeric admin id
 # CHANNEL (optional) - channel username or id (e.g. @mychannel or -100123...)
 # DB_PATH (optional) - sqlite path (default botpromoter.db)
-# PORT (optional) - web server port (default 8000)
+# PORT (optional) - web port (default 8000)
 # USE_WEBHOOK (optional) - "1" to enable webhook mode
 # WEBHOOK_URL (optional) - public URL for webhook (if USE_WEBHOOK=1)
 # WEBHOOK_PATH (optional) - path for webhook (default /webhook)
@@ -119,7 +119,7 @@ def init_db(path=DB_PATH):
 
 db = init_db()
 
-# ====== Utils ======
+# ====== Utilities ======
 def gen_ref_code(length=8) -> str:
     return "ref_" + "".join(
         random.choices(string.ascii_lowercase + string.digits, k=length)
@@ -267,8 +267,12 @@ async def safe_edit(message_obj, text: str, **kwargs):
         return None
 
 
-# ====== Strict keyboard builder: max 2 buttons per row ======
+# ====== Strict keyboard builder: EXACTLY max 2 buttons per row ======
 def mk_kb_strict(buttons: List[Dict]) -> InlineKeyboardMarkup:
+    """
+    buttons: list of dicts: {"text": str, "callback_data": str} or {"text": str, "url": str}
+    Returns InlineKeyboardMarkup with at most 2 buttons per row; last row may have 1.
+    """
     rows: List[List[InlineKeyboardButton]] = []
     current: List[InlineKeyboardButton] = []
     for b in buttons:
@@ -291,6 +295,7 @@ def mk_kb_strict(buttons: List[Dict]) -> InlineKeyboardMarkup:
 
 
 def attach_back(reply: InlineKeyboardMarkup) -> InlineKeyboardMarkup:
+    # Add single "Назад🔙" row at bottom
     back_row = [InlineKeyboardButton(text="Назад🔙", callback_data="back:main")]
     new_rows = list(reply.inline_keyboard) + [back_row]
     return InlineKeyboardMarkup(inline_keyboard=new_rows)
@@ -323,7 +328,7 @@ dp.update.middleware(ExceptionLoggerMiddleware())
 wizard_states = {}  # {tg_id: {"step":..., "fields": {...}}}
 
 
-# ====== Keyboards (use mk_kb_strict + attach_back) ======
+# ====== Keyboards everywhere using mk_kb_strict + attach_back ======
 def main_kb():
     buttons = [
         {"text": "👤 Профиль", "callback_data": "menu:profile"},
@@ -338,36 +343,33 @@ def main_kb():
 
 
 def profile_kb():
-    return attach_back(
-        mk_kb_strict(
-            [
-                {"text": "✏️ Редактировать профиль", "callback_data": "profile:edit"},
-                {"text": "📜 Мои заявки", "callback_data": "profile:my_ads"},
-            ]
-        )
+    kb = mk_kb_strict(
+        [
+            {"text": "✏️ Редактировать профиль", "callback_data": "profile:edit"},
+            {"text": "📜 Мои заявки", "callback_data": "profile:my_ads"},
+        ]
     )
+    return attach_back(kb)
 
 
 def ads_kb():
-    return attach_back(
-        mk_kb_strict(
-            [
-                {"text": "➕ Создать заявку", "callback_data": "ads:new"},
-                {"text": "📌 Мои заявки", "callback_data": "ads:mine"},
-            ]
-        )
+    kb = mk_kb_strict(
+        [
+            {"text": "➕ Создать заявку", "callback_data": "ads:new"},
+            {"text": "📌 Мои заявки", "callback_data": "ads:mine"},
+        ]
     )
+    return attach_back(kb)
 
 
 def stats_kb():
-    return attach_back(
-        mk_kb_strict(
-            [
-                {"text": "🔗 Моя реф‑ссылка", "callback_data": "stats:ref"},
-                {"text": "📈 Общая статистика", "callback_data": "stats:global"},
-            ]
-        )
+    kb = mk_kb_strict(
+        [
+            {"text": "🔗 Моя реф‑ссылка", "callback_data": "stats:ref"},
+            {"text": "📈 Общая статистика", "callback_data": "stats:global"},
+        ]
     )
+    return attach_back(kb)
 
 
 def about_kb():
@@ -375,17 +377,16 @@ def about_kb():
 
 
 def admin_kb():
-    return attach_back(
-        mk_kb_strict(
-            [
-                {"text": "🔔 Ожидающие заявки", "callback_data": "admin:pending"},
-                {"text": "⚙️ Настройки", "callback_data": "admin:settings"},
-            ]
-        )
+    kb = mk_kb_strict(
+        [
+            {"text": "🔔 Ожидающие заявки", "callback_data": "admin:pending"},
+            {"text": "⚙️ Настройки", "callback_data": "admin:settings"},
+        ]
     )
+    return attach_back(kb)
 
 
-# ====== Handlers ======
+# ====== Handlers (all use mk_kb_strict/attach_back) ======
 @dp.message(Command("start"))
 async def cmd_start(message: Message, command=None):
     args = ""
@@ -407,10 +408,10 @@ async def cmd_start(message: Message, command=None):
         db.commit()
         await safe_send(
             message.chat.id,
-            f"🔗 Реф‑ссылка зарегистрирована: {args}\nСпасибо! Это поможет автору получать поддержку. ❤️",
+            f"🔗 Реф‑ссылка зарегистрирована: {args}\nСпасибо! Это поддержит автора. ❤️",
         )
-    uname = get_user_by_tg(message.from_user.id)
-    uname = (uname and uname[2]) or message.from_user.first_name or "друг"
+    user = get_user_by_tg(message.from_user.id)
+    uname = (user and user[2]) or message.from_user.first_name or "друг"
     greeting = (
         f"👋 Привет, {uname}!\n\n"
         "Добро пожаловать в BotPromoter — удобный сервис для продвижения Telegram‑ботов. 🚀\n\n"
@@ -596,7 +597,7 @@ async def handle_admin(callback: CallbackQuery):
             r = cur.fetchone()
             if r and r[0]:
                 try:
-                    await safe_send(r[0], f"✅ Ваша заявка #{aid} одобрена модератором. Она попадёт в канал при публикации.")
+                    await safe_send(r[0], f"✅ Ваша заявка #{aid} одобрена модератором. Она будет опубликована в канал при следующей публикации.")
                 except Exception:
                     logger.exception("Notify owner failed")
             await safe_edit(callback.message, f"✅ Заявка #{aid} одобрена.", reply_markup=attach_back(mk_kb_strict([])))
@@ -615,7 +616,7 @@ async def handle_admin(callback: CallbackQuery):
             await safe_edit(callback.message, "🚀 Публикация запускается...")
             ok = await publish_ad(aid)
             if ok:
-                await safe_edit(callback.message, f"✅ Объявление #{aid} опубликовано.", reply_markup=attach_back(mk_kb_strict([])))
+                await safe_edit(callback.message, f"✅ Объявление #{aid} опубликовано в канал и отправлено админу.", reply_markup=attach_back(mk_kb_strict([])))
             else:
                 await safe_edit(callback.message, f"❌ Ошибка при публикации #{aid}.", reply_markup=attach_back(mk_kb_strict([])))
     else:
@@ -669,8 +670,7 @@ async def wizard_messages(message: Message):
             wizard_states.pop(uid, None)
             await safe_send(message.chat.id, "Ошибка процесса. Попробуйте снова.", reply_markup=main_kb())
             return
-    # fallback: show main menu
-    await safe_send(message.chat.id, "Используйте меню для действий.", reply_markup=main_kb())
+    await safe_send(message.chat.id, "Используйте меню для действий. Нажмите /start для главного меню.", reply_markup=main_kb())
 
 
 @dp.callback_query(lambda c: c.data and c.data.startswith("pkg:"))
@@ -688,14 +688,28 @@ async def handle_pkg(callback: CallbackQuery):
     user = get_user_by_tg(uid)
     aid = save_ad(user[0], fields.get("title", ""), fields.get("text", ""), "", pkg, CHANNEL, None)
     wizard_states.pop(uid, None)
+    # Notify admin AND publish preview to channel if CHANNEL set (per your request: publish to channel too)
+    notify_text = f"🎉 Новая заявка #{aid} от @{callback.from_user.username or callback.from_user.id}\nЗаголовок: {fields.get('title','')}\nПакет: {pkg}\nСтатус: pending"
+    if ADMIN_ID:
+        try:
+            await safe_send(ADMIN_ID, notify_text)
+        except Exception:
+            logger.exception("Notify admin failed")
+    # Also send preview to channel (if CHANNEL set) — not final publish
+    preview_post = f"🔔 Новая заявка #{aid} (превью):\n\n{fields.get('title','')}\n\n{fields.get('text','')[:1000]}\n\nПакет: {pkg}\n\n(Заявка ожидает модерации)"
+    if CHANNEL:
+        try:
+            await bot.send_message(CHANNEL, preview_post)
+        except Exception:
+            logger.exception("Preview send to CHANNEL failed")
     await safe_edit(
         callback.message,
-        f"🎉 Готово! Заявка #{aid} отправлена на модерацию. Администратор увидит её и сможет опубликовать в канал.",
+        f"🎉 Готово! Заявка #{aid} отправлена на модерацию. Администратор получил уведомление; превью отправлено в канал (если CHANNEL настроен).",
         reply_markup=main_kb(),
     )
 
 
-# ====== Publish logic: publish to CHANNEL if set, else preview to ADMIN_ID ======
+# ====== Publish logic: publish to CHANNEL (if set) and notify admin & owner ======
 async def publish_ad(ad_id: int) -> bool:
     ad = get_ad(ad_id)
     if not ad:
@@ -713,7 +727,6 @@ async def publish_ad(ad_id: int) -> bool:
     publish_target = target_channel or CHANNEL
     try:
         if publish_target:
-            # publish to channel (username or id)
             await bot.send_message(publish_target, post_text)
             success = True
             logger.info("Posted ad %s to %s", aid, publish_target)
@@ -804,7 +817,6 @@ async def on_startup():
         create_user_if_not_exists(ADMIN_ID, "admin")
     asyncio.create_task(start_web())
     asyncio.create_task(scheduled_runner())
-    # remove webhook if polling to avoid conflict
     if not USE_WEBHOOK:
         try:
             async with aiohttp.ClientSession() as s:
@@ -813,7 +825,6 @@ async def on_startup():
                     logger.info("deleteWebhook result: %s", txt)
         except Exception:
             logger.exception("deleteWebhook failed")
-    # register webhook if desired
     if USE_WEBHOOK and WEBHOOK_URL:
         try:
             url = f"{WEBHOOK_URL.rstrip('/')}{WEBHOOK_PATH}"
