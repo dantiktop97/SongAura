@@ -4,7 +4,7 @@
 # - SQLite storage created automatically
 # - All UI via inline buttons, universal "Назад🔙" navigation back to /start greeting
 # - If CHANNEL env is empty, bot sends post preview to ADMIN_ID instead of posting to channel
-# - Friendly texts and emojis, greeting with username, "О боте" page, everywhere "Назад🔙" returns to /start
+# - Friendly texts and emojis, greeting with username, "О боте" page, everywhere "Назад🔙" returns to menu
 #
 # ENV:
 # PLAY (required) — Telegram bot token
@@ -160,13 +160,13 @@ def main_greeting_text(user):
 
 def mk_main_kb():
     kb = InlineKeyboardBuilder()
-    kb.button(text="📝 Подать рекламу", callback_data="flow:new_ad")
-    kb.button(text="📦 Мои объявления", callback_data="flow:my_ads")
-    kb.button(text="🔗 Моя реф‑ссылка / Статистика", callback_data="flow:ref")
-    kb.button(text="🧾 О боте", callback_data="flow:about")
-    kb.button(text="❓ Помощь", callback_data="flow:help")
+    kb.button(text="👤 Профиль", callback_data="menu:profile")
+    kb.button(text="📢 Реклама", callback_data="menu:ads")
+    kb.button(text="📊 Статистика", callback_data="menu:stats")
+    kb.button(text="ℹ️ О боте", callback_data="menu:about")
+    kb.button(text="❓ Помощь", callback_data="menu:help")
     if ADMIN_ID:
-        kb.button(text="🔔 Ожидающие (админ)", callback_data="admin:pending")
+        kb.button(text="🔔 Админ", callback_data="menu:admin")
     return kb.as_markup(row_width=2)
 
 def mk_back_kb():
@@ -174,26 +174,33 @@ def mk_back_kb():
     kb.button(text="Назад🔙", callback_data="back:main")
     return kb.as_markup()
 
-def ad_preview_kb(ad_id:int):
+def profile_kb():
     kb = InlineKeyboardBuilder()
-    kb.button(text="✅ Одобрить", callback_data=f"admin:approve:{ad_id}")
-    kb.button(text="❌ Отклонить", callback_data=f"admin:reject:{ad_id}")
-    kb.button(text="🚀 Опубликовать сейчас", callback_data=f"admin:postnow:{ad_id}")
+    kb.button(text="✏️ Редактировать профиль", callback_data="profile:edit")
+    kb.button(text="📜 Мои объявления", callback_data="profile:my_ads")
     kb.button(text="Назад🔙", callback_data="back:main")
     return kb.as_markup(row_width=2)
 
-def my_ads_kb(user_id:int):
+def ads_kb():
     kb = InlineKeyboardBuilder()
-    cur = db.cursor()
-    cur.execute("SELECT id,title,status FROM ads WHERE user_id=? ORDER BY created_at DESC", (user_id,))
-    rows = cur.fetchall()
-    if not rows:
-        kb.button(text="Назад🔙", callback_data="back:main")
-        return kb.as_markup()
-    for aid, title, status in rows:
-        kb.button(text=f"{title} [{status}]", callback_data=f"flow:my_ad:{aid}")
+    kb.button(text="➕ Подать рекламу", callback_data="ads:new")
+    kb.button(text="📌 Мои объявления", callback_data="ads:mine")
     kb.button(text="Назад🔙", callback_data="back:main")
-    return kb.as_markup(row_width=1)
+    return kb.as_markup(row_width=2)
+
+def stats_kb():
+    kb = InlineKeyboardBuilder()
+    kb.button(text="🔗 Моя реф‑ссылка", callback_data="stats:ref")
+    kb.button(text="📈 Общая статистика", callback_data="stats:global")
+    kb.button(text="Назад🔙", callback_data="back:main")
+    return kb.as_markup(row_width=2)
+
+def admin_kb():
+    kb = InlineKeyboardBuilder()
+    kb.button(text="🔔 Ожидающие заявки", callback_data="admin:pending")
+    kb.button(text="⚙️ Настройки", callback_data="admin:settings")
+    kb.button(text="Назад🔙", callback_data="back:main")
+    return kb.as_markup(row_width=2)
 
 # ====== Wizard state in memory (simple) ======
 wizard_states = {}  # {tg_id: {"step":..., "fields": {...}}}
@@ -204,15 +211,13 @@ async def cmd_start(message:Message):
     args = (message.get_args() or "").strip()
     create_user_if_not_exists(message.from_user.id, message.from_user.username or "")
     user = get_user_by_tg(message.from_user.id)
-    if args:
-        # treat as referral param (e.g., t.me/BOT?start=ref_ad123)
-        if args.startswith("ref_"):
-            ref = args
-            set_user_ref(message.from_user.id, ref)
-            cur = db.cursor()
-            cur.execute("UPDATE referrals SET clicks = clicks+1 WHERE ref_code=?", (ref,))
-            db.commit()
-            await message.answer(f"🔗 Спасибо! Реф ссылка зарегистрирована: {ref}")
+    if args and args.startswith("ref_"):
+        ref = args
+        set_user_ref(message.from_user.id, ref)
+        cur = db.cursor()
+        cur.execute("UPDATE referrals SET clicks = clicks+1 WHERE ref_code=?", (ref,))
+        db.commit()
+        await message.answer(f"🔗 Спасибо! Реф ссылка зарегистрирована: {ref}")
     greeting = main_greeting_text(user)
     extra = (
         "\n\n📌 Кратко — как работает бот:\n"
@@ -223,175 +228,163 @@ async def cmd_start(message:Message):
     )
     await message.answer(greeting + extra, reply_markup=mk_main_kb())
 
-@dp.callback_query(lambda c: c.data and c.data.startswith("flow:"))
-async def handle_flow(callback:CallbackQuery):
+@dp.callback_query(lambda c: c.data and c.data.startswith("menu:"))
+async def handle_menu(callback:CallbackQuery):
     await callback.answer()
-    parts = callback.data.split(":", 2)
-    cmd = parts[1]
+    cmd = callback.data.split(":",1)[1]
     user = get_user_by_tg(callback.from_user.id)
-    if cmd == "new_ad":
-        await callback.message.edit_text(
-            "📝 Отлично! Давай создадим объявление.\n\n"
-            "Шаг 1: Введите заголовок объявления (коротко, 80 символов максимум).",
-            reply_markup=mk_back_kb()
+    if cmd == "profile":
+        text = "👤 Профиль\n\nЗдесь отображается информация о тебе. Выбери действие."
+        await callback.message.edit_text(text, reply_markup=profile_kb())
+    elif cmd == "ads":
+        text = "📢 Реклама\n\nПодавай объявления и следи за статусом."
+        await callback.message.edit_text(text, reply_markup=ads_kb())
+    elif cmd == "stats":
+        text = "📊 Статистика\n\nСмотри реф‑ссылки и общую аналитику."
+        await callback.message.edit_text(text, reply_markup=stats_kb())
+    elif cmd == "about":
+        text = (
+            "ℹ️ О боте\n\nBotPromoter — помощник для продвижения Telegram‑ботов.\n\n"
+            "Функции:\n• Подача и модерация объявлений\n• Публикация в канал (если задан CHANNEL) или превью админу\n• Трекинг кликов по реф‑ссылкам\n\nНазад — возвращает в главное меню."
         )
-        wizard_states[callback.from_user.id] = {"step":"title", "fields":{}}
-    elif cmd == "my_ads":
+        await callback.message.edit_text(text, reply_markup=mk_back_kb())
+    elif cmd == "help":
+        text = "❓ Помощь\n\nВсё управление через кнопки. Никаких команд — всё в интерфейсе."
+        await callback.message.edit_text(text, reply_markup=mk_back_kb())
+    elif cmd == "admin":
+        if ADMIN_ID and callback.from_user.id == ADMIN_ID:
+            await callback.message.edit_text("🔐 Панель администратора", reply_markup=admin_kb())
+        else:
+            await callback.message.edit_text("⛔ У вас нет прав администратора.", reply_markup=mk_back_kb())
+    else:
+        await callback.message.edit_text("Неизвестная опция. Назад🔙", reply_markup=mk_back_kb())
+
+@dp.callback_query(lambda c: c.data and c.data.startswith("ads:"))
+async def handle_ads(callback:CallbackQuery):
+    await callback.answer()
+    cmd = callback.data.split(":",1)[1]
+    if cmd == "new":
+        await callback.message.edit_text("📝 Подать рекламу — шаг 1: введите заголовок (до 120 символов).", reply_markup=mk_back_kb())
+        wizard_states[callback.from_user.id] = {"step":"title","fields":{}}
+    elif cmd == "mine":
+        user = get_user_by_tg(callback.from_user.id)
         if not user:
-            await callback.message.edit_text("Ошибка: пользователь не найден.", reply_markup=mk_back_kb())
-            return
-        uid = user[0]
-        await callback.message.edit_text("📦 Ваши объявления:", reply_markup=my_ads_kb(uid))
-    elif cmd == "ref":
+            await callback.message.edit_text("Ошибка: профиль не найден.", reply_markup=mk_back_kb()); return
+        cur = db.cursor()
+        cur.execute("SELECT id,title,status FROM ads WHERE user_id=? ORDER BY created_at DESC", (user[0],))
+        rows = cur.fetchall()
+        if not rows:
+            await callback.message.edit_text("У вас ещё нет заявок.", reply_markup=mk_back_kb()); return
+        text = "📦 Ваши объявления:\n\n" + "\n".join([f"#{r[0]} • {r[1]} • {r[2]}" for r in rows])
+        kb = InlineKeyboardBuilder()
+        kb.button(text="Назад🔙", callback_data="back:main")
+        await callback.message.edit_text(text, reply_markup=kb.as_markup())
+    else:
+        await callback.message.edit_text("Неизвестная опция в Рекламе.", reply_markup=mk_back_kb())
+
+@dp.callback_query(lambda c: c.data and c.data.startswith("profile:"))
+async def handle_profile(callback:CallbackQuery):
+    await callback.answer()
+    cmd = callback.data.split(":",1)[1]
+    if cmd == "edit":
+        await callback.message.edit_text("✏️ Редактирование профиля — пока заглушка. Назад🔙", reply_markup=mk_back_kb())
+    elif cmd == "my_ads":
+        await callback.message.edit_text("Переход к моим объявлениям...", reply_markup=InlineKeyboardBuilder().button(text="Назад🔙", callback_data="back:main").as_markup())
+    else:
+        await callback.message.edit_text("Неизвестная опция профиля.", reply_markup=mk_back_kb())
+
+@dp.callback_query(lambda c: c.data and c.data.startswith("stats:"))
+async def handle_stats(callback:CallbackQuery):
+    await callback.answer()
+    cmd = callback.data.split(":",1)[1]
+    if cmd == "ref":
         cur = db.cursor()
         cur.execute("SELECT ref_code FROM users WHERE tg_id=?", (callback.from_user.id,))
         r = cur.fetchone()
         ref = r[0] if r else None
-        cur.execute("SELECT ref_code,clicks,signups FROM referrals WHERE ref_code=?", (ref,))
+        cur.execute("SELECT clicks,signups FROM referrals WHERE ref_code=?", (ref,))
         rr = cur.fetchone()
-        text = "🔗 Ваша реф‑ссылка и статистика:\n\n"
-        text += f"Реф: {ref or '—'}\n"
+        text = f"🔗 Ваша реф‑ссылка: {ref or '—'}\n"
         if rr:
-            text += f"Клики: {rr[1]}, Регистрации: {rr[2]}"
+            text += f"Клики: {rr[0]}, Регистрации: {rr[1]}"
         else:
-            text += "Клики и регистрации пока отсутствуют."
-        text += "\n\nНазад — возвращает в главное меню."
+            text += "Данных пока нет."
         await callback.message.edit_text(text, reply_markup=mk_back_kb())
-    elif cmd == "help":
-        await callback.message.edit_text(
-            "❓ Помощь и подсказки:\n\n"
-            "• Подать рекламу — через кнопку 'Подать рекламу'.\n"
-            "• Мои объявления — посмотреть статус и отозвать.\n"
-            "• Админ видит список ожидающих и может одобрять/публиковать.\n\n"
-            "Все экраны содержат кнопку 'Назад🔙', которая возвращает в меню /start.",
-            reply_markup=mk_back_kb()
-        )
-    elif cmd == "about":
-        about_text = (
-            "🤖 О боте — BotPromoter\n\n"
-            "Этот бот помогает размещать рекламу Telegram‑ботов и отслеживать рекламу через реф‑ссылки. "
-            "Ключевые возможности:\n"
-            "• Подача объявления через удобный wizard; 📝\n"
-            "• Модерация заявок админом с превью и одобрением; ✅\n"
-            "• Автопубликация в канал (если указан CHANNEL) или превью админу; 📣\n"
-            "• Трекер кликов по реф‑ссылкам и простая статистика; 📊\n\n"
-            "Правила: модерация обязательна, не размещаем спам или запрещённый контент. "
-            "Если у тебя вопрос — пиши администратору. Удачи и больших кликов! 🚀"
-        )
-        await callback.message.edit_text(about_text, reply_markup=mk_back_kb())
+    elif cmd == "global":
+        cur = db.cursor()
+        cur.execute("SELECT COUNT(*) FROM ads")
+        total = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM clicks")
+        clicks = cur.fetchone()[0]
+        await callback.message.edit_text(f"📊 Общая статистика\nОбъявлений: {total}\nКликов: {clicks}", reply_markup=mk_back_kb())
     else:
-        await callback.message.edit_text("Неизвестная опция. Назад🔙", reply_markup=mk_back_kb())
+        await callback.message.edit_text("Неизвестная опция статистики.", reply_markup=mk_back_kb())
 
 @dp.callback_query(lambda c: c.data and c.data.startswith("admin:"))
-async def handle_admin(callback:CallbackQuery):
+async def handle_admin_actions(callback:CallbackQuery):
     await callback.answer()
     if not (ADMIN_ID and callback.from_user.id == ADMIN_ID):
-        await callback.message.edit_text("⛔ Доступ запрещён. Только админ может это делать.", reply_markup=mk_back_kb())
-        return
+        await callback.message.edit_text("⛔ Это админская зона. Назад🔙", reply_markup=mk_back_kb()); return
     parts = callback.data.split(":",2)
     action = parts[1]
-    arg = parts[2] if len(parts)>2 else None
     if action == "pending":
         rows = list_pending_ads()
         if not rows:
-            await callback.message.edit_text("Нет ожидающих заявок. Назад🔙", reply_markup=mk_back_kb())
-            return
-        text = "🔔 Ожидающие заявки:\n\n" + "\n".join([f"#{r[0]} • {r[2]} • {r[3]} • {r[4]}" for r in rows])
+            await callback.message.edit_text("Нет ожидающих заявок.", reply_markup=mk_back_kb()); return
         kb = InlineKeyboardBuilder()
         for aid, uid, title, package, created in rows:
             kb.button(text=f"#{aid} {title}", callback_data=f"admin:preview:{aid}")
         kb.button(text="Назад🔙", callback_data="back:main")
-        await callback.message.edit_text(text, reply_markup=kb.as_markup(row_width=1))
-    elif action == "preview" and arg:
-        ad = get_ad(int(arg))
+        await callback.message.edit_text("🔔 Ожидающие заявки:", reply_markup=kb.as_markup(row_width=1))
+    elif action == "settings":
+        await callback.message.edit_text("⚙️ Настройки админа — пока заглушка.", reply_markup=mk_back_kb())
+    elif action == "preview" and len(parts) > 2:
+        aid = int(parts[2])
+        ad = get_ad(aid)
         if not ad:
-            await callback.message.edit_text("Объявление не найдено. Назад🔙", reply_markup=mk_back_kb()); return
+            await callback.message.edit_text("Объявление не найдено.", reply_markup=mk_back_kb()); return
         aid, uid, title, text_body, media_json, package, target_channel, scheduled_at, status = ad
-        preview = f"🔎 Заявка #{aid}\n\n{title}\n\n{(text_body[:800] + '...') if len(text_body)>800 else text_body}\n\nПакет: {package}\nСтатус: {status}\n"
-        await callback.message.edit_text(preview, reply_markup=ad_preview_kb(aid))
-    elif action == "approve" and arg:
-        aid = int(arg)
-        set_ad_status(aid, "approved")
-        cur = db.cursor()
-        cur.execute("SELECT tg_id FROM users WHERE id=(SELECT user_id FROM ads WHERE id=?)", (aid,))
-        r = cur.fetchone()
-        if r and r[0]:
-            try:
-                asyncio.create_task(bot.send_message(r[0], f"✅ Ваша заявка #{aid} одобрена модератором."))
-            except Exception:
-                pass
-        await callback.message.edit_text(f"✅ Заявка #{aid} одобрена. Назад🔙", reply_markup=mk_back_kb())
-    elif action == "reject" and arg:
-        aid = int(arg)
-        set_ad_status(aid, "rejected")
-        cur = db.cursor()
-        cur.execute("SELECT tg_id FROM users WHERE id=(SELECT user_id FROM ads WHERE id=?)", (aid,))
-        r = cur.fetchone()
-        if r and r[0]:
-            try:
-                asyncio.create_task(bot.send_message(r[0], f"❌ Ваша заявка #{aid} отклонена."))
-            except Exception:
-                pass
-        await callback.message.edit_text(f"❌ Заявка #{aid} отклонена. Назад🔙", reply_markup=mk_back_kb())
-    elif action == "postnow" and arg:
-        aid = int(arg)
-        await callback.message.edit_text("🚀 Публикация запускается...")
-        ok = await publish_ad(aid)
-        if ok:
-            await callback.message.edit_text(f"✅ Объявление #{aid} опубликовано. Назад🔙", reply_markup=mk_back_kb())
-        else:
-            await callback.message.edit_text(f"❌ Ошибка при публикации #{aid}. Назад🔙", reply_markup=mk_back_kb())
+        preview = f"🔎 Заявка #{aid}\n\n{title}\n\n{(text_body[:800] + '...') if len(text_body)>800 else text_body}\n\nПакет: {package}\nСтатус: {status}"
+        kb = InlineKeyboardBuilder()
+        kb.button(text="✅ Одобрить", callback_data=f"admin:approve:{aid}")
+        kb.button(text="❌ Отклонить", callback_data=f"admin:reject:{aid}")
+        kb.button(text="🚀 Опубликовать сейчас", callback_data=f"admin:postnow:{aid}")
+        kb.button(text="Назад🔙", callback_data="back:main")
+        await callback.message.edit_text(preview, reply_markup=kb.as_markup(row_width=2))
+    elif action in ("approve","reject","postnow") and len(parts) > 2:
+        aid = int(parts[2])
+        if action == "approve":
+            set_ad_status(aid, "approved")
+            cur = db.cursor()
+            cur.execute("SELECT tg_id FROM users WHERE id=(SELECT user_id FROM ads WHERE id=?)", (aid,))
+            r = cur.fetchone()
+            if r and r[0]:
+                try:
+                    asyncio.create_task(bot.send_message(r[0], f"✅ Ваша заявка #{aid} одобрена модератором."))
+                except Exception:
+                    pass
+            await callback.message.edit_text(f"✅ Заявка #{aid} одобрена. Назад🔙", reply_markup=mk_back_kb())
+        elif action == "reject":
+            set_ad_status(aid, "rejected")
+            cur = db.cursor()
+            cur.execute("SELECT tg_id FROM users WHERE id=(SELECT user_id FROM ads WHERE id=?)", (aid,))
+            r = cur.fetchone()
+            if r and r[0]:
+                try:
+                    asyncio.create_task(bot.send_message(r[0], f"❌ Ваша заявка #{aid} отклонена."))
+                except Exception:
+                    pass
+            await callback.message.edit_text(f"❌ Заявка #{aid} отклонена. Назад🔙", reply_markup=mk_back_kb())
+        elif action == "postnow":
+            await callback.message.edit_text("🚀 Публикация запускается...")
+            ok = await publish_ad(aid)
+            if ok:
+                await callback.message.edit_text(f"✅ Объявление #{aid} опубликовано. Назад🔙", reply_markup=mk_back_kb())
+            else:
+                await callback.message.edit_text(f"❌ Ошибка при публикации #{aid}. Назад🔙", reply_markup=mk_back_kb())
     else:
-        await callback.message.edit_text("Неизвестная админская команда. Назад🔙", reply_markup=mk_back_kb())
+        await callback.message.edit_text("Неизвестная админская команда.", reply_markup=mk_back_kb())
 
-@dp.callback_query(lambda c: c.data and c.data.startswith("flow:my_ad:"))
-async def handle_my_ad(callback:CallbackQuery):
-    await callback.answer()
-    parts = callback.data.split(":",2)
-    aid = int(parts[2])
-    ad = get_ad(aid)
-    if not ad:
-        await callback.message.edit_text("Объявление не найдено. Назад🔙", reply_markup=mk_back_kb()); return
-    aid, uid, title, text_body, media_json, package, target_channel, scheduled_at, status = ad
-    s = f"📌 #{aid} • {title}\nСтатус: {status}\nЗапланировано: {scheduled_at}\n\n{(text_body[:1000] + '...') if len(text_body)>1000 else text_body}"
-    kb = InlineKeyboardBuilder()
-    if status == "pending":
-        kb.button(text="🗑 Отозвать заявку", callback_data=f"user:withdraw:{aid}")
-    kb.button(text="Назад🔙", callback_data="back:main")
-    await callback.message.edit_text(s, reply_markup=kb.as_markup())
-
-@dp.callback_query(lambda c: c.data and c.data.startswith("user:"))
-async def handle_user_actions(callback:CallbackQuery):
-    await callback.answer()
-    parts = callback.data.split(":",2)
-    action = parts[1]
-    arg = parts[2] if len(parts)>2 else None
-    if action == "withdraw" and arg:
-        aid = int(arg)
-        cur = db.cursor()
-        cur.execute("SELECT user_id FROM ads WHERE id=?", (aid,))
-        r = cur.fetchone()
-        user = get_user_by_tg(callback.from_user.id)
-        if not r or not user or r[0] != user[0]:
-            await callback.message.edit_text("⛔ Нельзя отменить — не ваш пост. Назад🔙", reply_markup=mk_back_kb()); return
-        set_ad_status(aid, "rejected")
-        await callback.message.edit_text("🗑 Заявка отозвана. Назад🔙", reply_markup=mk_back_kb())
-    else:
-        await callback.message.edit_text("Неизвестное действие. Назад🔙", reply_markup=mk_back_kb())
-
-@dp.callback_query(lambda c: c.data and c.data.startswith("back:"))
-async def handle_back(callback:CallbackQuery):
-    await callback.answer()
-    dest = callback.data.split(":",1)[1]
-    if dest == "main":
-        user = get_user_by_tg(callback.from_user.id)
-        greeting = main_greeting_text(user)
-        extra = "\n\nНажми кнопку, чтобы продолжить."
-        await callback.message.edit_text(greeting + extra, reply_markup=mk_main_kb())
-    else:
-        await callback.message.edit_text("🔙 Возврат в меню", reply_markup=mk_main_kb())
-
-# ====== Wizard message flow handler ======
 @dp.message()
 async def wizard_messages(message:Message):
     uid = message.from_user.id
@@ -410,9 +403,9 @@ async def wizard_messages(message:Message):
             kb.button(text="Free (очередь) 🕒", callback_data="pkg:free")
             kb.button(text="Featured (приоритет) ⭐", callback_data="pkg:featured")
             kb.button(text="Назад🔙", callback_data="back:main")
-            await message.answer("Выберите пакет размещения:", reply_markup=kb.as_markup())
+            await message.answer("Выберите пакет размещения:", reply_markup=kb.as_markup(row_width=2))
             return
-    # convenience quick-add: add:title|text
+    # quick-add: add:title|text
     if message.text and message.text.startswith("add:"):
         parts = message.text.split(":",1)[1].split("|",1)
         title = parts[0].strip()
@@ -422,8 +415,7 @@ async def wizard_messages(message:Message):
         aid = save_ad(user[0], title, text_body, "", "free", CHANNEL or None, None)
         await message.answer(f"✅ Заявка создана #{aid}. Ожидает модерации. Назад🔙", reply_markup=mk_main_kb())
         return
-    # if not in wizard, just remind to use menu
-    await message.answer("Используй меню для действий или /start, чтобы вернуться. Назад🔙", reply_markup=mk_main_kb())
+    await message.answer("Используй меню или /start. Назад🔙", reply_markup=mk_main_kb())
 
 @dp.callback_query(lambda c: c.data and c.data.startswith("pkg:"))
 async def handle_pkg(callback:CallbackQuery):
@@ -442,7 +434,6 @@ async def handle_pkg(callback:CallbackQuery):
     wizard_states.pop(uid, None)
     await callback.message.edit_text(f"🎉 Готово! Заявка #{aid} отправлена на модерацию. Ожидайте. Назад🔙", reply_markup=mk_main_kb())
 
-# ====== Publish logic (uses CHANNEL if set, otherwise sends preview to ADMIN_ID) ======
 async def publish_ad(ad_id:int):
     ad = get_ad(ad_id)
     if not ad:
@@ -485,7 +476,6 @@ async def publish_ad(ad_id:int):
                 pass
     return success
 
-# ====== Scheduled runner for scheduled posts ======
 async def scheduled_runner():
     while True:
         try:
@@ -497,7 +487,6 @@ async def scheduled_runner():
             logger.exception("scheduled_runner error")
         await asyncio.sleep(30)
 
-# ====== Minimal aiohttp health + redirect (for Render web service) ======
 async def start_web():
     try:
         from aiohttp import web
@@ -532,7 +521,6 @@ async def start_web():
     await site.start()
     logger.info("Web server started on port %s", PORT)
 
-# ====== Startup ======
 async def on_startup():
     if ADMIN_ID:
         create_user_if_not_exists(ADMIN_ID, "admin")
