@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
-# main.py — BotPromoter final (aiogram 3.22.0 compatible)
-# - Inline navigation only, max 2 buttons per row
-# - Robust exception middleware that sends full traceback to ADMIN_ID
-# - Safe send/edit helpers
+# main.py — BotPromoter (robust, aiogram 3.22.0 compatible)
+# - Inline UI only, max 2 buttons per row
+# - Exception middleware: logs + sends traceback to ADMIN_ID
+# - Safe sending/editing helpers
 # - Polling by default; USE_WEBHOOK=1 enables webhook mode
-# - When polling starts, any existing webhook is removed automatically
-# - SQLite storage auto-init, scheduler, simple admin panel
+# - On polling startup: deleteWebhook automatically
+# - SQLite single connection, safe usage
 #
-# ENV:
+# Env variables:
 # PLAY (required) - bot token
 # ADMIN_ID (optional) - admin telegram id (numeric)
 # CHANNEL (optional) - channel username or id for publishing
 # DB_PATH (optional) - sqlite file path (default botpromoter.db)
 # PORT (optional) - web server port (default 8000)
-# USE_WEBHOOK (optional) - "1" to use webhook mode; otherwise polling
-# WEBHOOK_URL (optional) - public url (used only if USE_WEBHOOK=1)
-# WEBHOOK_PATH (optional) - path to receive updates (default /webhook)
+# USE_WEBHOOK (optional) - "1" to use webhook mode
+# WEBHOOK_URL (optional) - public url for webhook (if USE_WEBHOOK=1)
+# WEBHOOK_PATH (optional) - path for webhook (default /webhook)
 
 import os
 import asyncio
@@ -26,16 +26,19 @@ from datetime import datetime
 from typing import Optional
 
 import aiohttp
+from aiohttp import web
+
 from aiogram import Bot, Dispatcher
 from aiogram.types import Message, CallbackQuery, Update
 from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-
-# fixed import for BaseMiddleware in aiogram 3.22.0
 from aiogram.dispatcher.middlewares.base import BaseMiddleware
 
-# ====== Config & Logging ======
+# ====== Config ======
 BOT_TOKEN = os.getenv("PLAY")
+if not BOT_TOKEN:
+    raise RuntimeError("PLAY environment variable with bot token is required")
+
 ADMIN_ID = int(os.getenv("ADMIN_ID")) if os.getenv("ADMIN_ID") else None
 CHANNEL = os.getenv("CHANNEL") or None
 DB_PATH = os.getenv("DB_PATH", "botpromoter.db")
@@ -44,22 +47,20 @@ USE_WEBHOOK = os.getenv("USE_WEBHOOK", "0") == "1"
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 WEBHOOK_PATH = os.getenv("WEBHOOK_PATH", "/webhook")
 
-if not BOT_TOKEN:
-    raise RuntimeError("Set PLAY env var with bot token")
-
+# ====== Logging ======
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(name)s | %(message)s")
 logger = logging.getLogger("botpromoter")
 logging.getLogger("aiogram").setLevel(logging.INFO)
 
-# ====== Bot and Dispatcher ======
+# ====== Bot / Dispatcher ======
 bot = Bot(BOT_TOKEN)
 dp = Dispatcher()
 
-# ====== DB init ======
+# ====== DB ======
 def now_iso():
     return datetime.utcnow().isoformat()
 
-def init_db(path=DB_PATH):
+def init_db(path: str = DB_PATH):
     conn = sqlite3.connect(path, check_same_thread=False)
     cur = conn.cursor()
     cur.executescript("""
@@ -101,20 +102,32 @@ def init_db(path=DB_PATH):
 
 db = init_db()
 
-# ====== Helpers ======
-def create_user_if_not_exists(tg_id:int, username:Optional[str]=None):
+# DB helper wrapper for safety
+def db_execute(query: str, params: tuple = (), fetch: bool = False):
+    cur = db.cursor()
+    cur.execute(query, params)
+    rv = None
+    if fetch:
+        rv = cur.fetchall()
+    else:
+        db.commit()
+        rv = cur.lastrowid
+    return rv
+
+# ====== Utility functions ======
+def create_user_if_not_exists(tg_id: int, username: Optional[str] = ""):
     cur = db.cursor()
     cur.execute("SELECT id FROM users WHERE tg_id=?", (tg_id,))
     if not cur.fetchone():
         cur.execute("INSERT INTO users (tg_id,username,created_at) VALUES (?,?,?)", (tg_id, username or "", now_iso()))
         db.commit()
 
-def get_user_by_tg(tg_id:int):
+def get_user_by_tg(tg_id: int):
     cur = db.cursor()
     cur.execute("SELECT id,tg_id,username,ref_code FROM users WHERE tg_id=?", (tg_id,))
     return cur.fetchone()
 
-def set_user_ref(tg_id:int, ref_code:str):
+def set_user_ref(tg_id: int, ref_code: str):
     cur = db.cursor()
     cur.execute("UPDATE users SET ref_code=? WHERE tg_id=?", (ref_code, tg_id))
     cur.execute("INSERT OR IGNORE INTO referrals (ref_code, owner_user) VALUES (?, (SELECT id FROM users WHERE tg_id=?))", (ref_code, tg_id))
@@ -154,26 +167,27 @@ def list_scheduled_ready():
     cur.execute("SELECT id FROM ads WHERE status='approved' AND scheduled_at IS NOT NULL AND scheduled_at<=?", (now_iso(),))
     return [r[0] for r in cur.fetchall()]
 
-# ====== Safe send/edit helpers ======
+# ====== Safe send/edit ======
 async def safe_send(chat_id: int, text: str, **kwargs):
     try:
+        # Accept both int ids and '@channel' strings
         return await bot.send_message(chat_id, text, **kwargs)
     except Exception:
-        logger.exception("Failed to send message to %s", chat_id)
+        logger.exception("safe_send failed for %s", chat_id)
         return None
 
-async def safe_edit(message_obj, text:str, **kwargs):
+async def safe_edit(message_obj, text: str, **kwargs):
     try:
         return await message_obj.edit_text(text, **kwargs)
     except Exception:
-        logger.exception("Failed to edit message")
+        logger.exception("safe_edit failed, falling back to send")
         try:
             await safe_send(message_obj.chat.id, text)
         except Exception:
-            pass
+            logger.exception("fallback send also failed")
         return None
 
-# ====== UI builders (max 2 per row) ======
+# ====== UI builders (2 per row) ======
 def mk_row(*btns):
     kb = InlineKeyboardBuilder()
     for b in btns:
@@ -210,64 +224,79 @@ def admin_kb():
     return mk_row({"text":"🔔 Ожидающие заявки","callback_data":"admin:pending"},
                   {"text":"⚙️ Настройки","callback_data":"admin:settings"})
 
-# ====== Exception logging middleware (detailed) ======
+# ====== Exception middleware (detailed traceback to admin) ======
 class ExceptionLoggerMiddleware(BaseMiddleware):
     async def __call__(self, handler, event, data):
         try:
             return await handler(event, data)
         except Exception as exc:
             tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
-            logger.error("Unhandled exception in handler:\n%s", tb)
+            logger.error("Unhandled exception:\n%s", tb)
             if ADMIN_ID:
                 try:
-                    short = f"⚠️ Ошибка: {type(exc).__name__}: {str(exc)[:300]}"
+                    short = f"⚠️ Ошибка: {type(exc).__name__}: {str(exc)[:200]}"
                     await bot.send_message(ADMIN_ID, short)
                     max_len = 3800
                     for i in range(0, len(tb), max_len):
                         chunk = tb[i:i+max_len]
                         await bot.send_message(ADMIN_ID, f"<pre>{chunk}</pre>", parse_mode="HTML")
                 except Exception:
-                    logger.exception("Failed to notify admin about exception")
+                    logger.exception("Failed to forward traceback to admin")
             raise
 
-# register middleware
 dp.update.middleware(ExceptionLoggerMiddleware())
 
-# ====== Wizard state ======
-wizard_states = {}  # {tg_id: {"step":..., "fields": {...}}}
+# ====== Simple in-memory wizard state ======
+wizard_states = {}  # {tg_id: {"step":..., "fields":{}}}
 
 # ====== Handlers ======
 @dp.message(Command("start"))
-async def cmd_start(message: Message):
-    args = (message.get_args() or "").strip()
+async def cmd_start(message: Message, command=None):
+    # Safe extraction of args
+    args = ""
+    try:
+        if command and hasattr(command, "args"):
+            args = (command.args or "").strip()
+        else:
+            if message.text:
+                parts = message.text.split(maxsplit=1)
+                args = parts[1].strip() if len(parts) > 1 else ""
+    except Exception:
+        args = ""
+    # user init
     create_user_if_not_exists(message.from_user.id, message.from_user.username or "")
     user = get_user_by_tg(message.from_user.id)
     if args and args.startswith("ref_"):
-        set_user_ref(message.from_user.id, args)
-        cur = db.cursor()
-        cur.execute("UPDATE referrals SET clicks = clicks+1 WHERE ref_code=?", (args,))
-        db.commit()
-        await safe_send(message.chat.id, f"🔗 Реф ссылка зарегистрирована: {args}")
+        try:
+            set_user_ref(message.from_user.id, args)
+            cur = db.cursor()
+            cur.execute("UPDATE referrals SET clicks = clicks+1 WHERE ref_code=?", (args,))
+            db.commit()
+            await safe_send(message.chat.id, f"🔗 Реф ссылка зарегистрирована: {args}")
+        except Exception:
+            logger.exception("Failed to register referral")
     uname = user[2] if user and user[2] else message.from_user.first_name or "друг"
-    greeting = f"👋 Привет, {uname}!\n\nДобро пожаловать в BotPromoter — интерфейс для подачи и модерации рекламы. Выбери раздел."
+    greeting = f"👋 Привет, {uname}!\n\nДобро пожаловать в BotPromoter. Выбери раздел ниже."
     await safe_send(message.chat.id, greeting, reply_markup=mk_main_kb())
 
 @dp.callback_query(lambda c: c.data and c.data.startswith("menu:"))
 async def handle_menu(callback: CallbackQuery):
     await callback.answer()
-    cmd = callback.data.split(":",1)[1]
+    cmd = callback.data.split(":",1)[1] if ":" in callback.data else ""
     if cmd == "profile":
-        await safe_edit(callback.message, "👤 Профиль\n\nЗдесь твоя информация.", reply_markup=profile_kb())
+        text = "👤 Профиль\n\nИнформация о вас."
+        await safe_edit(callback.message, text, reply_markup=profile_kb())
     elif cmd == "ads":
-        await safe_edit(callback.message, "📢 Реклама\n\nУправление объявлениями.", reply_markup=ads_kb())
+        text = "📢 Реклама\n\nУправляйте объявлениями."
+        await safe_edit(callback.message, text, reply_markup=ads_kb())
     elif cmd == "stats":
-        await safe_edit(callback.message, "📊 Статистика\n\nПосмотри рефы и общую аналитику.", reply_markup=stats_kb())
+        text = "📊 Статистика\n\nРеф‑ссылка и общие метрики."
+        await safe_edit(callback.message, text, reply_markup=stats_kb())
     elif cmd == "about":
-        txt = ("ℹ️ О боте\n\nBotPromoter помогает подать рекламу бота, пройти модерацию и опубликовать в канал.\n\n"
-               "Все переходы — через кнопки. Назад — возвращает в главное меню.")
-        await safe_edit(callback.message, txt, reply_markup=mk_back_kb())
+        text = "ℹ️ О боте\n\nBotPromoter — простой сервис подачи рекламы для Telegram‑ботов."
+        await safe_edit(callback.message, text, reply_markup=mk_back_kb())
     elif cmd == "help":
-        await safe_edit(callback.message, "❓ Помощь\n\nИспользуй кнопки — всё управляется через интерфейс.", reply_markup=mk_back_kb())
+        await safe_edit(callback.message, "❓ Помощь\n\nВсё управляется кнопками. Никаких команд.", reply_markup=mk_back_kb())
     elif cmd == "admin":
         if ADMIN_ID and callback.from_user.id == ADMIN_ID:
             await safe_edit(callback.message, "🔐 Панель администратора", reply_markup=admin_kb())
@@ -279,10 +308,10 @@ async def handle_menu(callback: CallbackQuery):
 @dp.callback_query(lambda c: c.data and c.data.startswith("ads:"))
 async def handle_ads(callback: CallbackQuery):
     await callback.answer()
-    cmd = callback.data.split(":",1)[1]
+    cmd = callback.data.split(":",1)[1] if ":" in callback.data else ""
     if cmd == "new":
         wizard_states[callback.from_user.id] = {"step":"title","fields":{}}
-        await safe_edit(callback.message, "📝 Подать рекламу — шаг 1: введите заголовок (до 120 символов).", reply_markup=mk_back_kb())
+        await safe_edit(callback.message, "📝 Подать рекламу — шаг 1: отправьте заголовок (до 120 символов).", reply_markup=mk_back_kb())
     elif cmd == "mine":
         user = get_user_by_tg(callback.from_user.id)
         if not user:
@@ -302,7 +331,7 @@ async def handle_ads(callback: CallbackQuery):
 @dp.callback_query(lambda c: c.data and c.data.startswith("profile:"))
 async def handle_profile(callback: CallbackQuery):
     await callback.answer()
-    cmd = callback.data.split(":",1)[1]
+    cmd = callback.data.split(":",1)[1] if ":" in callback.data else ""
     if cmd == "edit":
         await safe_edit(callback.message, "✏️ Редактирование профиля — пока недоступно.", reply_markup=mk_back_kb())
     elif cmd == "my_ads":
@@ -313,7 +342,7 @@ async def handle_profile(callback: CallbackQuery):
 @dp.callback_query(lambda c: c.data and c.data.startswith("stats:"))
 async def handle_stats(callback: CallbackQuery):
     await callback.answer()
-    cmd = callback.data.split(":",1)[1]
+    cmd = callback.data.split(":",1)[1] if ":" in callback.data else ""
     if cmd == "ref":
         cur = db.cursor()
         cur.execute("SELECT ref_code FROM users WHERE tg_id=?", (callback.from_user.id,))
@@ -343,7 +372,7 @@ async def handle_admin_actions(callback: CallbackQuery):
     if not (ADMIN_ID and callback.from_user.id == ADMIN_ID):
         await safe_edit(callback.message, "⛔ Это админская зона.", reply_markup=mk_back_kb()); return
     parts = callback.data.split(":",2)
-    action = parts[1]
+    action = parts[1] if len(parts) > 1 else ""
     if action == "pending":
         rows = list_pending_ads()
         if not rows:
@@ -356,7 +385,10 @@ async def handle_admin_actions(callback: CallbackQuery):
     elif action == "settings":
         await safe_edit(callback.message, "⚙️ Настройки админа — заглушка.", reply_markup=mk_back_kb())
     elif action == "preview" and len(parts) > 2:
-        aid = int(parts[2])
+        try:
+            aid = int(parts[2])
+        except Exception:
+            await safe_edit(callback.message, "Неверный id заявки.", reply_markup=mk_back_kb()); return
         ad = get_ad(aid)
         if not ad:
             await safe_edit(callback.message, "Объявление не найдено.", reply_markup=mk_back_kb()); return
@@ -369,7 +401,10 @@ async def handle_admin_actions(callback: CallbackQuery):
         kb.button(text="Назад🔙", callback_data="back:main")
         await safe_edit(callback.message, preview, reply_markup=kb.as_markup(row_width=2))
     elif action in ("approve","reject","postnow") and len(parts) > 2:
-        aid = int(parts[2])
+        try:
+            aid = int(parts[2])
+        except Exception:
+            await safe_edit(callback.message, "Неверный id заявки.", reply_markup=mk_back_kb()); return
         if action == "approve":
             set_ad_status(aid, "approved")
             cur = db.cursor()
@@ -405,7 +440,7 @@ async def handle_admin_actions(callback: CallbackQuery):
 @dp.callback_query(lambda c: c.data and c.data.startswith("back:"))
 async def handle_back(callback: CallbackQuery):
     await callback.answer()
-    dest = callback.data.split(":",1)[1]
+    dest = callback.data.split(":",1)[1] if ":" in callback.data else ""
     if dest == "main":
         user = get_user_by_tg(callback.from_user.id)
         uname = user[2] if user and user[2] else callback.from_user.first_name or "друг"
@@ -414,43 +449,50 @@ async def handle_back(callback: CallbackQuery):
     else:
         await safe_edit(callback.message, "🔙 Возврат", reply_markup=mk_main_kb())
 
-# ====== Wizard message flow ======
+# ====== Wizard text flow ======
 @dp.message()
 async def wizard_messages(message: Message):
     uid = message.from_user.id
     if uid in wizard_states:
         st = wizard_states[uid]
         step = st.get("step")
-        if step == "title":
-            st.setdefault("fields", {})["title"] = message.text.strip()[:120]
-            st["step"] = "text"
-            await safe_send(message.chat.id, "✍️ Шаг 2: Отправьте текст объявления (до 800 символов).", reply_markup=mk_back_kb())
+        try:
+            if step == "title":
+                st.setdefault("fields", {})["title"] = (message.text or "")[:120]
+                st["step"] = "text"
+                await safe_send(message.chat.id, "✍️ Шаг 2: Отправьте текст объявления (до 800 символов).", reply_markup=mk_back_kb())
+                return
+            if step == "text":
+                st["fields"]["text"] = (message.text or "")[:800]
+                st["step"] = "package"
+                kb = InlineKeyboardBuilder()
+                kb.button(text="Free (очередь) 🕒", callback_data="pkg:free")
+                kb.button(text="Featured (приоритет) ⭐", callback_data="pkg:featured")
+                kb.button(text="Назад🔙", callback_data="back:main")
+                await safe_send(message.chat.id, "Выберите пакет размещения:", reply_markup=kb.as_markup(row_width=2))
+                return
+        except Exception:
+            logger.exception("wizard_messages error")
+            wizard_states.pop(uid, None)
+            await safe_send(message.chat.id, "Ошибка процесса. Попробуйте снова.", reply_markup=mk_main_kb())
             return
-        if step == "text":
-            st["fields"]["text"] = message.text.strip()[:800]
-            st["step"] = "package"
-            kb = InlineKeyboardBuilder()
-            kb.button(text="Free (очередь) 🕒", callback_data="pkg:free")
-            kb.button(text="Featured (приоритет) ⭐", callback_data="pkg:featured")
-            kb.button(text="Назад🔙", callback_data="back:main")
-            await safe_send(message.chat.id, "Выберите пакет размещения:", reply_markup=kb.as_markup(row_width=2))
-            return
-    await safe_send(message.chat.id, "Используйте меню для действий. Назад🔙", reply_markup=mk_main_kb())
+    # fallback
+    await safe_send(message.chat.id, "Используйте меню для действий.", reply_markup=mk_main_kb())
 
 @dp.callback_query(lambda c: c.data and c.data.startswith("pkg:"))
 async def handle_pkg(callback: CallbackQuery):
     await callback.answer()
-    pkg = callback.data.split(":",1)[1]
+    pkg = callback.data.split(":",1)[1] if ":" in callback.data else ""
     uid = callback.from_user.id
     st = wizard_states.get(uid)
     if not st or not st.get("fields"):
         wizard_states.pop(uid, None)
-        await safe_edit(callback.message, "Ошибка состояния, начните заново.", reply_markup=mk_back_kb())
+        await safe_edit(callback.message, "Ошибка состояния. Начните заново.", reply_markup=mk_back_kb())
         return
     fields = st["fields"]
     create_user_if_not_exists(uid, callback.from_user.username or "")
     user = get_user_by_tg(uid)
-    aid = save_ad(user[0], fields["title"], fields["text"], "", pkg, CHANNEL, None)
+    aid = save_ad(user[0], fields.get("title",""), fields.get("text",""), "", pkg, CHANNEL, None)
     wizard_states.pop(uid, None)
     await safe_edit(callback.message, f"🎉 Готово! Заявка #{aid} отправлена на модерацию.", reply_markup=mk_main_kb())
 
@@ -509,14 +551,8 @@ async def scheduled_runner():
             logger.exception("scheduled_runner error")
         await asyncio.sleep(30)
 
-# ====== Web server for health + webhook handling ======
+# ====== Web server (health, redirect, webhook receiver) ======
 async def start_web():
-    try:
-        from aiohttp import web
-    except Exception:
-        logger.info("aiohttp not installed; skipping web server")
-        return
-
     app = web.Application()
 
     async def health(req):
@@ -529,7 +565,7 @@ async def start_web():
                 aid = int(ref.split("ref_ad",1)[1])
                 record_click(aid, None)
             except Exception:
-                pass
+                logger.exception("redirect_ref parse error")
         try:
             bot_info = await bot.get_me()
             bot_username = bot_info.username
@@ -558,15 +594,14 @@ async def start_web():
     await site.start()
     logger.info("Web server started on port %s (webhook=%s)", PORT, USE_WEBHOOK)
 
-# ====== Startup ======
+# ====== Startup tasks ======
 async def on_startup():
-    # create admin user record if admin exists
     if ADMIN_ID:
         create_user_if_not_exists(ADMIN_ID, "admin")
     asyncio.create_task(start_web())
     asyncio.create_task(scheduled_runner())
 
-    # If running polling mode, ensure webhook is deleted to avoid conflicts
+    # If polling mode - delete possible webhook to avoid conflicts
     if not USE_WEBHOOK:
         try:
             async with aiohttp.ClientSession() as s:
@@ -574,9 +609,9 @@ async def on_startup():
                     txt = await resp.text()
                     logger.info("deleteWebhook result: %s", txt)
         except Exception:
-            logger.exception("Failed to delete webhook at startup")
+            logger.exception("Failed deleteWebhook")
 
-    # If running webhook mode, register webhook if WEBHOOK_URL provided
+    # If webhook mode - register webhook if WEBHOOK_URL provided
     if USE_WEBHOOK and WEBHOOK_URL:
         try:
             url = f"{WEBHOOK_URL.rstrip('/')}{WEBHOOK_PATH}"
@@ -585,14 +620,14 @@ async def on_startup():
                     txt = await resp.text()
                     logger.info("setWebhook result: %s", txt)
         except Exception:
-            logger.exception("Webhook registration failed")
+            logger.exception("Failed setWebhook")
 
 # ====== Entrypoint ======
 if __name__ == "__main__":
     loop = asyncio.get_event_loop()
     loop.create_task(on_startup())
     if USE_WEBHOOK:
-        logger.info("Starting bot in webhook mode")
+        logger.info("Starting in webhook mode")
         try:
             loop.run_forever()
         except KeyboardInterrupt:
@@ -600,6 +635,7 @@ if __name__ == "__main__":
     else:
         logger.info("Starting polling")
         try:
+            # run_polling will manage clean shutdown on Ctrl+C; use single instance on Render
             dp.run_polling(bot)
         except Exception:
             logger.exception("Polling stopped with exception")
