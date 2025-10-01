@@ -1,6 +1,4 @@
+sessions/
 __pycache__/
-*.pyc
-.env
-sessions/*.session.json
-.vscode/
-.env.local
+.venv/
+*.session
