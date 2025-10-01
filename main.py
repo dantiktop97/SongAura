@@ -6,195 +6,163 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.filters import Command
 
-# === Конфиг ===
-API_ID = 27258770
-API_HASH = "8eda3f168522804bead42bfe705bdaeb"
-ADMIN_ID = 7549204023
-BOT_TOKEN = "Song"
+# --- Настройки из окружения ---
+API_ID = int(os.environ.get("API_ID", "0"))
+API_HASH = os.environ.get("API_HASH", "")
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
+ADMIN_ID = int(os.environ.get("ADMIN_ID", "0"))
 
-# === Папка для сессий ===
-if not os.path.exists("sessions"):
-    os.makedirs("sessions")
+# --- Папка для сессий ---
+SESSIONS_DIR = "sessions"
+os.makedirs(SESSIONS_DIR, exist_ok=True)
 
-# === Aiogram-бот ===
+# --- Aiogram bot setup ---
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# --- Глобальные состояния ---
-active_monitors = {}   # {session: client}
-search_state = {}      # {user_id: (session, chat_id)}
+# --- Вспомогательные функции ---
+def safe_session_name(phone: str) -> str:
+    return phone.replace("+", "").replace(" ", "").replace("/", "_")
 
-# --- Утилиты ---
-def safe_filename(phone: str) -> str:
-    return phone.replace("+", "").replace(" ", "").strip()
+def list_sessions():
+    return [f[:-8] for f in os.listdir(SESSIONS_DIR) if f.endswith(".session")]
 
-def get_sessions():
-    files = os.listdir("sessions")
-    return [f.replace(".session", "") for f in files if f.endswith(".session")]
+async def get_client(session_name: str):
+    path = os.path.join(SESSIONS_DIR, session_name)
+    client = TelegramClient(path, API_ID, API_HASH, device_model="iPhone 13 Pro", system_version="iOS 18.1.1", app_version="9.6.0")
+    await client.connect()
+    return client
 
-async def get_chats(session_name):
-    client = TelegramClient(
-        f"sessions/{session_name}",
-        API_ID,
-        API_HASH,
-        device_model="iPhone 13 Pro",
-        system_version="iOS 18.1.1",
-        app_version="9.6.0"
-    )
-    chats = []
-    async with client:
-        dialogs = await client.get_dialogs()
-        for d in dialogs[:10]:  # только первые 10 чатов
-            chats.append((d.name or "Без имени", d.id))
-    return chats
+async def fetch_chats(session_name: str, limit: int = 10):
+    client = await get_client(session_name)
+    try:
+        dialogs = await client.get_dialogs(limit=limit)
+        return [(d.title or d.name or "ЛС", d.id) for d in dialogs]
+    finally:
+        await client.disconnect()
 
-async def get_messages(session_name, chat_id):
-    client = TelegramClient(f"sessions/{session_name}", API_ID, API_HASH)
-    msgs = []
-    async with client:
-        async for msg in client.iter_messages(chat_id, limit=5):
-            if msg.text:
-                msgs.append(f"{msg.sender_id}: {msg.text}")
-    return msgs
+async def fetch_messages(session_name: str, chat_id: int, limit: int = 5):
+    client = await get_client(session_name)
+    try:
+        msgs = []
+        async for m in client.iter_messages(chat_id, limit=limit):
+            text = m.text or "<media>"
+            sender = getattr(m, "sender_id", None)
+            msgs.append(f"{sender}: {text}")
+        return msgs
+    finally:
+        await client.disconnect()
 
-# --- Онлайн-мониторинг ---
-async def start_monitoring(session):
-    client = TelegramClient(f"sessions/{session}", API_ID, API_HASH)
+# --- Мониторинг новых сообщений (одно подключение на сессию) ---
+MONITORS = {}  # session_name -> asyncio.Task
+
+async def monitor_session(session_name: str):
+    path = os.path.join(SESSIONS_DIR, session_name)
+    client = TelegramClient(path, API_ID, API_HASH)
     await client.start()
-
     @client.on(events.NewMessage(incoming=True))
     async def handler(event):
         chat = await event.get_chat()
         name = getattr(chat, "title", None) or getattr(chat, "first_name", "ЛС")
         text = event.text or "📎 Медиа"
-        await bot.send_message(ADMIN_ID, f"📩 [{session}] {name}:\n{text}")
+        await bot.send_message(ADMIN_ID, f"📩 [{session_name}] {name}:\n{text}")
+    try:
+        await client.run_until_disconnected()
+    finally:
+        await client.disconnect()
 
-    active_monitors[session] = client
-    await client.run_until_disconnected()
-
-# --- Главное меню ---
-def get_main_menu():
-    buttons = [
-        [InlineKeyboardButton(text=f"👤 {s}", callback_data=f"account:{s}")]
-        for s in get_sessions()
-    ]
+# --- Ui для админа ---
+def main_menu_markup():
+    sessions = list_sessions()
+    buttons = [[InlineKeyboardButton(text=f"👤 {s}", callback_data=f"account:{s}")] for s in sessions]
     if not buttons:
         buttons = [[InlineKeyboardButton(text="❌ Нет аккаунтов", callback_data="none")]]
-    buttons.append([InlineKeyboardButton(text="➕ Добавить аккаунт", callback_data="add")])
+    buttons.append([InlineKeyboardButton(text="➕ Добавить (register)", callback_data="add")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
-# --- Хэндлеры ---
 @dp.message(Command("start"))
-async def start(msg: types.Message):
-    if msg.from_user.id == ADMIN_ID:
-        await msg.answer("👑 Выбери аккаунт:", reply_markup=get_main_menu())
-    else:
-        await msg.answer("🚫 Нет доступа.")
+async def cmd_start(msg: types.Message):
+    if msg.from_user.id != ADMIN_ID:
+        await msg.answer("🚫 Нет доступа")
+        return
+    await msg.answer("👑 Выберите аккаунт:", reply_markup=main_menu_markup())
 
 @dp.callback_query()
-async def handle_callback(call: types.CallbackQuery):
+async def on_callback(call: types.CallbackQuery):
     if call.from_user.id != ADMIN_ID:
-        await call.message.answer("🚫 Нет доступа.")
+        await call.message.answer("🚫 Нет доступа")
         return
-
-    data = call.data.split(":")
+    data = (call.data or "").split(":")
     action = data[0]
-
-    # Меню аккаунта
     if action == "account":
         session = data[1]
-        chats = await get_chats(session)
-        buttons = [
-            [InlineKeyboardButton(text=f"💬 {name}", callback_data=f"chat:{session}:{chat_id}")]
-            for name, chat_id in chats
-        ]
-        buttons.append([InlineKeyboardButton(text="💠 Telegram", callback_data=f"tgchat:{session}")])
+        chats = await fetch_chats(session, limit=10)
+        buttons = [[InlineKeyboardButton(text=f"💬 {name}", callback_data=f"chat:{session}:{chat_id}")] for name, chat_id in chats]
         buttons.append([InlineKeyboardButton(text="📡 Мониторинг", callback_data=f"monitor:{session}")])
         buttons.append([InlineKeyboardButton(text="🔙 Назад", callback_data="back")])
-        await call.message.answer(f"📂 Меню аккаунта `{session}`:", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
-
-    # Чат → последние сообщения
+        await call.message.answer(f"📂 Аккаунт {session}", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
     elif action == "chat":
         session, chat_id = data[1], int(data[2])
-        msgs = await get_messages(session, chat_id)
+        msgs = await fetch_messages(session, chat_id, limit=5)
         text = "\n".join(msgs) if msgs else "❌ Нет сообщений"
-        buttons = [
-            [InlineKeyboardButton(text="🔍 Поиск", callback_data=f"search:{session}:{chat_id}")],
-            [InlineKeyboardButton(text="🔙 Назад", callback_data=f"account:{session}")]
-        ]
-        await call.message.answer(f"💬 Сообщения:\n\n{text}", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
-
-    # Чат с Telegram (777000)
-    elif action == "tgchat":
-        session = data[1]
-        msgs = await get_messages(session, 777000)
-        text = "\n".join(msgs) if msgs else "❌ Нет сообщений"
-        buttons = [[InlineKeyboardButton(text="🔙 Назад", callback_data=f"account:{session}")]]
-        await call.message.answer(f"💠 Чат с Telegram:\n\n{text}", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
-
-    # Мониторинг
+        kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 Назад", callback_data=f"account:{session}")]])
+        await call.message.answer(f"💬 Сообщения:\n\n{text}", reply_markup=kb)
     elif action == "monitor":
         session = data[1]
-        if session in active_monitors:
-            await call.message.answer(f"⚡ Мониторинг `{session}` уже активен")
-        else:
-            asyncio.create_task(start_monitoring(session))
-            await call.message.answer(f"📡 Мониторинг `{session}` запущен")
-
-    # Поиск
-    elif action == "search":
-        session, chat_id = data[1], int(data[2])
-        search_state[call.from_user.id] = (session, chat_id)
-        await call.message.answer("🔍 Введи слово для поиска в этом чате:")
-
+        if session in MONITORS:
+            await call.message.answer(f"⚡ Мониторинг {session} уже запущен")
+            return
+        task = asyncio.create_task(monitor_session(session))
+        MONITORS[session] = task
+        await call.message.answer(f"📡 Мониторинг {session} запущен")
     elif action == "back":
-        await call.message.answer("🔙 Главное меню:", reply_markup=get_main_menu())
-
+        await call.message.answer("🔙 Главное меню", reply_markup=main_menu_markup())
     elif action == "add":
-        await call.message.answer("📲 Добавление аккаунта пока через консоль:\n\n`python3 main.py register`")
+        await call.message.answer("Добавление аккаунта: запусти локально `python register.py` и загрузь .session в папку sessions/")
 
-# --- Обработка поиска ---
+# --- Обработка обычного текста (поиск, если нужно) ---
+SEARCH_STATE = {}  # user_id -> (session, chat_id)
+
 @dp.message()
-async def handle_search(msg: types.Message):
-    if msg.from_user.id in search_state:
-        session, chat_id = search_state.pop(msg.from_user.id)
-        client = TelegramClient(f"sessions/{session}", API_ID, API_HASH)
-        results = []
-        async with client:
+async def on_text(msg: types.Message):
+    uid = msg.from_user.id
+    if uid in SEARCH_STATE:
+        session, chat_id = SEARCH_STATE.pop(uid)
+        query = msg.text.strip().lower()
+        client = await get_client(session)
+        try:
+            results = []
             async for m in client.iter_messages(chat_id, limit=200):
-                if m.text and msg.text.lower() in m.text.lower():
+                if m.text and query in m.text.lower():
                     results.append(m.text)
                     if len(results) >= 5:
                         break
-        text = "\n\n".join(results) if results else "❌ Ничего не найдено"
-        await msg.answer(f"🔍 Результаты поиска:\n\n{text}")
+            await msg.answer("🔍 Результаты:\n\n" + ("\n\n".join(results) if results else "❌ Ничего"))
+        finally:
+            await client.disconnect()
+    else:
+        await msg.answer("👋 Используй /start")
 
-# --- Регистрация нового аккаунта ---
-async def register_account():
-    phone = input("📱 Введите номер телефона (например +491234567890): ").strip()
-    session_name = f"sessions/{safe_filename(phone)}"
-
-    client = TelegramClient(
-        session_name,
-        API_ID,
-        API_HASH,
-        device_model="iPhone 13 Pro",
-        system_version="iOS 18.1.1",
-        app_version="9.6.0"
-    )
-
-    async with client:
-        await client.start(phone=phone)
-        me = await client.get_me()
-        print(f"✅ Авторизация успешна: {me.first_name} ({me.id})")
-        print(f"💾 Сессия сохранена: {session_name}.session")
+# --- CLI регистрация аккаунта (register.py функционал встроен) ---
+async def register_cli():
+    phone = input("Введите номер телефона (например +491234567890): ").strip()
+    session_name = safe_session_name(phone)
+    path = os.path.join(SESSIONS_DIR, session_name)
+    client = TelegramClient(path, API_ID, API_HASH)
+    await client.start(phone=phone)
+    me = await client.get_me()
+    print("Успешно:", me.stringify())
+    await client.disconnect()
 
 # --- Точка входа ---
 async def main():
     if len(sys.argv) > 1 and sys.argv[1] == "register":
-        await register_account()
-    else:
-        await dp.start_polling(bot)
+        await register_cli()
+        return
+    await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        pass
