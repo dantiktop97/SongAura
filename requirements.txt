@@ -4,3 +4,5 @@ cryptography==42.0.5
 orjson==3.9.15
 pydantic==2.7.4
 pydantic-core==2.18.4
+setuptools
+wheel
