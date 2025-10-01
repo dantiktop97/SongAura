@@ -2,3 +2,5 @@ sessions/
 __pycache__/
 .venv/
 *.session
+.env
+pyproject.toml
