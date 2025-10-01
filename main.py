@@ -100,7 +100,7 @@ async def handle_callback(call: types.CallbackQuery):
     data = call.data.split(":")
     action = data[0]
 
-    # Выбор аккаунта → меню аккаунта
+    # Меню аккаунта
     if action == "account":
         session = data[1]
         chats = await get_chats(session)
@@ -113,7 +113,7 @@ async def handle_callback(call: types.CallbackQuery):
         buttons.append([InlineKeyboardButton(text="🔙 Назад", callback_data="back")])
         await call.message.answer(f"📂 Меню аккаунта `{session}`:", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
 
-    # Выбор чата → последние сообщения
+    # Чат → последние сообщения
     elif action == "chat":
         session, chat_id = data[1], int(data[2])
         msgs = await get_messages(session, chat_id)
