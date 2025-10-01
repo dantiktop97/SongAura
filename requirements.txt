@@ -1,8 +1,7 @@
 setuptools
 wheel
-telethon==1.41.2
 aiogram==3.4.1
+telethon==1.41.2
 cryptography==42.0.5
 orjson==3.11.3
 pydantic==2.7.4
-pydantic-core==2.20.0
