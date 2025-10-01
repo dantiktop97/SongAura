@@ -1,124 +1,140 @@
-# main.py — YouTube -> MP3 bot (исправлено: aiohttp без proxies)
-# aiogram 3.22.0, aiohttp 3.9.x, youtube-search-python
 import os
+import sys
 import asyncio
-import logging
-from aiohttp import web, ClientSession, ClientTimeout
-from aiogram import Bot, Dispatcher
-from aiogram.types import Message
+from telethon import TelegramClient
+from aiogram import Bot, Dispatcher, types
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.filters import Command
-from youtubesearchpython import VideosSearch
 
-# ENV
-TOKEN = os.getenv("PLAY")
-PORT = int(os.getenv("PORT", "8000"))
+# === Конфиг ===
+API_ID = 27258770
+API_HASH = "8eda3f168522804bead42bfe705bdaeb"
+ADMIN_ID = 7549204023
+BOT_TOKEN = "Song"
 
-if not TOKEN:
-    raise RuntimeError("Environment variable PLAY (bot token) is required")
+# === Папка для сессий ===
+if not os.path.exists("sessions"):
+    os.makedirs("sessions")
 
-# Bot
-bot = Bot(TOKEN)
+# === Aiogram-бот ===
+bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# YouTube search
-async def search_youtube(query: str) -> str:
-    search = VideosSearch(query, limit=1)
-    result = await search.next()
-    items = result.get("result", [])
-    if not items:
-        raise ValueError("Ничего не найдено на YouTube")
-    return items[0]["id"]
+# --- Утилиты ---
+def safe_filename(phone: str) -> str:
+    return phone.replace("+", "").replace(" ", "").strip()
 
-# Get mp3 url from API (download-lagu-mp3.com)
-async def get_mp3_url(video_id: str, session: ClientSession) -> str | None:
-    api_url = f"https://api.download-lagu-mp3.com/@api/json/mp3/{video_id}"
-    timeout = ClientTimeout(total=20)
-    try:
-        async with session.get(api_url, timeout=timeout) as resp:
-            if resp.status != 200:
-                return None
-            data = await resp.json(content_type=None)
-    except asyncio.TimeoutError:
-        return None
-    except Exception:
-        return None
+def get_sessions():
+    files = os.listdir("sessions")
+    return [f.replace(".session", "") for f in files if f.endswith(".session")]
 
-    vid_info = data.get("vidInfo") or {}
-    # Prefer 128 or highest available
-    best = None
-    best_bitrate = -1
-    for v in vid_info.values():
-        try:
-            br = int(v.get("bitrate") or 0)
-        except Exception:
-            br = 0
-        if br > best_bitrate:
-            best_bitrate = br
-            best = v
-    if not best:
-        return None
-    dload = best.get("dloadUrl")
-    if not dload:
-        return None
-    # API sometimes returns protocol-relative URL ("//..."), ensure full
-    if dload.startswith("//"):
-        return "https:" + dload
-    if dload.startswith("http"):
-        return dload
-    return "https://" + dload.lstrip("/")
+async def get_chats(session_name):
+    client = TelegramClient(
+        f"sessions/{session_name}",
+        API_ID,
+        API_HASH,
+        device_model="iPhone 13 Pro",
+        system_version="iOS 18.1.1",
+        app_version="9.6.0"
+    )
+    chats = []
+    async with client:
+        dialogs = await client.get_dialogs()
+        for d in dialogs[:10]:  # только первые 10 чатов
+            chats.append((d.name or "Без имени", d.id))
+    return chats
 
-# Handler
+async def get_messages(session_name, chat_id):
+    client = TelegramClient(
+        f"sessions/{session_name}",
+        API_ID,
+        API_HASH
+    )
+    msgs = []
+    async with client:
+        async for msg in client.iter_messages(chat_id, limit=5):
+            msgs.append(f"{msg.sender_id}: {msg.text}")
+    return msgs
+
+# --- Главное меню ---
+def get_main_menu():
+    buttons = [
+        [InlineKeyboardButton(text=f"👤 {s}", callback_data=f"account:{s}")]
+        for s in get_sessions()
+    ]
+    if not buttons:
+        buttons = [[InlineKeyboardButton(text="❌ Нет аккаунтов", callback_data="none")]]
+    buttons.append([InlineKeyboardButton(text="➕ Добавить аккаунт", callback_data="add")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+# --- Хэндлеры ---
 @dp.message(Command("start"))
-async def cmd_start(msg: Message):
-    await msg.answer("🎵 Отправь название трека, и я постараюсь прислать MP3 (через внешний API).")
+async def start(msg: types.Message):
+    if msg.from_user.id == ADMIN_ID:
+        await msg.answer("👑 Выбери аккаунт:", reply_markup=get_main_menu())
+    else:
+        await msg.answer("🚫 Нет доступа.")
 
-@dp.message()
-async def on_message(msg: Message):
-    query = (msg.text or "").strip()
-    if not query:
-        await msg.answer("Напиши название трека или исполнителя.")
+@dp.callback_query()
+async def handle_callback(call: types.CallbackQuery):
+    if call.from_user.id != ADMIN_ID:
+        await call.message.answer("🚫 Нет доступа.")
         return
 
-    status = await msg.answer(f"🔍 Ищу: {query}")
-    try:
-        video_id = await search_youtube(query)
-    except Exception as e:
-        await status.edit_text(f"❌ Ошибка поиска: {e}")
-        return
+    data = call.data.split(":")
+    action = data[0]
 
-    # reuse single session for requests
-    async with ClientSession() as session:
-        mp3_url = await get_mp3_url(video_id, session)
+    # Выбор аккаунта → сразу список чатов
+    if action == "account":
+        session = data[1]
+        chats = await get_chats(session)
+        buttons = [
+            [InlineKeyboardButton(text=f"💬 {name}", callback_data=f"chat:{session}:{chat_id}")]
+            for name, chat_id in chats
+        ]
+        buttons.append([InlineKeyboardButton(text="🔙 Назад", callback_data="back")])
+        await call.message.answer(f"📂 Чаты аккаунта `{session}`:", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
 
-    if not mp3_url:
-        await status.edit_text("⚠️ Не удалось получить MP3 с внешнего API.")
-        return
+    # Выбор чата → последние сообщения
+    elif action == "chat":
+        session, chat_id = data[1], int(data[2])
+        msgs = await get_messages(session, chat_id)
+        text = "\n".join(msgs) if msgs else "❌ Нет сообщений"
+        buttons = [[InlineKeyboardButton(text="🔙 Назад", callback_data=f"account:{session}")]]
+        await call.message.answer(f"💬 Сообщения:\n\n{text}", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
 
-    # Попробуем отправить как URL (Telegram поддерживает отправку по прямой ссылке)
-    try:
-        await bot.send_audio(chat_id=msg.chat.id, audio=mp3_url, title=query)
-        await status.delete()
-    except Exception as e:
-        # fallback: просто отправляем ссылку
-        await status.edit_text(f"Не удалось отправить аудио напрямую. Ссылка на MP3:\n{mp3_url}")
+    elif action == "back":
+        await call.message.answer("🔙 Главное меню:", reply_markup=get_main_menu())
 
-# Healthcheck web
-async def health(request):
-    return web.Response(text="Bot is running")
+    elif action == "add":
+        await call.message.answer("📲 Добавление аккаунта пока доступно только через консоль:\n\n`python3 main.py register`")
 
-async def start_web():
-    app = web.Application()
-    app.router.add_get("/", health)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", PORT)
-    await site.start()
+# --- Регистрация нового аккаунта ---
+async def register_account():
+    phone = input("📱 Введите номер телефона (например +491234567890): ").strip()
+    session_name = f"sessions/{safe_filename(phone)}"
 
-# Run
+    client = TelegramClient(
+        session_name,
+        API_ID,
+        API_HASH,
+        device_model="iPhone 13 Pro",
+        system_version="iOS 18.1.1",
+        app_version="9.6.0"
+    )
+
+    async with client:
+        await client.start(phone=phone)
+        me = await client.get_me()
+        print(f"✅ Авторизация успешна: {me.first_name} ({me.id})")
+        print(f"💾 Сессия сохранена: {session_name}.session")
+
+# --- Точка входа ---
 async def main():
-    asyncio.create_task(start_web())
-    await dp.start_polling(bot)
+    if len(sys.argv) > 1 and sys.argv[1] == "register":
+        await register_account()
+    else:
+        await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
     asyncio.run(main())
