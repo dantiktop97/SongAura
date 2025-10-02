@@ -1,6 +1,8 @@
-sessions/
-__pycache__/
-.venv/
-*.session
 .env
-pyproject.toml
+*.pyc
+__pycache__/
+venv/
+.venv/
+*.sqlite3
+balances.json
+payments.json
