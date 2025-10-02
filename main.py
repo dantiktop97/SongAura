@@ -9,6 +9,12 @@ from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 TOKEN = os.getenv("STAR")
 bot = telebot.TeleBot(TOKEN, parse_mode="HTML")
 
+# убрать webhook, чтобы избежать ошибки 409 при polling
+try:
+    bot.remove_webhook()
+except Exception:
+    pass
+
 BALANCE_FILE = "balances.json"
 spin_locks = set()
 
@@ -156,7 +162,7 @@ def callback_handler(call):
         bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=main_menu_kb())
     bot.answer_callback_query(call.id)
 
-# ----- spin logic with animation, balance update and lock -----
+# ----- quick spin: результат = середина, без колеса/анимации -----
 def spin_handler(call):
     chat_id = call.message.chat.id
     user_id = call.from_user.id
@@ -172,23 +178,21 @@ def spin_handler(call):
         return
 
     spin_locks.add(chat_id)
-    bot.answer_callback_query(call.id)
-    threading.Thread(target=_run_spin, args=(call, user_id, bet)).start()
+    bot.answer_callback_query(call.id)  # закрыть индикатор
+    threading.Thread(target=_run_quick_spin, args=(call, user_id, bet)).start()
 
-def _run_spin(call, user_id, bet):
+def _run_quick_spin(call, user_id, bet):
     chat_id = call.message.chat.id
     msg_id = call.message.message_id
     try:
-        bot.edit_message_text("…БАРАБАНЫ КРУТЯТСЯ… 🎰", chat_id, msg_id)
-
-        frames = [spin_once() for _ in range(3)]
-        for frame in frames:
-            bot.edit_message_text(matrix_to_text(frame), chat_id, msg_id)
-            time.sleep(0.6)
-
+        # Генерируем полную 3x3 матрицу, но используем только среднюю строку
         final = spin_once()
+        middle = final[1]  # например ["⭐", "🍉", "7️⃣"]
+
+        # Оценка результата по средней строке
         result, mult = eval_middle_row(final)
 
+        # Обновление баланса: списать ставку и добавить выигрыш при победе
         bal = get_balance(user_id)
         bal -= bet
         if result != "lose":
@@ -196,15 +200,35 @@ def _run_spin(call, user_id, bet):
             bal += win
         set_balance(user_id, bal)
 
-        text = make_result_text(final, result, mult, bal)
-        bot.edit_message_text(text, chat_id, msg_id, reply_markup=result_kb())
+        # Формат вывода: ровная строка с разделителем " | "
+        middle_text = " | ".join(middle)  # "⭐ | 🍉 | 7️⃣"
+
+        if result == "lose":
+            suffix = (
+                f"\n\n❌ <b>Увы… комбинация не совпала.</b>\n"
+                f"💰 <b>Баланс:</b> {bal} монет"
+            )
+        else:
+            suffix = (
+                f"\n\n🎉 <b>Вы выиграли!</b>\n"
+                f"✨ <b>Выигрыш:</b> ×{mult}\n"
+                f"💰 <b>Баланс:</b> {bal} монет"
+            )
+
+        text = f"<b>Выпало:</b>\n{middle_text}{suffix}"
+        bot.edit_message_text(text, chat_id, msg_id, reply_markup=result_kb(), parse_mode="HTML")
     except Exception:
         try:
-            bot.edit_message_text("Произошла ошибка во время спина. Попробуйте ещё раз.", chat_id, msg_id)
+            bot.edit_message_text("Произошла ошибка при расчёте результата. Попробуйте ещё раз.", chat_id, msg_id)
         except:
             pass
     finally:
         spin_locks.discard(chat_id)
 
 if __name__ == "__main__":
-    bot.infinity_polling()
+    try:
+        bot.infinity_polling()
+    except KeyboardInterrupt:
+        pass
+    except Exception as e:
+        print("Polling stopped:", e)
