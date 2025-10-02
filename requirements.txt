@@ -1,6 +1,6 @@
 setuptools
 wheel
-aiogram==3.4.1
+aiogram==2.25.1
 telethon==1.41.2
 cryptography==42.0.5
 orjson==3.11.3
