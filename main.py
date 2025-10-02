@@ -6,7 +6,7 @@ import threading
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, LabeledPrice, PreCheckoutQuery
 
-TOKEN = os.getenv("STAR")   # токен твоего бота (секрет STAR)
+TOKEN = os.getenv("STAR")   # токен бота
 bot = telebot.TeleBot(TOKEN, parse_mode="HTML")
 
 BALANCE_FILE = "balances.json"
@@ -98,25 +98,40 @@ def result_kb():
     kb.add(InlineKeyboardButton("🔙 Назад", callback_data="back_to_main"))
     return kb
 
+def profile_kb():
+    kb = InlineKeyboardMarkup()
+    kb.add(InlineKeyboardButton("🔙 Назад", callback_data="back_to_main"))
+    return kb
+
 # ---- /start ----
+def welcome_text(name):
+    return (
+        f"✨ Привет, <b>{name}</b>! Добро пожаловать в <b>StarryCasino</b> — здесь выигрыши не ждут, они случаются! ✨\n\n"
+        f"Что тебя ждёт:\n\n"
+        f"🎁 <b>Мгновенные бонусы</b> — прямо на аккаунт, без задержек\n"
+        f"🎰 <b>Розыгрыши и игры</b> — каждый шанс на выигрыш реально захватывающий\n"
+        f"📲 <b>Удобный формат</b> — всё работает прямо в Telegram: быстро, просто, без лишнего\n\n"
+        f"Здесь нет лишней суеты — только азарт, стиль и удовольствие от игры.\n"
+        f"Запускаем удачу! 🌟"
+    )
+
 @bot.message_handler(commands=['start'])
 def start(message):
     name = message.from_user.first_name or "игрок"
-    text = (
-        f"✨ Привет, <b>{name}</b>! Добро пожаловать в <b>StarryCasino</b> ✨\n\n"
-        f"Жми «ИГРАТЬ» и пробуй удачу 🎰"
-    )
-    bot.send_message(message.chat.id, text, reply_markup=main_menu_kb())
+    bot.send_message(message.chat.id, welcome_text(name), reply_markup=main_menu_kb(), parse_mode="HTML")
 
 # ---- play ----
 @bot.callback_query_handler(func=lambda call: call.data == "play")
 def play(call):
     bot.edit_message_text(
-        "🎰 <b>Фруктовая рулетка</b>\n\n"
-        "• 3 фрукта → ×2\n"
-        "• 3 ⭐ → ×3\n"
-        "• 3 7️⃣ → ×5\n"
-        "• иначе → проигрыш",
+        "🎰 <b>Раздел рулетка</b>\n\n"
+        "Добро пожаловать в фруктовую рулетку!\n"
+        "Испытай свою удачу и попробуй собрать одинаковые символы в средней строке.\n\n"
+        "💡 <b>Правила игры:</b>\n"
+        "• 3 одинаковых фрукта → выигрыш ×2\n"
+        "• 3 звезды ⭐ → выигрыш ×3\n"
+        "• 3 семёрки 7️⃣ → джекпот ×5\n"
+        "• Любая неполная комбинация → выигрыш отсутствует",
         call.message.chat.id, call.message.message_id, reply_markup=roulette_kb(), parse_mode="HTML"
     )
 
@@ -179,19 +194,18 @@ def profile(call):
     bal = get_balance(uid)
     bot.edit_message_text(
         f"👤 <b>Профиль</b>\n\n"
-        f"🆔 ID: {uid}\n"
-        f"💰 Баланс: {bal}⭐️",
-        call.message.chat.id, call.message.message_id, reply_markup=main_menu_kb(), parse_mode="HTML"
+        f"🆔 <b>Ваш ID:</b> {uid}\n"
+        f"💰 <b>Ваш текущий баланс:</b> {bal}⭐️\n\n"
+        f"Здесь вы можете отслеживать состояние аккаунта и баланс.\n"
+        f"Возвращайтесь в игры, проверяйте результаты и ловите удачу! ✨🎰",
+        call.message.chat.id, call.message.message_id, reply_markup=profile_kb(), parse_mode="HTML"
     )
 
-# ---- назад ----
+# ---- назад в приветствие с именем ----
 @bot.callback_query_handler(func=lambda call: call.data == "back_to_main")
 def back(call):
     name = call.from_user.first_name or "игрок"
-    bot.edit_message_text(
-        f"✨ Привет, <b>{name}</b>! Добро пожаловать в <b>StarryCasino</b> ✨",
-        call.message.chat.id, call.message.message_id, reply_markup=main_menu_kb(), parse_mode="HTML"
-    )
+    bot.edit_message_text(welcome_text(name), call.message.chat.id, call.message.message_id, reply_markup=main_menu_kb(), parse_mode="HTML")
 
 if __name__ == "__main__":
     bot.infinity_polling()
