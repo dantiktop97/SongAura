@@ -8,7 +8,7 @@ from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, LabeledPri
 
 # ====== Настройки ======
 TOKEN = os.getenv("STAR")
-PROVIDER_TOKEN = os.getenv("PROVIDER_TOKEN", "")  # вставь токен провайдера для реальных платежей
+PROVIDER_TOKEN = os.getenv("PROVIDER_TOKEN", "")  # ← вставь токен провайдера для реальных платежей
 SPIN_PRICE_AMOUNT = int(os.getenv("SPIN_PRICE_AMOUNT", "100"))  # 100 = 1.00 RUB (минимальные ед. валюты)
 CURRENCY = os.getenv("CURRENCY", "RUB")
 
@@ -171,7 +171,7 @@ def back(call):
     start(call.message)
     bot.answer_callback_query(call.id)
 
-# ====== SPIN: отправляем нативный инвойс сразу (без заглушек) ======
+# ====== SPIN: отправляем нативный инвойс сразу (invoice_payload) ======
 @bot.callback_query_handler(func=lambda call: call.data == "spin")
 def spin_invoice_handler(call):
     chat_id = call.message.chat.id
@@ -185,22 +185,36 @@ def spin_invoice_handler(call):
     prices = [LabeledPrice(label="★1", amount=SPIN_PRICE_AMOUNT)]
     payload = f"spin:{user_id}"
 
-    # Отправляем инвойс — Telegram откроет нативное окно оплаты ("Покупка спинов", "Оплата за слот машину", "Заплатить ★1")
-    invoice_msg = bot.send_invoice(
-        chat_id=chat_id,
-        title="Покупка спинов",
-        description="Оплата за слот машина",
-        payload=payload,
-        provider_token=PROVIDER_TOKEN,
-        currency=CURRENCY,
-        prices=prices
-    )
+    # Отправляем инвойс — используем invoice_payload (поддержка разных версий pyTelegramBotAPI)
+    try:
+        invoice_msg = bot.send_invoice(
+            chat_id=chat_id,
+            title="Покупка спинов",
+            description="Оплата за слот машина",
+            invoice_payload=payload,
+            provider_token=PROVIDER_TOKEN,
+            currency=CURRENCY,
+            prices=prices
+        )
+    except TypeError:
+        # На старых/других версиях send_invoice может принимать payload без имени invoice_payload
+        invoice_msg = bot.send_invoice(
+            chat_id=chat_id,
+            title="Покупка спинов",
+            description="Оплата за слот машина",
+            payload=payload,
+            provider_token=PROVIDER_TOKEN,
+            currency=CURRENCY,
+            prices=prices
+        )
 
     # Сохраняем место (сообщение‑инвойс) для последующего редактирования после успешной оплаты
     try:
-        pending_spin_invoice[user_id] = {"chat_id": invoice_msg.chat.id, "msg_id": invoice_msg.message_id}
+        if invoice_msg is not None:
+            pending_spin_invoice[user_id] = {"chat_id": invoice_msg.chat.id, "msg_id": invoice_msg.message_id}
+        else:
+            pending_spin_invoice[user_id] = {"chat_id": chat_id, "msg_id": call.message.message_id}
     except Exception:
-        # fallback — если send_invoice не вернул объект Message
         pending_spin_invoice[user_id] = {"chat_id": chat_id, "msg_id": call.message.message_id}
 
     bot.answer_callback_query(call.id)
@@ -209,11 +223,12 @@ def spin_invoice_handler(call):
 @bot.message_handler(content_types=['successful_payment'])
 def handle_successful_payment(message):
     sp = message.successful_payment
-    payload = (sp.invoice_payload or "")
+    # payload в разных версиях может быть invoice_payload или payload; берем оба
+    payload = getattr(sp, "invoice_payload", None) or getattr(sp, "payload", None) or ""
     user_id = message.from_user.id
 
     # Если payload — не наш спин, просто уведомляем
-    if not payload.startswith("spin:"):
+    if not str(payload).startswith("spin:"):
         bot.send_message(user_id, "✅ Оплата принята. Спасибо.")
         return
 
@@ -262,3 +277,5 @@ if __name__ == "__main__":
         bot.infinity_polling()
     except KeyboardInterrupt:
         pass
+    except Exception as e:
+        print("Polling stopped:", e)
