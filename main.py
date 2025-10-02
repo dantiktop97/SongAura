@@ -1,326 +1,318 @@
-# combined_bots.py
 import os
+import random
+import time
 import json
 import threading
-import asyncio
-import time
-import random
+import telebot
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, LabeledPrice
 
-# ----- CONFIG (через env) -----
-STAR = os.getenv("STAR")                      # token для telebot (игровой)
-AIO_TOKEN = os.getenv("AIO_TOKEN") or STAR    # если AIO_TOKEN не задан, используем STAR
-PROVIDER_TOKEN = os.getenv("PROVIDER_TOKEN", "")  # оставляем пустым по умолчанию
-CURRENCY = os.getenv("CURRENCY", "RUB")
-ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
+TOKEN = os.getenv("STAR")
+bot = telebot.TeleBot(TOKEN, parse_mode="HTML")
 
-# ----- BALANCE UTILS (sync + async) -----
+# убрать webhook, чтобы избежать ошибки 409 при polling
+try:
+    bot.remove_webhook()
+except Exception:
+    pass
+
 BALANCE_FILE = "balances.json"
-_file_lock = threading.Lock()
-_async_lock = asyncio.Lock()
+spin_locks = set()
+pending_spin_invoice = {}  # user_id -> {"chat_id": int, "msg_id": int, "type": "spin_pay" or None}
 
-def _ensure_file():
-    if not os.path.exists(BALANCE_FILE):
-        with open(BALANCE_FILE, "w", encoding="utf-8") as f:
-            json.dump({}, f)
+SYMBOLS = [
+    ("🍒", 25),
+    ("🍋", 25),
+    ("🍉", 20),
+    ("⭐", 15),
+    ("7️⃣", 5),
+]
 
+# ----- balances -----
 def load_balances():
-    _ensure_file()
-    with _file_lock:
+    try:
         with open(BALANCE_FILE, "r", encoding="utf-8") as f:
-            try:
-                return json.load(f)
-            except Exception:
-                return {}
+            return json.load(f)
+    except Exception:
+        return {}
 
 def save_balances(balances):
-    _ensure_file()
-    with _file_lock:
-        tmp = BALANCE_FILE + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(balances, f)
-        os.replace(tmp, BALANCE_FILE)
+    with open(BALANCE_FILE, "w", encoding="utf-8") as f:
+        json.dump(balances, f)
 
-def get_balance(user_id, default=0):
-    balances = load_balances()
-    return int(balances.get(str(user_id), default))
+balances = load_balances()
+
+def get_balance(user_id):
+    return int(balances.get(str(user_id), 0))
 
 def set_balance(user_id, value):
-    balances = load_balances()
     balances[str(user_id)] = int(value)
     save_balances(balances)
 
 def add_balance(user_id, delta):
-    balances = load_balances()
     balances[str(user_id)] = int(balances.get(str(user_id), 0)) + int(delta)
     save_balances(balances)
 
-# Async wrappers for aiogram handlers
-async def aload_balances():
-    loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, load_balances)
+# ----- utilities -----
+def weighted_choice(symbols):
+    items, weights = zip(*symbols)
+    return random.choices(items, weights=weights, k=1)[0]
 
-async def aget_balance(user_id, default=0):
-    balances = await aload_balances()
-    return int(balances.get(str(user_id), default))
+def spin_once():
+    return [[weighted_choice(SYMBOLS) for _ in range(3)] for _ in range(3)]
 
-async def aadd_balance(user_id, delta):
-    async with _async_lock:
-        loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, add_balance, user_id, delta)
+def eval_middle_row(matrix):
+    mid = matrix[1]
+    if mid[0] == mid[1] == mid[2]:
+        s = mid[0]
+        if s == "7️⃣":
+            return "jackpot", 5
+        if s == "⭐":
+            return "star", 3
+        return "fruit", 2
+    return "lose", 0
 
-# ----- TELEBOT (sync) game bot -----
-try:
-    import telebot
-    from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
-except Exception:
-    telebot = None
+def matrix_to_text(matrix):
+    return "\n".join("| " + " | ".join(row) + " |" for row in matrix)
 
-if telebot and STAR:
-    TOKEN = STAR
-    tb_bot = telebot.TeleBot(TOKEN, parse_mode="HTML")
+def make_result_text(matrix, result, mult, new_balance):
+    mid = matrix[1]
+    if result == "lose":
+        return (
+            f"{matrix_to_text(matrix)}\n\n"
+            f"❌ <b>Увы… комбинация не совпала.</b>\n"
+            f"💰 <b>Баланс:</b> {new_balance} ⭐️"
+        )
+    else:
+        return (
+            f"{matrix_to_text(matrix)}\n\n"
+            f"🎉 <b>Отлично!</b> Вы собрали: {' '.join(mid)}\n"
+            f"✨ <b>Выигрыш:</b> ×{mult}\n"
+            f"💰 <b>Баланс:</b> {new_balance} ⭐️"
+        )
 
-    SYMBOLS = [
-        ("🍒", 25),
-        ("🍋", 25),
-        ("🍉", 20),
-        ("⭐", 15),
-        ("7️⃣", 5),
-    ]
+# ----- keyboards -----
+def main_menu_kb():
+    kb = InlineKeyboardMarkup()
+    kb.add(InlineKeyboardButton("🎰 ИГРАТЬ", callback_data="play"))
+    kb.add(InlineKeyboardButton("👤 ПРОФИЛЬ", callback_data="profile"))
+    kb.add(InlineKeyboardButton("💳 Купить 1 ⭐️", callback_data="buy_star"))
+    return kb
 
-    BALANCE_START = 0
-    spin_locks = set()
+def roulette_kb():
+    kb = InlineKeyboardMarkup()
+    kb.add(InlineKeyboardButton("🎟️ СПИН (1 ⭐️)", callback_data="spin"))
+    kb.add(InlineKeyboardButton("🔙 Назад", callback_data="back_to_main"))
+    return kb
 
-    def weighted_choice(symbols):
-        items, weights = zip(*symbols)
-        return random.choices(items, weights=weights, k=1)[0]
+def result_kb():
+    kb = InlineKeyboardMarkup()
+    kb.add(InlineKeyboardButton("🔄 Сыграть ещё раз", callback_data="spin"))
+    kb.add(InlineKeyboardButton("💳 Купить 1 ⭐️", callback_data="buy_star"))
+    kb.add(InlineKeyboardButton("🔙 Назад", callback_data="back_to_main"))
+    return kb
 
-    def spin_once():
-        return [[weighted_choice(SYMBOLS) for _ in range(3)] for _ in range(3)]
+# ----- handlers -----
+@bot.message_handler(commands=['start'])
+def start(message):
+    name = message.from_user.first_name or "игрок"
+    text = (
+        f"✨ Привет, <b>{name}</b>! Добро пожаловать в <b>StarryCasino</b>!\n\n"
+        f"Нажми ИГРАТЬ → СПИН (стоит 1 ⭐️) или купи ⭐️ прямо здесь."
+    )
+    bot.send_message(message.chat.id, text, reply_markup=main_menu_kb())
 
-    def eval_middle_row(matrix):
-        mid = matrix[1]
-        if mid[0] == mid[1] == mid[2]:
-            s = mid[0]
-            if s == "7️⃣":
-                return "jackpot", 5
-            if s == "⭐":
-                return "star", 3
-            return "fruit", 2
-        return "lose", 0
+@bot.message_handler(commands=['balance'])
+def cmd_balance(message):
+    bal = get_balance(message.from_user.id)
+    bot.send_message(message.chat.id, f"💰 Ваш баланс: {bal} ⭐️")
 
-    def main_menu_kb():
-        kb = InlineKeyboardMarkup()
-        kb.add(InlineKeyboardButton("🎰 ИГРАТЬ", callback_data="play"))
-        kb.add(InlineKeyboardButton("👤 ПРОФИЛЬ", callback_data="profile"))
-        return kb
-
-    def roulette_kb():
-        kb = InlineKeyboardMarkup()
-        kb.add(InlineKeyboardButton("🎟️ СПИН", callback_data="spin"))
-        kb.add(InlineKeyboardButton("🔙 Назад", callback_data="back_to_main"))
-        return kb
-
-    def result_kb():
-        kb = InlineKeyboardMarkup()
-        kb.add(InlineKeyboardButton("🔄 Сыграть ещё раз", callback_data="spin"))
-        kb.add(InlineKeyboardButton("🔙 Назад", callback_data="back_to_main"))
-        return kb
-
-    @tb_bot.message_handler(commands=['start'])
-    def tb_start(message):
-        name = message.from_user.first_name or "игрок"
+@bot.callback_query_handler(func=lambda call: True)
+def callback_handler(call):
+    data = call.data
+    if data == "play":
+        bot.edit_message_text(
+            "🎰 <b>Раздел рулетка</b>\n\n"
+            "Испытай свою удачу и попробуй собрать одинаковые символы в средней строке.\n\n"
+            "Стоимость спина: <b>1 ⭐️</b>",
+            call.message.chat.id, call.message.message_id, reply_markup=roulette_kb()
+        )
+    elif data == "spin":
+        spin_handler(call)
+    elif data == "buy_star":
+        buy_star_handler(call)
+    elif data == "profile":
+        uid = call.from_user.id
+        bal = get_balance(uid)
+        bot.edit_message_text(
+            f"👤 <b>Профиль</b>\n\n🆔 <b>Ваш ID:</b> {uid}\n💰 <b>Баланс:</b> {bal} ⭐️",
+            call.message.chat.id, call.message.message_id,
+            reply_markup=InlineKeyboardMarkup().add(InlineKeyboardButton("🔙 Назад", callback_data="back_to_main"))
+        )
+    elif data == "back_to_main":
+        name = call.from_user.first_name or "игрок"
         text = (
             f"✨ Привет, <b>{name}</b>! Добро пожаловать в <b>StarryCasino</b>!\n\n"
-            f"Нажми <b>ИГРАТЬ</b>, чтобы сделать спин (стоимость 1 ⭐️).\n"
-            f"Проверить баланс: /balance"
+            f"Нажми ИГРАТЬ чтобы начать."
         )
-        tb_bot.send_message(message.chat.id, text, reply_markup=main_menu_kb())
+        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=main_menu_kb())
+    bot.answer_callback_query(call.id)
 
-    @tb_bot.message_handler(commands=['balance'])
-    def tb_balance(message):
-        bal = get_balance(message.from_user.id, BALANCE_START)
-        tb_bot.send_message(message.chat.id, f"💰 Ваш баланс: {bal} ⭐️")
+# ----- buy star (invoice) -----
+def buy_star_handler(call):
+    chat_id = call.message.chat.id
+    user_id = call.from_user.id
+    # отправим заглушку, запомним место, затем отправим инвойс
+    sent = bot.send_message(chat_id, "Ожидание оплаты 1 ⭐️… После оплаты баланс обновится.")
+    pending_spin_invoice[user_id] = {"chat_id": sent.chat.id, "msg_id": sent.message_id, "type": "buy_star"}
+    amount = 100  # минимальные единицы валюты (например копейки). Настрой по своему провайдеру
+    prices = [LabeledPrice(label="1 ⭐️", amount=amount)]
+    payload = f"buy:1"  # формат: buy:<amount_stars>
+    # provider_token оставлен пустым по условию (реальные платежи не пройдут)
+    bot.send_invoice(chat_id, title="Покупка 1 ⭐️", description="Покупка 1 звезды для спинов", payload=payload,
+                     provider_token="", currency="RUB", prices=prices)
 
-    @tb_bot.callback_query_handler(func=lambda call: True)
-    def tb_callback(call):
-        data = call.data
-        if data == "play":
-            tb_bot.edit_message_text(
-                "🎰 <b>Рулетка</b>\n\nВыберите <b>СПИН</b> чтобы сыграть (1 ⭐️)",
-                call.message.chat.id, call.message.message_id, reply_markup=roulette_kb()
-            )
-        elif data == "spin":
-            tb_spin_handler(call)
-        elif data == "profile":
-            uid = call.from_user.id
-            bal = get_balance(uid, BALANCE_START)
-            tb_bot.edit_message_text(
-                f"👤 <b>Профиль</b>\n\n🆔 <b>Ваш ID:</b> {uid}\n💰 <b>Баланс:</b> {bal} ⭐️",
-                call.message.chat.id, call.message.message_id,
-                reply_markup=InlineKeyboardMarkup().add(InlineKeyboardButton("🔙 Назад", callback_data="back_to_main"))
-            )
-        elif data == "back_to_main":
-            name = call.from_user.first_name or "игрок"
-            tb_bot.edit_message_text(
-                f"✨ Привет, <b>{name}</b>! Возвращение в меню.",
-                call.message.chat.id, call.message.message_id, reply_markup=main_menu_kb()
-            )
-        tb_bot.answer_callback_query(call.id)
+# ----- spin flow -----
+def spin_handler(call):
+    chat_id = call.message.chat.id
+    user_id = call.from_user.id
 
-    def tb_spin_handler(call):
-        chat_id = call.message.chat.id
-        user_id = call.from_user.id
+    if chat_id in spin_locks:
+        bot.answer_callback_query(call.id, "Спин уже выполняется. Подождите...", show_alert=False)
+        return
 
-        if chat_id in spin_locks:
-            tb_bot.answer_callback_query(call.id, "Спин уже выполняется. Подождите...", show_alert=False)
-            return
+    bal = get_balance(user_id)
+    bet = 1
+    if bal < bet:
+        # если нет звёзд — предложим оплатить спин напрямую (инвойс) или купить звёзды
+        bot.answer_callback_query(call.id, "Недостаточно звёзд. Открой оплату.", show_alert=True)
+        # отправляем инвойс для прямой оплаты спина
+        sent = bot.send_message(chat_id, "Чтобы оплатить спин (1 ⭐️), завершите оплату ниже.")
+        pending_spin_invoice[user_id] = {"chat_id": sent.chat.id, "msg_id": sent.message_id, "type": "spin_pay"}
+        amount = 100  # стоимость пакета/спина в минимальных единицах валюты
+        prices = [LabeledPrice(label="1 ⭐️ (для спина)", amount=amount)]
+        payload = "spin_pay"  # пометка, что это оплата для немедленного спина
+        bot.send_invoice(chat_id, title="Оплата спина — 1 ⭐️", description="Оплатите 1 звезду, чтобы сразу сделать спин",
+                         payload=payload, provider_token="", currency="RUB", prices=prices)
+        return
 
-        bal = get_balance(user_id, BALANCE_START)
-        bet = 1
-        if bal < bet:
-            tb_bot.answer_callback_query(call.id, "Недостаточно звёзд. Пополните баланс.", show_alert=True)
-            tb_bot.send_message(chat_id, "Чтобы пополнить баланс, используйте /buy в платёжном боте.")
-            return
+    # есть звезды — списываем и запускаем анимацию/результат
+    spin_locks.add(chat_id)
+    bot.answer_callback_query(call.id)
+    # списать ставку сразу
+    bal -= bet
+    set_balance(user_id, bal)
+    threading.Thread(target=_run_spin_animation, args=(call.message.chat.id, call.message.message_id, user_id, bet)).start()
 
-        bal -= bet
-        set_balance(user_id, bal)
+def _run_spin_animation(chat_id, msg_id, user_id, bet):
+    try:
+        # создаём несколько кадров для эффекта кручения: каждая строка — случайна
+        frames = [spin_once() for _ in range(5)]
+        # последовательно показываем кадры
+        for frame in frames[:-1]:
+            bot.edit_message_text(matrix_to_text(frame) + "\n\n🎰 Крутится...", chat_id, msg_id)
+            time.sleep(0.6)
+        # финальный кадр — регенерируем для честности
+        final = spin_once()
+        result, mult = eval_middle_row(final)
 
-        spin_locks.add(chat_id)
-        tb_bot.answer_callback_query(call.id)
-        threading.Thread(target=_tb_run_quick_spin, args=(call, user_id, bet)).start()
+        # если выигрыш — начисляем приз (ставка уже списана)
+        if result != "lose":
+            win = bet * mult
+            add_balance(user_id, win)
+        new_bal = get_balance(user_id)
 
-    def _tb_run_quick_spin(call, user_id, bet):
-        chat_id = call.message.chat.id
-        msg_id = call.message.message_id
-        refunded = False
+        text = make_result_text(final, result, mult, new_bal)
+        bot.edit_message_text(text, chat_id, msg_id, reply_markup=result_kb(), parse_mode="HTML")
+    except Exception:
         try:
-            final = spin_once()
-            middle = final[1]
-            result, mult = eval_middle_row(final)
+            # в случае ошибки возвращаем ставку
+            add_balance(user_id, bet)
+            bot.edit_message_text("Произошла ошибка во время спина. Ставка возвращена.", chat_id, msg_id)
+        except:
+            pass
+    finally:
+        spin_locks.discard(chat_id)
 
-            bal = get_balance(user_id, BALANCE_START)
-            if result != "lose":
-                win = bet * mult
-                bal += win
-                set_balance(user_id, bal)
+# ----- successful payment handler -----
+@bot.message_handler(content_types=['successful_payment'])
+def handle_successful_payment(message):
+    sp = message.successful_payment
+    payload = sp.invoice_payload or ""
+    user_id = message.from_user.id
 
-            middle_text = " | ".join(middle)
-            if result == "lose":
-                suffix = f"\n\n❌ <b>Увы… комбинация не совпала.</b>\n💰 <b>Баланс:</b> {bal} ⭐️"
-            else:
-                suffix = f"\n\n🎉 <b>Вы выиграли!</b>\n✨ <b>Выигрыш:</b> ×{mult}\n💰 <b>Баланс:</b> {bal} ⭐️"
-
-            text = f"<b>Выпало:</b>\n{middle_text}{suffix}"
-            tb_bot.edit_message_text(text, chat_id, msg_id, reply_markup=result_kb(), parse_mode="HTML")
-        except Exception:
+    # запись простого лога платежа (локально) — можно расширить
+    try:
+        # payload examples: "buy:1" or "spin_pay"
+        if payload.startswith("buy:"):
+            # зачисляем указанное количество звёзд
             try:
-                bal = get_balance(user_id, BALANCE_START)
-                bal += bet
-                set_balance(user_id, bal)
-                refunded = True
-                tb_bot.edit_message_text("Произошла ошибка при расчёте результата. Ставка возвращена.", chat_id, msg_id)
+                amount_stars = int(payload.split(":", 1)[1])
             except:
-                pass
-        finally:
-            spin_locks.discard(chat_id)
-            if refunded:
+                amount_stars = 1
+            add_balance(user_id, amount_stars)
+            # обновить сообщение-заглушку, если было
+            pending = pending_spin_invoice.pop(user_id, None)
+            if pending and pending.get("type") == "buy_star":
                 try:
-                    tb_bot.send_message(user_id, "⚠️ Ставка возвращена из-за ошибки. Баланс восстановлен.")
+                    bot.edit_message_text(f"✅ Оплата принята. На баланс начислено {amount_stars} ⭐️\n💰 Баланс: {get_balance(user_id)} ⭐️",
+                                          pending["chat_id"], pending["msg_id"])
                 except:
                     pass
-
-    def run_telebot():
-        try:
-            tb_bot.remove_webhook()
-        except:
-            pass
-        tb_bot.infinity_polling()
-else:
-    def run_telebot():
-        print("telebot не установлен или STAR не задан, пропускаем запуск telebot.")
-
-# ----- AIOGRAM (async) payment bot example -----
-try:
-    from aiogram import Bot, Dispatcher, types
-    from aiogram.types import LabeledPrice, PreCheckoutQuery
-    from aiogram.filters import Command
-except Exception:
-    Bot = None
-
-if Bot and AIO_TOKEN:
-    aio_bot = Bot(token=AIO_TOKEN)
-    dp = Dispatcher()
-
-    @dp.message(Command("buy"))
-    async def cmd_buy(message: types.Message):
-        amount_stars = 10
-        price_amount = 100
-        payload = f"buy:{message.from_user.id}:{amount_stars}"
-        prices = [LabeledPrice(label=f"{amount_stars} ⭐️", amount=price_amount)]
-        await aio_bot.send_invoice(
-            chat_id=message.chat.id,
-            title="Покупка звёзд",
-            description=f"Пакет {amount_stars} ⭐️",
-            payload=payload,
-            provider_token=PROVIDER_TOKEN,
-            currency=CURRENCY,
-            prices=prices
-        )
-
-    @dp.pre_checkout_query()
-    async def process_pre_checkout(pre_checkout_q: PreCheckoutQuery):
-        await pre_checkout_q.answer(ok=True)
-
-    @dp.message()
-    async def handle_successful_payment(message: types.Message):
-        if not message.successful_payment:
+            bot.send_message(user_id, f"✅ Оплата принята. На баланс начислено {amount_stars} ⭐️\n💰 Ваш баланс: {get_balance(user_id)} ⭐️")
             return
-        sp = message.successful_payment
-        payload = sp.invoice_payload or ""
-        if payload.startswith("buy:"):
-            parts = payload.split(":")
-            try:
-                amount_stars = int(parts[2])
-            except:
-                amount_stars = 0
-            buyer_id = message.from_user.id
-            if amount_stars > 0:
-                await aadd_balance(buyer_id, amount_stars)
-                await message.answer(f"✅ Оплата принята. На баланс начислено {amount_stars} ⭐️")
-                return
+
+        if payload == "spin_pay":
+            # пользователь оплатил спин напрямую — запускаем анимацию как если бы ставка списана
+            pending = pending_spin_invoice.pop(user_id, None)
+            # найдем chat_id/msg_id куда анимировать (сохраняли при инициировании)
+            if pending:
+                chat_id = pending["chat_id"]
+                msg_id = pending["msg_id"]
+            else:
+                # fallback — отправляем новое сообщение для анимации
+                sent = bot.send_message(user_id, "Оплата получена, запускаю спин...")
+                chat_id = sent.chat.id
+                msg_id = sent.message_id
+
+            # spin: ставка уже оплачена внешне, поэтому НЕ списываем баланс, просто выполняем анимацию
+            threading.Thread(target=_run_spin_animation_direct_payment, args=(chat_id, msg_id, user_id)).start()
+            return
+
+        # Other payloads: ignore or implement
+        bot.send_message(user_id, "Оплата принята, спасибо.")
+    except Exception:
         try:
-            total_amount = int(sp.total_amount)
-            stars = total_amount // 10
-            if stars > 0:
-                await aadd_balance(message.from_user.id, stars)
-                await message.answer(f"✅ Оплата принята. На баланс начислено {stars} ⭐️")
-                return
+            bot.send_message(user_id, "Произошла ошибка при обработке оплаты. Свяжитесь с поддержкой.")
         except:
             pass
-        await message.answer("⚠️ Оплата принята, но не удалось определить количество звёзд. Свяжитесь с поддержкой.")
 
-    async def run_aiogram():
-        await dp.start_polling(aio_bot)
-else:
-    async def run_aiogram():
-        print("aiogram не настроен или AIO_TOKEN пуст, пропускаем aiogram.")
-
-# ----- MAIN: запускаем telebot в потоке и aiogram в asyncio -----
-def main():
-    t = threading.Thread(target=run_telebot, daemon=True)
-    t.start()
-
-    loop = asyncio.get_event_loop()
+def _run_spin_animation_direct_payment(chat_id, msg_id, user_id):
     try:
-        loop.run_until_complete(run_aiogram())
-    except KeyboardInterrupt:
-        pass
-    finally:
+        frames = [spin_once() for _ in range(5)]
+        for frame in frames[:-1]:
+            bot.edit_message_text(matrix_to_text(frame) + "\n\n🎰 Крутится...", chat_id, msg_id)
+            time.sleep(0.6)
+        final = spin_once()
+        result, mult = eval_middle_row(final)
+
+        # выигрыш: начисляем на баланс (оплата была внешней)
+        if result != "lose":
+            win = 1 * mult
+            add_balance(user_id, win)
+
+        new_bal = get_balance(user_id)
+        text = make_result_text(final, result, mult, new_bal)
+        bot.edit_message_text(text, chat_id, msg_id, reply_markup=result_kb(), parse_mode="HTML")
+    except Exception:
         try:
-            if Bot and AIO_TOKEN:
-                loop.run_until_complete(aio_bot.session.close())
+            bot.edit_message_text("Произошла ошибка при выполнении спина. Свяжитесь с поддержкой.", chat_id, msg_id)
         except:
             pass
 
 if __name__ == "__main__":
-    main()
+    try:
+        bot.infinity_polling()
+    except KeyboardInterrupt:
+        pass
+    except Exception as e:
+        print("Polling stopped:", e)
