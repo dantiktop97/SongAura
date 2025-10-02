@@ -5,17 +5,21 @@ import time
 import sqlite3
 import threading
 import traceback
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 
 import telebot
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, LabeledPrice
 
 # ====== Настройки и секреты из окружения ======
 TOKEN = os.getenv("STAR") or os.getenv("BOT_TOKEN") or ""
 DB_PATH = os.getenv("DB_PATH", "stars.db")
 SPIN_COST_STARS = int(os.getenv("SPIN_COST_STARS", "1"))
+# Провайдер оставляем пустым для поведения "как у друга"
+PROVIDER_TOKEN = os.getenv("PROVIDER_TOKEN", "").strip()
+SPIN_PRICE_AMOUNT = int(os.getenv("SPIN_PRICE_AMOUNT", "100"))  # для реальной оплаты (минимальные ед.)
+CURRENCY = os.getenv("CURRENCY", "RUB")
 
-# Читаем один секретный ADMIN_ID из окружения (имя переменной ADMIN_ID)
+# Один админ через ADMIN_ID
 _admin_id_raw = os.getenv("ADMIN_ID", "").strip()
 try:
     ADMIN_IDS: List[int] = [int(_admin_id_raw)] if _admin_id_raw else []
@@ -25,14 +29,15 @@ except ValueError:
 if not TOKEN:
     raise SystemExit("Требуется токен бота в переменной окружения STAR или BOT_TOKEN")
 
-# ====== Инициализация бота ======
 bot = telebot.TeleBot(TOKEN, parse_mode="HTML")
 
-# ====== Локальные состояния ======
-spin_locks = set()            # chat_id -> блокировка выполнения спина в чате
-pending_actions = {}          # user_id -> ожидаемое действие для админа (например "await_admin_give")
+# ====== Состояния ======
+spin_locks = set()                   # chat_id блокировки
+pending_actions = {}                 # user_id -> action
+# Когда используется нативный инвойс, сохраняем сообщение инвойса для редактирования
+pending_spin_invoice = {}            # user_id -> {"chat_id": int, "msg_id": int}
 
-# ====== DB (sqlite синхронно) ======
+# ====== DB (sqlite) ======
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
@@ -48,7 +53,8 @@ def init_db():
         user_id INTEGER NOT NULL,
         change INTEGER NOT NULL,
         reason TEXT,
-        ts INTEGER NOT NULL
+        ts INTEGER NOT NULL,
+        ext_charge_id TEXT
     );
     """)
     conn.commit()
@@ -73,7 +79,7 @@ def set_balance(user_id: int, stars: int):
     conn.commit()
     conn.close()
 
-def change_balance(user_id: int, delta: int, reason: str = "") -> int:
+def change_balance(user_id: int, delta: int, reason: str = "", ext_charge_id: Optional[str] = None) -> int:
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
     cur.execute("SELECT stars FROM balances WHERE user_id = ?", (user_id,))
@@ -89,14 +95,14 @@ def change_balance(user_id: int, delta: int, reason: str = "") -> int:
         (user_id, new)
     )
     cur.execute(
-        "INSERT INTO star_logs(user_id, change, reason, ts) VALUES(?, ?, ?, ?);",
-        (user_id, int(delta), reason, int(time.time()))
+        "INSERT INTO star_logs(user_id, change, reason, ts, ext_charge_id) VALUES(?, ?, ?, ?, ?);",
+        (user_id, int(delta), reason, int(time.time()), ext_charge_id)
     )
     conn.commit()
     conn.close()
     return new
 
-# ====== Рулетка: символы, генерация, оценка ======
+# ====== Рулетка ======
 SYMBOLS: List[Tuple[str, int]] = [
     ("🍒", 25),
     ("🍋", 25),
@@ -155,6 +161,7 @@ def main_menu_kb():
 
 def roulette_kb():
     kb = InlineKeyboardMarkup()
+    # при отсутствии PROVIDER_TOKEN кнопка будет открывать наш локальный "инвойс"
     kb.add(InlineKeyboardButton(f"🎟️ СПИН ({SPIN_COST_STARS} ⭐️)", callback_data="spin"))
     kb.add(InlineKeyboardButton("🔙 Назад", callback_data="back_to_main"))
     return kb
@@ -182,7 +189,7 @@ def admin_kb():
 def handle_start(message):
     name = message.from_user.first_name or "игрок"
     text = (
-        f"✨ Привет, <b>{name}</b>! Добро пожаловать в <b>StarryCasino</b> — локальная система звёзд.\n\n"
+        f"✨ Привет, <b>{name}</b>! Добро пожаловать в <b>StarryCasino</b>.\n\n"
         f"Нажми <b>ИГРАТЬ</b>, чтобы открыть рулетку и потратить {SPIN_COST_STARS} ⭐️ на спин."
     )
     bot.send_message(message.chat.id, text, reply_markup=main_menu_kb())
@@ -240,18 +247,18 @@ def cb_admin_logs(call):
         return
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
-    cur.execute("SELECT id, user_id, change, reason, ts FROM star_logs ORDER BY id DESC LIMIT 10")
+    cur.execute("SELECT id, user_id, change, reason, ts, ext_charge_id FROM star_logs ORDER BY id DESC LIMIT 10")
     rows = cur.fetchall()
     conn.close()
     lines = []
     for r in rows:
         ts = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(r[4]))
-        lines.append(f"{r[0]} | user:{r[1]} | change:{r[2]} | {r[3]} | {ts}")
+        lines.append(f"{r[0]} | user:{r[1]} | change:{r[2]} | {r[3]} | {ts} | charge:{r[5] or '-'}")
     text = "Последние логи:\n" + ("\n".join(lines) if lines else "Нет записей")
     bot.send_message(call.message.chat.id, text)
     bot.answer_callback_query(call.id)
 
-# ====== SPIN (локальная оплата звёздами) ======
+# ====== SPIN: поведение с провайдером и без ======
 @bot.callback_query_handler(func=lambda c: c.data == "spin")
 def cb_spin(call):
     uid = call.from_user.id
@@ -261,28 +268,145 @@ def cb_spin(call):
         bot.answer_callback_query(call.id, "Спин уже выполняется в этом чате. Подождите.", show_alert=False)
         return
 
-    bal = get_balance(uid)
-    if bal < SPIN_COST_STARS:
-        bot.answer_callback_query(call.id, "У вас недостаточно звёзд для спина.", show_alert=True)
+    # Если настроен провайдер — отправляем реальный инвойс
+    if PROVIDER_TOKEN:
+        prices = [LabeledPrice(label="★1", amount=SPIN_PRICE_AMOUNT)]
+        payload = f"spin:{uid}"
+        try:
+            invoice_msg = bot.send_invoice(
+                chat_id=chat_id,
+                title="Покупка спина",
+                description="Оплата за один спин",
+                invoice_payload=payload,
+                provider_token=PROVIDER_TOKEN,
+                currency=CURRENCY,
+                prices=prices
+            )
+        except TypeError:
+            invoice_msg = bot.send_invoice(
+                chat_id=chat_id,
+                title="Покупка спина",
+                description="Оплата за один спин",
+                payload=payload,
+                provider_token=PROVIDER_TOKEN,
+                currency=CURRENCY,
+                prices=prices
+            )
+        try:
+            if invoice_msg is not None:
+                pending_spin_invoice[uid] = {"chat_id": invoice_msg.chat.id, "msg_id": invoice_msg.message_id}
+            else:
+                pending_spin_invoice[uid] = {"chat_id": chat_id, "msg_id": call.message.message_id}
+        except Exception:
+            pending_spin_invoice[uid] = {"chat_id": chat_id, "msg_id": call.message.message_id}
+
+        bot.answer_callback_query(call.id)
         return
 
+    # Если провайдера нет — показываем собственный "инвойс" и кнопку оплатить
+    kb = InlineKeyboardMarkup()
+    kb.add(InlineKeyboardButton(f"Оплатить {SPIN_COST_STARS} ⭐️", callback_data=f"fake_pay_spin:{uid}"))
+    kb.add(InlineKeyboardButton("Отмена", callback_data="fake_pay_cancel"))
     try:
-        new_bal = change_balance(uid, -SPIN_COST_STARS, reason="spin_start")
+        bot.edit_message_text(
+            f"💳 Оплата спина\n\nСтоимость: {SPIN_COST_STARS} ⭐️\nНажмите Оплатить, чтобы подтвердить списание {SPIN_COST_STARS} ⭐️ со своего баланса.",
+            chat_id, call.message.message_id, reply_markup=kb
+        )
+    except Exception:
+        bot.send_message(chat_id,
+            f"💳 Оплата спина\n\nСтоимость: {SPIN_COST_STARS} ⭐️\nНажмите Оплатить, чтобы подтвердить списание {SPIN_COST_STARS} ⭐️ со своего баланса.",
+            reply_markup=kb
+        )
+    bot.answer_callback_query(call.id)
+
+@bot.callback_query_handler(func=lambda c: c.data and c.data.startswith("fake_pay_spin:"))
+def cb_fake_pay_spin_confirm(call):
+    # callback_data = fake_pay_spin:<uid_in_payload>
+    parts = call.data.split(":", 1)
+    try:
+        target_uid = int(parts[1])
+    except Exception:
+        bot.answer_callback_query(call.id, "Ошибка данных платежа.", show_alert=True)
+        return
+
+    user_id = call.from_user.id
+    if user_id != target_uid:
+        bot.answer_callback_query(call.id, "Платёж можно подтвердить только со своего аккаунта.", show_alert=True)
+        return
+
+    bal = get_balance(user_id)
+    if bal < SPIN_COST_STARS:
+        bot.answer_callback_query(call.id, "У вас недостаточно звёзд для оплаты.", show_alert=True)
+        # показать предложение обратиться к админу можно тут
+        return
+
+    # генерируем внешний charge id вида fake-<timestamp>-<uid> для логов
+    ext_charge_id = f"fake-{int(time.time())}-{user_id}"
+
+    try:
+        new_bal = change_balance(user_id, -SPIN_COST_STARS, reason="fake_pay_spin", ext_charge_id=ext_charge_id)
     except Exception:
         bot.answer_callback_query(call.id, "Ошибка при списании. Попробуйте позже.", show_alert=True)
         return
 
+    # Сохраним место сообщения для спина (используем текущее сообщение)
     try:
-        msg = bot.edit_message_text("🎰 Подготовка спина... Крутится...", chat_id, call.message.message_id)
+        pending_spin_invoice[user_id] = {"chat_id": call.message.chat.id, "msg_id": call.message.message_id}
     except Exception:
-        msg = bot.send_message(chat_id, "🎰 Подготовка спина... Крутится...")
+        pending_spin_invoice[user_id] = {"chat_id": call.message.chat.id, "msg_id": call.message.message_id}
 
-    bot.answer_callback_query(call.id, f"Списано {SPIN_COST_STARS} ⭐️ — запускаю спин")
+    bot.answer_callback_query(call.id, f"Оплата {SPIN_COST_STARS} ⭐️ подтверждена. Запускаю спин.")
+    # короткая заметка-чек в чате
+    bot.send_message(user_id, f"✅ Оплата принята. ChargeID: {ext_charge_id}. Списано {SPIN_COST_STARS} ⭐️.")
 
-    thread = threading.Thread(target=_spin_worker, args=(chat_id, msg.message_id, uid))
+    # Запускаем анимацию спина
+    thread = threading.Thread(target=_run_spin_animation_after_payment, args=(call.message.chat.id, call.message.message_id, user_id))
     thread.start()
 
-def _spin_worker(chat_id: int, msg_id: int, user_id: int):
+@bot.callback_query_handler(func=lambda c: c.data == "fake_pay_cancel")
+def cb_fake_pay_cancel(call):
+    try:
+        # вернуть в меню рулетки
+        bot.edit_message_text("Отменено. Возвращаю в меню.", call.message.chat.id, call.message.message_id, reply_markup=main_menu_kb())
+    except Exception:
+        pass
+    bot.answer_callback_query(call.id, "Отменено")
+
+# ====== PreCheckout и successful_payment для реальных провайдеров ======
+@bot.pre_checkout_query_handler(func=lambda query: True)
+def process_pre_checkout_query(pre_checkout_q):
+    try:
+        bot.answer_pre_checkout_query(pre_checkout_q.id, ok=True)
+    except Exception:
+        pass
+
+@bot.message_handler(content_types=['successful_payment'])
+def handle_successful_payment(message):
+    sp = message.successful_payment
+    payload = getattr(sp, "invoice_payload", None) or getattr(sp, "payload", None) or ""
+    user_id = message.from_user.id
+    # логируем внешний charge id и зачисляем звезду
+    ext_id = getattr(sp, "telegram_payment_charge_id", None)
+    # если payload spin: — запуск спина
+    # зачисляем 1 звезду на баланс (эквивалент оплаты)
+    try:
+        change_balance(user_id, 1, reason="real_payment_credit_star", ext_charge_id=ext_id)
+    except Exception:
+        pass
+
+    if payload.startswith("spin:"):
+        pending = pending_spin_invoice.pop(user_id, None)
+        if pending:
+            chat_id = pending["chat_id"]; msg_id = pending["msg_id"]
+        else:
+            sent = bot.send_message(user_id, "✅ Оплата получена. Запускаю спин...")
+            chat_id = sent.chat.id; msg_id = sent.message_id
+        threading.Thread(target=_run_spin_animation_after_payment, args=(chat_id, msg_id, user_id)).start()
+    else:
+        bot.send_message(user_id, "✅ Оплата получена и 1 ★ зачислена на баланс.")
+
+# ====== Запуск спина и начисление выигрыша ======
+def _run_spin_animation_after_payment(chat_id: int, msg_id: int, user_id: int):
     try:
         spin_locks.add(chat_id)
         frames = [spin_once() for _ in range(4)]
@@ -297,7 +421,10 @@ def _spin_worker(chat_id: int, msg_id: int, user_id: int):
         result, mult = eval_middle_row(final)
         win = mult if result != "lose" else 0
         if win:
-            change_balance(user_id, win, reason="spin_win")
+            try:
+                change_balance(user_id, win, reason="spin_win")
+            except Exception:
+                pass
 
         new_bal = get_balance(user_id)
         text = make_result_text(final, result, mult, new_bal)
@@ -314,7 +441,7 @@ def _spin_worker(chat_id: int, msg_id: int, user_id: int):
     finally:
         spin_locks.discard(chat_id)
 
-# ====== Обработка входящих текстов (админские команды и /balance) ======
+# ====== Обработка текстовых сообщений (админ/баланс) ======
 @bot.message_handler(func=lambda m: True, content_types=['text'])
 def handle_text(message):
     uid = message.from_user.id
