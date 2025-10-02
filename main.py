@@ -12,14 +12,14 @@ from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, LabeledPri
 
 # ====== Настройки и секреты из окружения ======
 TOKEN = os.getenv("STAR") or os.getenv("BOT_TOKEN") or ""
+PROVIDER_TOKEN = os.getenv("PROVIDER_TOKEN", "").strip()  # обязателен для реальных оплат
 DB_PATH = os.getenv("DB_PATH", "stars.db")
-SPIN_COST_STARS = int(os.getenv("SPIN_COST_STARS", "1"))
-# Провайдер оставляем пустым для поведения "как у друга"
-PROVIDER_TOKEN = os.getenv("PROVIDER_TOKEN", "").strip()
-SPIN_PRICE_AMOUNT = int(os.getenv("SPIN_PRICE_AMOUNT", "100"))  # для реальной оплаты (минимальные ед.)
+# Цена для одного спина в минимальных единицах валюты (например 100 = 1.00 RUB)
+SPIN_PRICE_AMOUNT = int(os.getenv("SPIN_PRICE_AMOUNT", "100"))
 CURRENCY = os.getenv("CURRENCY", "RUB")
+SPIN_COST_STARS = 1  # внутренняя стоимость спина в звёздах (после оплаты через Telegram зачислим эквивалент)
 
-# Один админ через ADMIN_ID
+# Один админ через ADMIN_ID (секретное окружение)
 _admin_id_raw = os.getenv("ADMIN_ID", "").strip()
 try:
     ADMIN_IDS: List[int] = [int(_admin_id_raw)] if _admin_id_raw else []
@@ -28,13 +28,13 @@ except ValueError:
 
 if not TOKEN:
     raise SystemExit("Требуется токен бота в переменной окружения STAR или BOT_TOKEN")
+if not PROVIDER_TOKEN:
+    raise SystemExit("Требуется PROVIDER_TOKEN в окружении для реальных Telegram-платежей")
 
 bot = telebot.TeleBot(TOKEN, parse_mode="HTML")
 
 # ====== Состояния ======
 spin_locks = set()                   # chat_id блокировки
-pending_actions = {}                 # user_id -> action
-# Когда используется нативный инвойс, сохраняем сообщение инвойса для редактирования
 pending_spin_invoice = {}            # user_id -> {"chat_id": int, "msg_id": int}
 
 # ====== DB (sqlite) ======
@@ -45,6 +45,16 @@ def init_db():
     CREATE TABLE IF NOT EXISTS balances (
         user_id INTEGER PRIMARY KEY,
         stars INTEGER NOT NULL
+    );
+    """)
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS payments (
+        telegram_payment_charge_id TEXT PRIMARY KEY,
+        user_id INTEGER NOT NULL,
+        username TEXT,
+        amount INTEGER NOT NULL,
+        currency TEXT NOT NULL,
+        ts INTEGER NOT NULL
     );
     """)
     cur.execute("""
@@ -101,6 +111,20 @@ def change_balance(user_id: int, delta: int, reason: str = "", ext_charge_id: Op
     conn.commit()
     conn.close()
     return new
+
+def record_payment(charge_id: str, user_id: int, username: str, amount: int, currency: str):
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "INSERT INTO payments(telegram_payment_charge_id, user_id, username, amount, currency, ts) VALUES(?, ?, ?, ?, ?, ?)",
+            (charge_id, user_id, username or "", amount, currency, int(time.time()))
+        )
+        conn.commit()
+    except sqlite3.IntegrityError:
+        pass
+    finally:
+        conn.close()
 
 # ====== Рулетка ======
 SYMBOLS: List[Tuple[str, int]] = [
@@ -161,7 +185,6 @@ def main_menu_kb():
 
 def roulette_kb():
     kb = InlineKeyboardMarkup()
-    # при отсутствии PROVIDER_TOKEN кнопка будет открывать наш локальный "инвойс"
     kb.add(InlineKeyboardButton(f"🎟️ СПИН ({SPIN_COST_STARS} ⭐️)", callback_data="spin"))
     kb.add(InlineKeyboardButton("🔙 Назад", callback_data="back_to_main"))
     return kb
@@ -201,7 +224,7 @@ def cb_play(call):
         "Испытай свою удачу: собери одинаковые символы в средней строке.\n\n"
         "💡 Правила:\n"
         "• 3 одинаковых фрукта → ×2\n"
-        "• 3 звезды ⭐ → ×3\n"
+        "• 3 звезды ⭐ → ×3\n        "
         "• 3 семёрки 7️⃣ → джекпот ×5",
         call.message.chat.id, call.message.message_id, reply_markup=roulette_kb(), parse_mode="HTML"
     )
@@ -258,7 +281,7 @@ def cb_admin_logs(call):
     bot.send_message(call.message.chat.id, text)
     bot.answer_callback_query(call.id)
 
-# ====== SPIN: поведение с провайдером и без ======
+# ====== SPIN: отправляем нативный инвойс через Telegram ======
 @bot.callback_query_handler(func=lambda c: c.data == "spin")
 def cb_spin(call):
     uid = call.from_user.id
@@ -268,111 +291,39 @@ def cb_spin(call):
         bot.answer_callback_query(call.id, "Спин уже выполняется в этом чате. Подождите.", show_alert=False)
         return
 
-    # Если настроен провайдер — отправляем реальный инвойс
-    if PROVIDER_TOKEN:
-        prices = [LabeledPrice(label="★1", amount=SPIN_PRICE_AMOUNT)]
-        payload = f"spin:{uid}"
-        try:
-            invoice_msg = bot.send_invoice(
-                chat_id=chat_id,
-                title="Покупка спина",
-                description="Оплата за один спин",
-                invoice_payload=payload,
-                provider_token=PROVIDER_TOKEN,
-                currency=CURRENCY,
-                prices=prices
-            )
-        except TypeError:
-            invoice_msg = bot.send_invoice(
-                chat_id=chat_id,
-                title="Покупка спина",
-                description="Оплата за один спин",
-                payload=payload,
-                provider_token=PROVIDER_TOKEN,
-                currency=CURRENCY,
-                prices=prices
-            )
-        try:
-            if invoice_msg is not None:
-                pending_spin_invoice[uid] = {"chat_id": invoice_msg.chat.id, "msg_id": invoice_msg.message_id}
-            else:
-                pending_spin_invoice[uid] = {"chat_id": chat_id, "msg_id": call.message.message_id}
-        except Exception:
-            pending_spin_invoice[uid] = {"chat_id": chat_id, "msg_id": call.message.message_id}
-
-        bot.answer_callback_query(call.id)
-        return
-
-    # Если провайдера нет — показываем собственный "инвойс" и кнопку оплатить
-    kb = InlineKeyboardMarkup()
-    kb.add(InlineKeyboardButton(f"Оплатить {SPIN_COST_STARS} ⭐️", callback_data=f"fake_pay_spin:{uid}"))
-    kb.add(InlineKeyboardButton("Отмена", callback_data="fake_pay_cancel"))
+    prices = [LabeledPrice(label="★1", amount=SPIN_PRICE_AMOUNT)]
+    payload = f"spin:{uid}"
     try:
-        bot.edit_message_text(
-            f"💳 Оплата спина\n\nСтоимость: {SPIN_COST_STARS} ⭐️\nНажмите Оплатить, чтобы подтвердить списание {SPIN_COST_STARS} ⭐️ со своего баланса.",
-            chat_id, call.message.message_id, reply_markup=kb
+        invoice_msg = bot.send_invoice(
+            chat_id=chat_id,
+            title="Покупка спина",
+            description="Оплата за один спин",
+            invoice_payload=payload,
+            provider_token=PROVIDER_TOKEN,
+            currency=CURRENCY,
+            prices=prices
         )
+    except TypeError:
+        invoice_msg = bot.send_invoice(
+            chat_id=chat_id,
+            title="Покупка спина",
+            description="Оплата за один спин",
+            payload=payload,
+            provider_token=PROVIDER_TOKEN,
+            currency=CURRENCY,
+            prices=prices
+        )
+    try:
+        if invoice_msg is not None:
+            pending_spin_invoice[uid] = {"chat_id": invoice_msg.chat.id, "msg_id": invoice_msg.message_id}
+        else:
+            pending_spin_invoice[uid] = {"chat_id": chat_id, "msg_id": call.message.message_id}
     except Exception:
-        bot.send_message(chat_id,
-            f"💳 Оплата спина\n\nСтоимость: {SPIN_COST_STARS} ⭐️\nНажмите Оплатить, чтобы подтвердить списание {SPIN_COST_STARS} ⭐️ со своего баланса.",
-            reply_markup=kb
-        )
+        pending_spin_invoice[uid] = {"chat_id": chat_id, "msg_id": call.message.message_id}
+
     bot.answer_callback_query(call.id)
 
-@bot.callback_query_handler(func=lambda c: c.data and c.data.startswith("fake_pay_spin:"))
-def cb_fake_pay_spin_confirm(call):
-    # callback_data = fake_pay_spin:<uid_in_payload>
-    parts = call.data.split(":", 1)
-    try:
-        target_uid = int(parts[1])
-    except Exception:
-        bot.answer_callback_query(call.id, "Ошибка данных платежа.", show_alert=True)
-        return
-
-    user_id = call.from_user.id
-    if user_id != target_uid:
-        bot.answer_callback_query(call.id, "Платёж можно подтвердить только со своего аккаунта.", show_alert=True)
-        return
-
-    bal = get_balance(user_id)
-    if bal < SPIN_COST_STARS:
-        bot.answer_callback_query(call.id, "У вас недостаточно звёзд для оплаты.", show_alert=True)
-        # показать предложение обратиться к админу можно тут
-        return
-
-    # генерируем внешний charge id вида fake-<timestamp>-<uid> для логов
-    ext_charge_id = f"fake-{int(time.time())}-{user_id}"
-
-    try:
-        new_bal = change_balance(user_id, -SPIN_COST_STARS, reason="fake_pay_spin", ext_charge_id=ext_charge_id)
-    except Exception:
-        bot.answer_callback_query(call.id, "Ошибка при списании. Попробуйте позже.", show_alert=True)
-        return
-
-    # Сохраним место сообщения для спина (используем текущее сообщение)
-    try:
-        pending_spin_invoice[user_id] = {"chat_id": call.message.chat.id, "msg_id": call.message.message_id}
-    except Exception:
-        pending_spin_invoice[user_id] = {"chat_id": call.message.chat.id, "msg_id": call.message.message_id}
-
-    bot.answer_callback_query(call.id, f"Оплата {SPIN_COST_STARS} ⭐️ подтверждена. Запускаю спин.")
-    # короткая заметка-чек в чате
-    bot.send_message(user_id, f"✅ Оплата принята. ChargeID: {ext_charge_id}. Списано {SPIN_COST_STARS} ⭐️.")
-
-    # Запускаем анимацию спина
-    thread = threading.Thread(target=_run_spin_animation_after_payment, args=(call.message.chat.id, call.message.message_id, user_id))
-    thread.start()
-
-@bot.callback_query_handler(func=lambda c: c.data == "fake_pay_cancel")
-def cb_fake_pay_cancel(call):
-    try:
-        # вернуть в меню рулетки
-        bot.edit_message_text("Отменено. Возвращаю в меню.", call.message.chat.id, call.message.message_id, reply_markup=main_menu_kb())
-    except Exception:
-        pass
-    bot.answer_callback_query(call.id, "Отменено")
-
-# ====== PreCheckout и successful_payment для реальных провайдеров ======
+# ====== PreCheckout и successful_payment ======
 @bot.pre_checkout_query_handler(func=lambda query: True)
 def process_pre_checkout_query(pre_checkout_q):
     try:
@@ -383,17 +334,26 @@ def process_pre_checkout_query(pre_checkout_q):
 @bot.message_handler(content_types=['successful_payment'])
 def handle_successful_payment(message):
     sp = message.successful_payment
+    if not sp:
+        return
     payload = getattr(sp, "invoice_payload", None) or getattr(sp, "payload", None) or ""
     user_id = message.from_user.id
-    # логируем внешний charge id и зачисляем звезду
     ext_id = getattr(sp, "telegram_payment_charge_id", None)
-    # если payload spin: — запуск спина
-    # зачисляем 1 звезду на баланс (эквивалент оплаты)
+    amount = getattr(sp, "total_amount", None) or getattr(sp, "invoice_total_amount", None) or 0
+    currency = getattr(sp, "currency", None) or CURRENCY
+    username = message.from_user.username or ""
+
+    # Записываем платёж, защищаем от дублей по telegram_payment_charge_id
+    if ext_id:
+        record_payment(ext_id, user_id, username, amount, currency)
+
+    # Зачисляем эквивалент 1 звезды за оплаченный спин (возможно ты хочешь зачислять больше)
     try:
-        change_balance(user_id, 1, reason="real_payment_credit_star", ext_charge_id=ext_id)
+        change_balance(user_id, SPIN_COST_STARS, reason="payment_credit_star", ext_charge_id=ext_id)
     except Exception:
         pass
 
+    # Если payload — spin:, запускаем спин на том же сообщении инвойса
     if payload.startswith("spin:"):
         pending = pending_spin_invoice.pop(user_id, None)
         if pending:
@@ -403,7 +363,7 @@ def handle_successful_payment(message):
             chat_id = sent.chat.id; msg_id = sent.message_id
         threading.Thread(target=_run_spin_animation_after_payment, args=(chat_id, msg_id, user_id)).start()
     else:
-        bot.send_message(user_id, "✅ Оплата получена и 1 ★ зачислена на баланс.")
+        bot.send_message(user_id, "✅ Оплата получена и звезда зачислена на баланс.")
 
 # ====== Запуск спина и начисление выигрыша ======
 def _run_spin_animation_after_payment(chat_id: int, msg_id: int, user_id: int):
@@ -447,14 +407,41 @@ def handle_text(message):
     uid = message.from_user.id
     txt = (message.text or "").strip()
 
+    if txt.startswith("/balance"):
+        bal = get_balance(uid)
+        bot.reply_to(message, f"💰 Ваш баланс: {bal} ⭐️")
+        return
+
+    # админ команды
+    if txt.startswith("/give") and uid in ADMIN_IDS:
+        parts = txt.split()
+        if len(parts) != 3:
+            bot.reply_to(message, "Использование: /give <user_id> <amount>")
+            return
+        try:
+            target = int(parts[1]); amount = int(parts[2])
+        except ValueError:
+            bot.reply_to(message, "ID и количество должны быть числами.")
+            return
+        try:
+            new_bal = change_balance(target, amount, reason=f"admin_give_by_{uid}")
+        except Exception as e:
+            bot.reply_to(message, f"Ошибка при выдаче: {e}")
+            return
+        bot.reply_to(message, f"Выдано {amount} ⭐️ пользователю {target}. Новый баланс: {new_bal} ⭐️")
+        try:
+            bot.send_message(target, f"Вам зачислено {amount} ⭐️. Новый баланс: {new_bal} ⭐️")
+        except Exception:
+            pass
+        return
+
     if pending_actions.get(uid) == "await_admin_give":
         parts = txt.split()
         if len(parts) != 2:
             bot.reply_to(message, "Неправильный формат. Отправь: <user_id> <количество_звёзд>")
             return
         try:
-            target = int(parts[0])
-            amount = int(parts[1])
+            target = int(parts[0]); amount = int(parts[1])
         except ValueError:
             bot.reply_to(message, "ID и количество должны быть числами.")
             pending_actions.pop(uid, None)
@@ -473,35 +460,7 @@ def handle_text(message):
         pending_actions.pop(uid, None)
         return
 
-    if txt.startswith("/balance"):
-        bal = get_balance(uid)
-        bot.reply_to(message, f"💰 Ваш баланс: {bal} ⭐️")
-        return
-
-    if txt.startswith("/give") and uid in ADMIN_IDS:
-        parts = txt.split()
-        if len(parts) != 3:
-            bot.reply_to(message, "Использование: /give <user_id> <amount>")
-            return
-        try:
-            target = int(parts[1])
-            amount = int(parts[2])
-        except ValueError:
-            bot.reply_to(message, "ID и количество должны быть числами.")
-            return
-        try:
-            new_bal = change_balance(target, amount, reason=f"admin_give_by_{uid}")
-        except Exception as e:
-            bot.reply_to(message, f"Ошибка при выдаче: {e}")
-            return
-        bot.reply_to(message, f"Выдано {amount} ⭐️ пользователю {target}. Новый баланс: {new_bal} ⭐️")
-        try:
-            bot.send_message(target, f"Вам зачислено {amount} ⭐️. Новый баланс: {new_bal} ⭐️")
-        except Exception:
-            pass
-        return
-
-# ====== Запуск ======
+# ====== Инициализация и запуск ======
 if __name__ == "__main__":
     init_db()
     try:
