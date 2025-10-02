@@ -7,9 +7,9 @@ import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, LabeledPrice
 
 # ====== Настройки ======
-TOKEN = os.getenv("STAR")  # токен бота
-PROVIDER_TOKEN = os.getenv("PROVIDER_TOKEN", "")  # токен платежного провайдера (для реальных оплат)
-SPIN_PRICE_AMOUNT = int(os.getenv("SPIN_PRICE_AMOUNT", "100"))  # минимальные единицы валюты (например 100 = 1.00 RUB)
+TOKEN = os.getenv("STAR")
+PROVIDER_TOKEN = os.getenv("PROVIDER_TOKEN", "")  # вставь токен провайдера для реальных платежей
+SPIN_PRICE_AMOUNT = int(os.getenv("SPIN_PRICE_AMOUNT", "100"))  # 100 = 1.00 RUB (минимальные ед. валюты)
 CURRENCY = os.getenv("CURRENCY", "RUB")
 
 if not TOKEN:
@@ -19,7 +19,7 @@ bot = telebot.TeleBot(TOKEN, parse_mode="HTML")
 
 # ====== Файлы и состояние ======
 BALANCE_FILE = "balances.json"
-spin_locks = set()  # чатовые локи для предотвращения параллельных спинов
+spin_locks = set()
 pending_spin_invoice = {}  # user_id -> {"chat_id": int, "msg_id": int}
 
 # ====== Символы и шансы ======
@@ -47,10 +47,6 @@ balances = load_balances()
 
 def get_balance(user_id):
     return int(balances.get(str(user_id), 0))
-
-def set_balance(user_id, value):
-    balances[str(user_id)] = int(value)
-    save_balances(balances)
 
 def add_balance(user_id, delta):
     balances[str(user_id)] = get_balance(user_id) + int(delta)
@@ -96,7 +92,7 @@ def make_result_text(matrix, result, mult, new_balance):
             f"Не останавливайтесь — сыграйте ещё раз и ловите удачу! 🍀"
         )
 
-# ====== Клавиатуры (вертикальные) ======
+# ====== Кнопки (вертикальные) ======
 def main_menu_kb():
     kb = InlineKeyboardMarkup()
     kb.add(InlineKeyboardButton("🎰 ИГРАТЬ", callback_data="play"))
@@ -175,7 +171,7 @@ def back(call):
     start(call.message)
     bot.answer_callback_query(call.id)
 
-# ====== SPIN: отправка нативного инвойса ======
+# ====== SPIN: отправляем нативный инвойс сразу (без заглушек) ======
 @bot.callback_query_handler(func=lambda call: call.data == "spin")
 def spin_invoice_handler(call):
     chat_id = call.message.chat.id
@@ -185,22 +181,28 @@ def spin_invoice_handler(call):
         bot.answer_callback_query(call.id, "Спин уже выполняется. Подождите...", show_alert=False)
         return
 
-    # Заглушка перед инвойсом (визуальный эффект)
-    sent = bot.send_message(chat_id, "🎰 Подготовка барабанов...\n💳 Ожидание оплаты…")
-    pending_spin_invoice[user_id] = {"chat_id": sent.chat.id, "msg_id": sent.message_id}
-
-    # Формируем инвойс: заголовок/описание/метка цены как в примере
+    # Формируем инвойс: заголовок/описание/метка цены как на скриншоте
     prices = [LabeledPrice(label="★1", amount=SPIN_PRICE_AMOUNT)]
     payload = f"spin:{user_id}"
-    bot.send_invoice(
+
+    # Отправляем инвойс — Telegram откроет нативное окно оплаты ("Покупка спинов", "Оплата за слот машину", "Заплатить ★1")
+    invoice_msg = bot.send_invoice(
         chat_id=chat_id,
         title="Покупка спинов",
-        description="Оплата за слот машину",
+        description="Оплата за слот машина",
         payload=payload,
-        provider_token=PROVIDER_TOKEN,  # для тестов можно оставить пустым, реальные платежи не пройдут без провайдера
+        provider_token=PROVIDER_TOKEN,
         currency=CURRENCY,
         prices=prices
     )
+
+    # Сохраняем место (сообщение‑инвойс) для последующего редактирования после успешной оплаты
+    try:
+        pending_spin_invoice[user_id] = {"chat_id": invoice_msg.chat.id, "msg_id": invoice_msg.message_id}
+    except Exception:
+        # fallback — если send_invoice не вернул объект Message
+        pending_spin_invoice[user_id] = {"chat_id": chat_id, "msg_id": call.message.message_id}
+
     bot.answer_callback_query(call.id)
 
 # ====== Обработка успешной оплаты и запуск анимации ======
@@ -210,12 +212,12 @@ def handle_successful_payment(message):
     payload = (sp.invoice_payload or "")
     user_id = message.from_user.id
 
-    # Если payload - не наш спин, просто уведомляем
+    # Если payload — не наш спин, просто уведомляем
     if not payload.startswith("spin:"):
         bot.send_message(user_id, "✅ Оплата принята. Спасибо.")
         return
 
-    # Найти заглушку для анимации
+    # Найти сообщение-инвойс для редактирования
     pending = pending_spin_invoice.pop(user_id, None)
     if pending:
         chat_id = pending["chat_id"]
@@ -225,18 +227,16 @@ def handle_successful_payment(message):
         chat_id = sent.chat.id
         msg_id = sent.message_id
 
-    # Запускаем анимацию в отдельном потоке
+    # Запустить анимацию рулетки в отдельном потоке
     threading.Thread(target=_run_spin_animation_after_payment, args=(chat_id, msg_id, user_id)).start()
 
 def _run_spin_animation_after_payment(chat_id, msg_id, user_id):
     try:
         spin_locks.add(chat_id)
-        # Кадры кручения
         frames = [spin_once() for _ in range(4)]
         for frame in frames[:-1]:
             bot.edit_message_text(matrix_to_text(frame) + "\n\n🎰 Крутится...", chat_id, msg_id)
             time.sleep(0.6)
-        # Финал
         final = spin_once()
         result, mult = eval_middle_row(final)
 
@@ -256,14 +256,9 @@ def _run_spin_animation_after_payment(chat_id, msg_id, user_id):
     finally:
         spin_locks.discard(chat_id)
 
-# ====== Повторный спин через кнопку "Сыграть ещё раз" ======
-# Кнопка просто вызывает callback "spin" и весь цикл повторится (инвойс -> оплата -> анимация)
-
 # ====== Запуск бота ======
 if __name__ == "__main__":
     try:
         bot.infinity_polling()
     except KeyboardInterrupt:
         pass
-    except Exception as e:
-        print("Polling stopped:", e)
