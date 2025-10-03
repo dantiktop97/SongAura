@@ -1,8 +1,5 @@
-.env
-*.pyc
 __pycache__/
-venv/
-.venv/
-*.sqlite3
+*.pyc
+*.pyo
+*.log
 balances.json
-payments.json
