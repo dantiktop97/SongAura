@@ -159,17 +159,20 @@ def start(message):
 @bot.callback_query_handler(func=lambda call: call.data == "play")
 def play(call):
     bot.edit_message_text(play_text(), call.message.chat.id, call.message.message_id, reply_markup=play_kb(), parse_mode="HTML")
+    bot.answer_callback_query(call.id)
 
 @bot.callback_query_handler(func=lambda call: call.data == "profile")
 def profile(call):
     uid = call.from_user.id
     bal = get_balance(uid)
     bot.edit_message_text(profile_text(uid, bal), call.message.chat.id, call.message.message_id, reply_markup=profile_kb(), parse_mode="HTML")
+    bot.answer_callback_query(call.id)
 
 @bot.callback_query_handler(func=lambda call: call.data == "back_to_main")
 def back(call):
     name = call.from_user.first_name or "игрок"
     bot.edit_message_text(welcome_text(name), call.message.chat.id, call.message.message_id, reply_markup=main_menu_kb(), parse_mode="HTML")
+    bot.answer_callback_query(call.id)
 
 # ====== Оплата ======
 @bot.callback_query_handler(func=lambda call: call.data in {"spin_15", "spin_25", "spin_50"})
@@ -177,6 +180,7 @@ def spin_pay(call):
     stake_map = {"spin_15": 15, "spin_25": 25, "spin_50": 50}
     stake = stake_map[call.data]
     payload = f"spin:{call.from_user.id}:{stake}:{int(time.time()*1000)}"
+    # amount for LabeledPrice for Stars mode is the unit count (1 star = 1)
     prices = [LabeledPrice(label=f"Спин за {stake} ⭐️", amount=stake)]
 
     try:
@@ -197,4 +201,98 @@ def spin_pay(call):
 
 @bot.pre_checkout_query_handler(func=lambda query: True)
 def checkout(pre_checkout_query: PreCheckoutQuery):
-    bot.answer_pre_checkout_query(pre_checkout_query.id, ok
+    # Подтверждаем предоплату
+    try:
+        bot.answer_pre_checkout_query(pre_checkout_query.id, ok=True)
+    except Exception:
+        pass
+
+@bot.message_handler(content_types=["successful_payment"])
+def got_payment(message):
+    sp = message.successful_payment
+    if not sp:
+        return
+    payload = getattr(sp, "invoice_payload", None) or getattr(sp, "payload", "")
+    if not isinstance(payload, str) or not payload.startswith("spin:"):
+        # не наш payload
+        return
+
+    parts = payload.split(":")
+    try:
+        stake = int(parts[2])
+    except Exception:
+        stake = 15
+
+    user_id = message.from_user.id
+    # Запускаем спин в отдельном потоке, чтобы не блокировать обработку webhook
+    threading.Thread(target=do_spin, args=(message.chat.id, user_id, stake)).start()
+
+def do_spin(chat_id, user_id, stake):
+    try:
+        msg = bot.send_message(chat_id, "🎰 Барабаны крутятся…")
+    except Exception:
+        return
+
+    # Анимация: несколько кадров
+    frames = [spin_once() for _ in range(3)]
+    try:
+        for frame in frames:
+            bot.edit_message_text(matrix_to_text(frame), chat_id, msg.message_id)
+            time.sleep(0.6)
+    except Exception:
+        pass
+
+    # Финальный результат
+    final = spin_once()
+    result, mult = eval_middle_row(final)
+
+    # Обновляем баланс: списываем ставку и добавляем выигрыш
+    bal = get_balance(user_id)
+    bal -= stake
+    if result != "lose":
+        win = stake * mult
+        bal += win
+    set_balance(user_id, bal)
+
+    text = make_result_text(final, result, mult, bal)
+    try:
+        bot.edit_message_text(text, chat_id, msg.message_id, reply_markup=result_kb(), parse_mode="HTML")
+    except Exception:
+        bot.send_message(chat_id, text, reply_markup=result_kb(), parse_mode="HTML")
+
+# ====== Flask webhook endpoint ======
+@app.route("/" + TOKEN, methods=["POST"])
+def webhook():
+    if request.headers.get("content-type") != "application/json":
+        abort(403)
+    json_string = request.stream.read().decode("utf-8")
+    try:
+        update = telebot.types.Update.de_json(json_string)
+        bot.process_new_updates([update])
+    except Exception as e:
+        print("Ошибка обработки апдейта:", e)
+    return "OK", 200
+
+@app.route("/")
+def index():
+    return "StarryCasino бот работает", 200
+
+# ====== Установка webhook и запуск ======
+if __name__ == "__main__":
+    if RENDER_HOST:
+        webhook_url = f"https://{RENDER_HOST}/{TOKEN}"
+        try:
+            bot.remove_webhook()
+        except Exception:
+            pass
+        try:
+            ok = bot.set_webhook(url=webhook_url)
+            print("Webhook установлен:", webhook_url, ok)
+        except Exception as e:
+            print("Не удалось установить webhook автоматически:", e)
+            print("Установите webhook вручную через BotFather/Telegram API.")
+    else:
+        print("RENDER_EXTERNAL_HOSTNAME не задан — пропущена автоматическая установка webhook.")
+
+    # Запускаем Flask (Render ожидает привязки к PORT)
+    app.run(host="0.0.0.0", port=PORT)
