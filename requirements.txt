@@ -1,2 +1,1 @@
-pytelegrambotapi==4.22.1
-flask==3.0.3
+telethon==1.34.0
