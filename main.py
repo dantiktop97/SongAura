@@ -3,12 +3,11 @@ import asyncio
 import threading
 from flask import Flask
 from telethon import TelegramClient
-from telethon.sessions import StringSession
 
 # 🔐 Данные из переменных окружения (Render → Environment)
 API_ID = int(os.getenv("API_ID"))
-API_HASH = os.getenv("API_HASH")
-SESSION = os.getenv("SESSION")
+API_HASH = os.getenv("API_HASH"))
+SESSION_FILE = "session_name"  # обычная файловая сессия, pyaes не нужен
 
 target_chats = [
     -1002163895139,
@@ -29,7 +28,8 @@ message_text = """ХОЧЕШЬ НАКРУТИТЬ ПОДПИСЧИКОВ ИЛИ 
 👉  @Hshzgsbot (https://t.me/Hshzgsbot?start=7902738665)  👈
 """
 
-client = TelegramClient(StringSession(SESSION), API_ID, API_HASH)
+# Используем обычную файловую сессию
+client = TelegramClient(SESSION_FILE, API_ID, API_HASH)
 app = Flask(__name__)
 
 @app.route('/')
@@ -56,5 +56,5 @@ def start_bot():
     loop.run_until_complete(send_ads())
 
 if __name__ == "__main__":
-    threading.Thread(target=start_bot).start()
+    threading.Thread(target=start_bot, daemon=True).start()
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", 10000)))
