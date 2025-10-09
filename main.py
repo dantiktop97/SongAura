@@ -1,18 +1,17 @@
-# send_in_15min.py
-import os
+# -*- coding: utf-8 -*-
 import asyncio
-import random
-from datetime import datetime
+import os
+import logging
+import sys
 from telethon import TelegramClient, errors
-from telethon.tl.types import InputPeerChannel
+from telethon.errors import FloodWaitError
 
-# Конфиг из окружения на Render
-SESSION = os.environ.get("SESSION")        # string session
-API_ID = int(os.environ.get("API_ID", "0"))
-API_HASH = os.environ.get("API_HASH", "")
-ADMIN_ID = int(os.environ.get("ADMIN_ID", "0"))
+# Получаем из секретов Render
+API_ID = int(os.getenv("API_ID"))
+API_HASH = os.getenv("API_HASH")
+SESSION = os.getenv("SESSION")
 
-# Целевые чаты и текст сообщения
+# Список целевых чатов (из твоего сообщения)
 target_chats = [
     -1002163895139,
     -1001300573578,
@@ -21,74 +20,61 @@ target_chats = [
     -1002768695068
 ]
 
-message_text = """
-ХОЧЕШЬ НАКРУТИТЬ ПОДПИСЧИКОВ ИЛИ РЕАКЦИЙ❓
+# Текст сообщения
+message_text = """ХОЧЕШЬ НАКРУТИТЬ ПОДПИСЧИКОВ ИЛИ РЕАКЦИЙ❓
 
 ✅ТОГДА ТЕБЕ К НАМ ✅
 
 ✅НАКРУТКА ЗА РЕФЕРАЛОВ✅
 
-          👇👇👇
+👇👇👇
 
 👉  @Hshzgsbot (https://t.me/Hshzgsbot?start=7902738665)  👈
 """
 
-# Параметры безопасности рассылки
-BATCH_SIZE = 1               # отправляем по одному чату за итерацию
-MIN_DELAY = 2.0              # минимальная пауза между отправками в секундах
-MAX_DELAY = 5.0              # максимальная пауза между отправками в секундах
-PAUSE_BETWEEN_BATCHES = 3.0  # пауза между батчами в секундах
-START_DELAY_SECONDS = 15 * 60  # ждать 15 минут перед рассылкой
+# Через сколько секунд начать рассылку (15 минут)
+START_DELAY = 15 * 60
+# Задержка между отправками в разные чаты
+SEND_DELAY = 2
+
+# Логирование
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
 
 client = TelegramClient(SESSION, API_ID, API_HASH)
 
-async def safe_send(chat_id: int, text: str) -> bool:
+async def send_to_chat(chat_id: int, text: str):
     try:
         await client.send_message(chat_id, text)
-        return True
-    except errors.FloodWaitError as e:
-        wait = e.seconds + 1
-        await asyncio.sleep(wait)
-        try:
-            await client.send_message(chat_id, text)
-            return True
-        except Exception:
-            return False
-    except (errors.UserIsBlockedError, errors.InputUserDeactivatedError, errors.ChatWriteForbiddenError):
-        return False
-    except Exception:
-        return False
-
-async def send_all():
-    success = 0
-    fail = 0
-    # ждем стартовое время
-    start_at = datetime.utcnow() + timedelta(seconds=START_DELAY_SECONDS)
-    await client.send_message(ADMIN_ID, f"Рассылка запланирована на {start_at.isoformat()} UTC")
-    await asyncio.sleep(START_DELAY_SECONDS)
-    # отправляем в батчах
-    for i in range(0, len(target_chats), BATCH_SIZE):
-        batch = target_chats[i:i+BATCH_SIZE]
-        for chat_id in batch:
-            ok = await safe_send(chat_id, message_text)
-            if ok:
-                success += 1
-            else:
-                fail += 1
-            await asyncio.sleep(random.uniform(MIN_DELAY, MAX_DELAY))
-        await asyncio.sleep(PAUSE_BETWEEN_BATCHES)
-    # уведомление админу
-    try:
-        await client.send_message(ADMIN_ID, f"Рассылка завершена. Успех: {success}, Ошибки: {fail}")
-    except Exception:
-        pass
-
-from datetime import timedelta
+        logging.info(f"✅ Sent to chat {chat_id}")
+    except FloodWaitError as e:
+        logging.warning(f"FloodWait {e.seconds} sec for chat {chat_id}")
+        await asyncio.sleep(e.seconds + 1)
+        await send_to_chat(chat_id, text)
+    except errors.RPCError as e:
+        logging.error(f"RPC error for {chat_id}: {e}")
+    except Exception as e:
+        logging.exception(f"Unexpected error for {chat_id}: {e}")
 
 async def main():
     await client.start()
-    await send_all()
-    await client.disconnect()
+    logging.info(f"✅ Client authorized. Waiting {START_DELAY} sec before sending...")
+    await asyncio.sleep(START_DELAY)
+
+    for chat_id in target_chats:
+        await send_to_chat(chat_id, message_text)
+        await asyncio.sleep(SEND_DELAY)
+
+    logging.info("✅ All messages sent. Exiting.")
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        client.loop.run_until_complete(main())
+    except KeyboardInterrupt:
+        logging.info("🛑 Interrupted")
+    finally:
+        if client.is_connected():
+            client.disconnect()
