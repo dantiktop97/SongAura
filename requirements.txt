@@ -1,3 +1,3 @@
-Flask
-pyTelegramBotAPI
-telethon
+Flask==2.2.5
+pyTelegramBotAPI==4.11.1
+telethon==1.31.1
