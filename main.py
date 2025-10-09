@@ -2,14 +2,13 @@ import os
 import asyncio
 from flask import Flask
 from telethon import TelegramClient
+from telethon.sessions import StringSession
 
-# === Конфигурация ===
 API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
-SESSION_NAME = "user_session"  # Файл сохранится как user_session.session
+SESSION_STRING = os.getenv("SESSION")
 PORT = int(os.getenv("PORT", 8000))
 
-# === Целевые чаты и сообщение ===
 target_chats = [
     -1002163895139,
     -1001300573578,
@@ -33,16 +32,14 @@ message_text = """
 report_user_id = 7902738665
 interval_minutes = 15
 
-# === Flask — чтобы Render не вырубил процесс ===
 app = Flask(name)
 
 @app.route('/')
 def home():
     return "AutoPoster is running"
 
-# === Основной цикл рассылки ===
 async def auto_post():
-    async with TelegramClient(SESSION_NAME, API_ID, API_HASH) as client:
+    async with TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH) as client:
         while True:
             success = []
             failed = []
@@ -65,7 +62,6 @@ async def auto_post():
 
             await asyncio.sleep(interval_minutes * 60)
 
-# === Запуск ===
 if name == "main":
     loop = asyncio.get_event_loop()
     loop.create_task(auto_post())
