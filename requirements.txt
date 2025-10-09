@@ -1,3 +1,3 @@
-telethon==1.24.0
-pyaes
-flask==2.3.3
+Flask==2.3.3
+telethon==1.34.0
+apscheduler==3.10.4
