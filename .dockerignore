@@ -6,3 +6,4 @@ build
 .git
 .env
 venv
+me_userbot.session
