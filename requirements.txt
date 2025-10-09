@@ -1,2 +1,1 @@
-telethon --no-deps
-pycryptodome
+telethon==1.25.4
