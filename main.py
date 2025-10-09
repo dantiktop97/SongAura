@@ -1,26 +1,16 @@
 import os
 import asyncio
-import threading
 from flask import Flask
-import telebot
 from telethon import TelegramClient
 
 # === Конфигурация ===
-TOKEN = os.getenv("PLAY")
 API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
+SESSION_NAME = "user_session"  # Файл сохранится как user_session.session
 PORT = int(os.getenv("PORT", 8000))
-SESSION_NAME = "me_userbot"
-
-if not TOKEN or not API_ID or not API_HASH:
-    raise RuntimeError("PLAY, API_ID или API_HASH не заданы")
-
-# === Инициализация ===
-bot = telebot.TeleBot(TOKEN, parse_mode="HTML")
-app = Flask(name)
 
 # === Целевые чаты и сообщение ===
-targets = [
+target_chats = [
     -1002163895139,
     -1001300573578,
     -1002094964873,
@@ -43,41 +33,40 @@ message_text = """
 report_user_id = 7902738665
 interval_minutes = 15
 
-# === Рассылка через Telethon ===
-async def send_messages(client):
-    success = []
-    failed = []
-    for chat_id in targets:
-        try:
-            await client.send_message(chat_id, message_text)
-            success.append(str(chat_id))
-        except Exception:
-            failed.append(str(chat_id))
-    report = "📢 Отчёт по рассылке:\n\n"
-    report += "✅ Отправлено в:\n" + ("\n".join(success) if success else "нет") + "\n\n"
-    report += "❌ Ошибки при отправке:\n" + ("\n".join(failed) if failed else "нет")
-    await client.send_message(report_user_id, report)
+# === Flask — чтобы Render не вырубил процесс ===
+app = Flask(name)
 
-async def auto_loop():
+@app.route('/')
+def home():
+    return "AutoPoster is running"
+
+# === Основной цикл рассылки ===
+async def auto_post():
     async with TelegramClient(SESSION_NAME, API_ID, API_HASH) as client:
         while True:
-            await send_messages(client)
+            success = []
+            failed = []
+
+            for chat_id in target_chats:
+                try:
+                    await client.send_message(chat_id, message_text)
+                    success.append(str(chat_id))
+                except Exception as e:
+                    failed.append(f"{chat_id} — {str(e)}")
+
+            report = "📢 <b>Отчёт по рассылке:</b>\n\n"
+            report += "✅ Успешно:\n" + ("\n".join(success) if success else "—") + "\n\n"
+            report += "❌ Ошибки:\n" + ("\n".join(failed) if failed else "—")
+
+            try:
+                await client.send_message(report_user_id, report, parse_mode='html')
+            except Exception as e:
+                print("Не удалось отправить отчёт:", e)
+
             await asyncio.sleep(interval_minutes * 60)
 
-def start_autoposter():
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(auto_loop())
-
-# === Web и polling ===
-@app.route("/")
-def index():
-    return "Bot is running"
-
-def start_bot():
-    bot.polling(none_stop=True)
-
+# === Запуск ===
 if name == "main":
-    threading.Thread(target=start_autoposter, daemon=True).start()
-    threading.Thread(target=start_bot, daemon=True).start()
+    loop = asyncio.get_event_loop()
+    loop.create_task(auto_post())
     app.run(host="0.0.0.0", port=PORT)
