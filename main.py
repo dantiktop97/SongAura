@@ -3,6 +3,7 @@ import asyncio
 from flask import Flask
 from telethon import TelegramClient
 from telethon.sessions import StringSession
+from apscheduler.schedulers.background import BackgroundScheduler
 
 API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
@@ -32,37 +33,39 @@ message_text = """
 report_user_id = 7902738665
 interval_minutes = 15
 
-app = Flask(name)
+app = Flask(__name__)
 
 @app.route('/')
 def home():
     return "AutoPoster is running"
 
-async def auto_post():
+async def send_messages():
     async with TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH) as client:
-        while True:
-            success = []
-            failed = []
+        success = []
+        failed = []
 
-            for chat_id in target_chats:
-                try:
-                    await client.send_message(chat_id, message_text)
-                    success.append(str(chat_id))
-                except Exception as e:
-                    failed.append(f"{chat_id} — {str(e)}")
-
-            report = "📢 <b>Отчёт по рассылке:</b>\n\n"
-            report += "✅ Успешно:\n" + ("\n".join(success) if success else "—") + "\n\n"
-            report += "❌ Ошибки:\n" + ("\n".join(failed) if failed else "—")
-
+        for chat_id in target_chats:
             try:
-                await client.send_message(report_user_id, report, parse_mode='html')
+                await client.send_message(chat_id, message_text)
+                success.append(str(chat_id))
             except Exception as e:
-                print("Не удалось отправить отчёт:", e)
+                failed.append(f"{chat_id} — {str(e)}")
 
-            await asyncio.sleep(interval_minutes * 60)
+        report = "📢 <b>Отчёт по рассылке:</b>\n\n"
+        report += "✅ Успешно:\n" + ("\n".join(success) if success else "—") + "\n\n"
+        report += "❌ Ошибки:\n" + ("\n".join(failed) if failed else "—")
 
-if name == "main":
-    loop = asyncio.get_event_loop()
-    loop.create_task(auto_post())
+        try:
+            await client.send_message(report_user_id, report, parse_mode='html')
+        except Exception as e:
+            print("Не удалось отправить отчёт:", e)
+
+def job():
+    asyncio.run(send_messages())
+
+scheduler = BackgroundScheduler()
+scheduler.add_job(job, 'interval', minutes=interval_minutes)
+scheduler.start()
+
+if __name__ == "__main__":
     app.run(host="0.0.0.0", port=PORT)
