@@ -1,3 +1,4 @@
 pycache/
 *.pyc
 .env
+me_userbot.session
