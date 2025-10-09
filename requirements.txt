@@ -1,2 +1,2 @@
-Flask
-Telethon
+Flask==1.41.2
+Telethon==3.1.2
