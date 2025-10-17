@@ -1,3 +1,2 @@
-pycache/
-*.session
-.env
+#!/bin/bash
+python main.py
