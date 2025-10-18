@@ -4,17 +4,38 @@ import json
 from datetime import datetime
 from aiohttp import web, ClientSession, ClientTimeout
 
-BOT_TOKEN = os.getenv("AVTO")
-CHANNEL_USERNAME = "vzref2"
-REF_LINK = "https://t.me/Hshzgsbot?start=7549204023"
-ADMIN_CHANNEL_ID = -1003079638308  # обязательно число, не строка
+BOT_TOKEN = os.getenv("AVTO")  # токен бота
+CHANNEL_USERNAME = "vzref2"     # канал для проверки подписки
+ADMIN_CHANNEL_ID = -1003079638308  # админ-канал
 
 API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 POLL_INTERVAL = 1.0
 LONG_POLL_TIMEOUT = 30
 CLIENT_TIMEOUT = ClientTimeout(total=LONG_POLL_TIMEOUT + 20)
 
-session: ClientSession | None = None  # глобальная сессия
+session: ClientSession | None = None
+
+# Основной пояснительный текст
+MAIN_TEXT = """
+📌 Как бот работает:
+
+1️⃣ Бот отслеживает всех пользователей, которые писали в чате.  
+2️⃣ Чтобы упомянуть всех, бот создаёт одно сообщение с видимым словом "УПОМ".  
+3️⃣ Все, кто писал в чате, получают уведомление о сообщении.  
+4️⃣ Используйте команду /everyone или кнопку для упоминания всех участников.
+"""
+
+# Подробная инструкция
+DETAILED_TEXT = """
+📌 Подробная инструкция:
+
+1️⃣ Добавьте бота в нужный чат или канал.  
+2️⃣ Дайте боту права отправлять сообщения.  
+3️⃣ Убедитесь, что бот видит сообщения участников, которых хотите упоминать.  
+4️⃣ Используйте команду /everyone или кнопку для упоминания всех.  
+5️⃣ Сообщение будет одно видимое слово "УПОМ", за которым скрыты ID всех участников.  
+6️⃣ Все пользователи, которые писали в чате, получат уведомления.
+"""
 
 async def send_method(method: str, payload: dict):
     url = f"{API_URL}/{method}"
@@ -32,30 +53,29 @@ async def send_method(method: str, payload: dict):
         print(f"{method} exception: {repr(e)}")
         return {"ok": False, "error": str(e)}
 
-def build_start_keyboard():
-    return {
-        "inline_keyboard": [
-            [{"text": "📢 Перейти в канал", "url": f"https://t.me/{CHANNEL_USERNAME}"}],
-            [{"text": "✅ Проверить подписку", "callback_data": "check_sub"}]
-        ]
-    }
-
 async def handle_update(update: dict):
     if "message" in update:
         msg = update["message"]
         chat_id = msg["chat"]["id"]
         text = msg.get("text", "")
-        if text and text.strip().startswith("/start"):
-            payload = {
-                "chat_id": chat_id,
-                "text": "👋 Добро пожаловать. Подпишись на канал и нажми кнопку ниже:",
-                "reply_markup": build_start_keyboard()
-            }
-            await send_method("sendMessage", payload)
+        user = msg.get("from", {})
+        user_id = user.get("id")
+        username = f"@{user.get('username')}" if user.get("username") else user.get("first_name","").strip()
 
-            user = msg.get("from", {})
-            username = f"@{user.get('username')}" if user.get("username") else f"{user.get('first_name','')}".strip()
-            user_id = user.get("id")
+        if text and text.strip().startswith("/start"):
+            # Кнопка проверки подписки
+            keyboard = {
+                "inline_keyboard": [
+                    [{"text": "✅ Проверить подписку", "callback_data": "check_sub"}]
+                ]
+            }
+            await send_method("sendMessage", {
+                "chat_id": chat_id,
+                "text": "👋 Добро пожаловать! Подпишитесь на канал и нажмите кнопку ниже:",
+                "reply_markup": keyboard
+            })
+
+            # Отправка данных в админ-канал
             timestamp = datetime.now().strftime("%d.%m.%Y %H:%M")
             report = (
                 "👤 Новый пользователь\n"
@@ -69,27 +89,59 @@ async def handle_update(update: dict):
         cb = update["callback_query"]
         data = cb.get("data", "")
         from_user = cb.get("from", {})
-        message = cb.get("message", {})
-        chat_id = message.get("chat", {}).get("id")
+        chat_id = cb.get("message", {}).get("chat", {}).get("id")
+        message_id = cb.get("message", {}).get("message_id")
+        user_id = from_user.get("id")
+
+        # Проверка подписки
         if data == "check_sub":
-            user_id = from_user.get("id")
-            async with session.get(f"{API_URL}/getChatMember", params={"chat_id": f"@{CHANNEL_USERNAME}", "user_id": user_id}, timeout=CLIENT_TIMEOUT) as resp:
-                info_text = await resp.text()
+            async with session.get(
+                f"{API_URL}/getChatMember",
+                params={"chat_id": f"@{CHANNEL_USERNAME}", "user_id": user_id},
+                timeout=CLIENT_TIMEOUT
+            ) as resp:
+                resp_text = await resp.text()
                 try:
-                    info = json.loads(info_text)
+                    info = json.loads(resp_text)
                 except Exception:
-                    info = {"ok": False, "raw": info_text}
-            print("getChatMember response:", info)
+                    info = {"ok": False, "raw": resp_text}
+
             status = info.get("result", {}).get("status", "")
             if status in ["member", "creator", "administrator"]:
-                payload = {
-                    "chat_id": chat_id,
-                    "text": "📣 Тут тебя уже ждёт авто-рассылка",
-                    "reply_markup": {"inline_keyboard": [[{"text": "🚀 Перейти к авто-рассылке", "url": REF_LINK}]]}
+                # Подписан → сразу основной текст с кнопкой
+                keyboard_main = {
+                    "inline_keyboard": [
+                        [{"text": "ℹ️ Подробная инструкция", "callback_data": "show_instruction"}]
+                    ]
                 }
-                await send_method("sendMessage", payload)
+                await send_method("sendMessage", {"chat_id": chat_id, "text": MAIN_TEXT, "reply_markup": keyboard_main})
             else:
-                await send_method("sendMessage", {"chat_id": chat_id, "text": "❌ Подписка не найдена. Подпишись и нажми ещё раз."})
+                # Не подписан → сообщение с просьбой подписаться
+                await send_method("sendMessage", {"chat_id": chat_id, "text": "❌ Подпишись на канал и нажми ещё раз."})
+
+            await send_method("answerCallbackQuery", {"callback_query_id": cb.get("id", "")})
+
+        # Показ подробной инструкции
+        elif data == "show_instruction":
+            # Удаляем предыдущее сообщение
+            await send_method("deleteMessage", {"chat_id": chat_id, "message_id": message_id})
+            keyboard_instruction = {
+                "inline_keyboard": [
+                    [{"text": "⬅️ Назад", "callback_data": "back_to_main"}]
+                ]
+            }
+            await send_method("sendMessage", {"chat_id": chat_id, "text": DETAILED_TEXT, "reply_markup": keyboard_instruction})
+            await send_method("answerCallbackQuery", {"callback_query_id": cb.get("id", "")})
+
+        # Назад к основному тексту
+        elif data == "back_to_main":
+            await send_method("deleteMessage", {"chat_id": chat_id, "message_id": message_id})
+            keyboard_main = {
+                "inline_keyboard": [
+                    [{"text": "ℹ️ Подробная инструкция", "callback_data": "show_instruction"}]
+                ]
+            }
+            await send_method("sendMessage", {"chat_id": chat_id, "text": MAIN_TEXT, "reply_markup": keyboard_main})
             await send_method("answerCallbackQuery", {"callback_query_id": cb.get("id", "")})
 
 async def poll_loop():
@@ -131,12 +183,6 @@ async def run():
     poll_task = loop.create_task(poll_loop())
 
     stop = asyncio.Event()
-    for sig in ("SIGINT", "SIGTERM"):
-        try:
-            loop.add_signal_handler(getattr(asyncio, "SIGBREAK", 0), lambda: stop.set())
-        except Exception:
-            pass
-
     try:
         await stop.wait()
     finally:
