@@ -1,12 +1,12 @@
 import os
 import asyncio
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from aiohttp import web, ClientSession, ClientTimeout
 
-BOT_TOKEN = os.getenv("AVTO")  # токен бота
-CHANNEL_USERNAME = "vzref2"     # канал для проверки подписки
-ADMIN_CHANNEL_ID = -1003079638308  # админ-канал
+BOT_TOKEN = os.getenv("AVTO")
+CHANNEL_USERNAME = "vzref2"
+ADMIN_CHANNEL_ID = -1003079638308
 
 API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 POLL_INTERVAL = 1.0
@@ -14,11 +14,10 @@ LONG_POLL_TIMEOUT = 30
 CLIENT_TIMEOUT = ClientTimeout(total=LONG_POLL_TIMEOUT + 20)
 
 session: ClientSession | None = None
+user_activity: dict[int, datetime] = {}
 
-# Основной текст
 MAIN_TEXT = "УПОМ\n\n📌 Как бот работает:\n1️⃣ Бот отслеживает всех пользователей, которые писали в чате.\n2️⃣ Чтобы упомянуть всех, бот создаёт одно сообщение с видимым словом 'УПОМ'.\n3️⃣ Все, кто писал в чате, получают уведомление.\n4️⃣ Используйте команду /everyone или кнопку для упоминания всех участников."
 
-# Подробная инструкция
 DETAILED_TEXT = """
 📌 Подробная инструкция:
 
@@ -41,7 +40,6 @@ async def send_method(method: str, payload: dict):
                 data = {"ok": False, "raw": text}
             return data
     except Exception as e:
-        print(f"{method} exception: {repr(e)}")
         return {"ok": False, "error": str(e)}
 
 async def handle_update(update: dict):
@@ -51,9 +49,11 @@ async def handle_update(update: dict):
         text = msg.get("text", "")
         user = msg.get("from", {})
         user_id = user.get("id")
-        username = f"@{user.get('username')}" if user.get("username") else user.get("first_name","").strip()
+        username = f"@{user.get('username')}" if user.get("username") else user.get("first_name", "").strip()
 
-        # Проверка подписки
+        if user_id:
+            user_activity[user_id] = datetime.utcnow()
+
         async with session.get(
             f"{API_URL}/getChatMember",
             params={"chat_id": f"@{CHANNEL_USERNAME}", "user_id": user_id},
@@ -67,12 +67,8 @@ async def handle_update(update: dict):
 
         status = info.get("result", {}).get("status", "")
 
-        if text and text.strip().startswith("/start"):
-            if status in ["member", "creator", "administrator"]:
-                # Подписан → ничего не присылаем
-                print(f"{username} уже подписан, /start не засоряет чат")
-            else:
-                # Не подписан → присылаем сообщение с кнопкой
+        if text.strip().startswith("/start"):
+            if status not in ["member", "creator", "administrator"]:
                 keyboard = {"inline_keyboard": [[{"text": "✅ Проверить подписку", "callback_data": "check_sub"}]]}
                 await send_method("sendMessage", {
                     "chat_id": chat_id,
@@ -80,18 +76,23 @@ async def handle_update(update: dict):
                     "reply_markup": keyboard
                 })
 
-            # Отправка данных в админ-канал
             timestamp = datetime.now().strftime("%d.%m.%Y %H:%M")
             report = f"👤 Новый пользователь\n🧑 Username: {username}\n🆔 ID: {user_id}\n🕒 Время: {timestamp}"
             await send_method("sendMessage", {"chat_id": ADMIN_CHANNEL_ID, "text": report})
 
-        elif text.strip():  # Любое непонятное сообщение
+        elif text.strip().startswith("/everyone") and status in ["member", "creator", "administrator"]:
+            message_text = text.replace("/everyone", "").strip()
+            cutoff = datetime.utcnow() - timedelta(hours=1)
+            recent_ids = [uid for uid, ts in user_activity.items() if ts >= cutoff]
+            mentions = "".join(f"[⠀](tg://user?id={uid})" for uid in recent_ids)
+            final_text = f"{message_text} {mentions}"
+            await send_method("sendMessage", {"chat_id": chat_id, "text": final_text})
+
+        elif text.strip():
             if status in ["member", "creator", "administrator"]:
-                # Подписан → основной текст
                 keyboard_main = {"inline_keyboard": [[{"text": "ℹ️ Подробная инструкция", "callback_data": "show_instruction"}]]}
                 await send_method("sendMessage", {"chat_id": chat_id, "text": MAIN_TEXT, "reply_markup": keyboard_main})
             else:
-                # Не подписан → напоминание подписаться
                 await send_method("sendMessage", {"chat_id": chat_id, "text": "❌ Подпишись на канал и нажми ещё раз."})
 
     if "callback_query" in update:
@@ -99,27 +100,27 @@ async def handle_update(update: dict):
         data = cb.get("data", "")
         chat_id = cb.get("message", {}).get("chat", {}).get("id")
         message_id = cb.get("message", {}).get("message_id")
+        user_id = cb.get("from", {}).get("id")
+
+        async with session.get(
+            f"{API_URL}/getChatMember",
+            params={"chat_id": f"@{CHANNEL_USERNAME}", "user_id": user_id},
+            timeout=CLIENT_TIMEOUT
+        ) as resp:
+            resp_text = await resp.text()
+            try:
+                info = json.loads(resp_text)
+            except Exception:
+                info = {"ok": False, "raw": resp_text}
+
+        status = info.get("result", {}).get("status", "")
 
         if data == "check_sub":
-            user_id = cb.get("from", {}).get("id")
-            async with session.get(
-                f"{API_URL}/getChatMember",
-                params={"chat_id": f"@{CHANNEL_USERNAME}", "user_id": user_id},
-                timeout=CLIENT_TIMEOUT
-            ) as resp:
-                resp_text = await resp.text()
-                try:
-                    info = json.loads(resp_text)
-                except Exception:
-                    info = {"ok": False, "raw": resp_text}
-
-            status = info.get("result", {}).get("status", "")
             if status in ["member", "creator", "administrator"]:
                 keyboard_main = {"inline_keyboard": [[{"text": "ℹ️ Подробная инструкция", "callback_data": "show_instruction"}]]}
                 await send_method("sendMessage", {"chat_id": chat_id, "text": MAIN_TEXT, "reply_markup": keyboard_main})
             else:
                 await send_method("sendMessage", {"chat_id": chat_id, "text": "❌ Подпишись на канал и нажми ещё раз."})
-
             await send_method("answerCallbackQuery", {"callback_query_id": cb.get("id", "")})
 
         elif data == "show_instruction":
@@ -151,7 +152,6 @@ async def poll_loop():
                 offset = max(offset, upd.get("update_id", 0) + 1)
                 await handle_update(upd)
         except Exception as e:
-            print("poll_loop exception:", repr(e))
             await asyncio.sleep(1)
         await asyncio.sleep(POLL_INTERVAL)
 
