@@ -5,139 +5,135 @@ from datetime import datetime, timedelta
 from aiohttp import web, ClientSession, ClientTimeout
 
 BOT_TOKEN = os.getenv("AVTO")
-CHANNEL_USERNAME = os.getenv("CHANNEL_USERNAME", "vzref2")
-ADMIN_CHANNEL_ID = int(os.getenv("ADMIN_CHANNEL_ID", "-1003079638308"))
 PORT = int(os.getenv("PORT", "8000"))
 
 API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
-POLL_INTERVAL = 1.0
-LONG_POLL_TIMEOUT = 30
-CLIENT_TIMEOUT = ClientTimeout(total=LONG_POLL_TIMEOUT + 20)
-
+CLIENT_TIMEOUT = ClientTimeout(total=60)
 session: ClientSession | None = None
-active_users = {}
 
-MAIN_TEXT = "👋 Добро пожаловать!\n\nВыберите действие:"
+known_chats = {}  # chat_id → title
+active_users = {}  # chat_id → {user_id: (name, timestamp)}
+
+MAIN_MENU = {
+    "inline_keyboard": [
+        [{"text": "💬 Чаты", "callback_data": "show_chats"}],
+        [{"text": "📄 Инструкция", "callback_data": "show_instruction"}]
+    ]
+}
+
 INSTRUCTION_TEXT = (
     "📌 Как работает бот:\n\n"
-    "1️⃣ Бот отслеживает всех, кто писал в чате за последние 60 минут.\n"
-    "2️⃣ Он не пишет в группу — только собирает данные.\n"
-    "3️⃣ В личке ты получаешь готовое сообщение с упоминаниями.\n"
-    "4️⃣ Ты сам вставляешь его в чат вручную.\n"
-    "5️⃣ Все активные участники получают уведомление."
+    "1️⃣ Бот отслеживает, в каких чатах он находится.\n"
+    "2️⃣ В каждом чате он фиксирует, кто писал сообщения.\n"
+    "3️⃣ В личке ты можешь посмотреть список чатов и активных участников.\n"
+    "4️⃣ Бот ничего не пишет в группы — всё вручную.\n"
+    "5️⃣ Никаких команд, никаких рассылок — только логика и контроль."
 )
 
-def update_activity(chat_id: int, user_id: int):
+def update_activity(chat_id: int, user_id: int, name: str):
     now = datetime.utcnow()
     if chat_id not in active_users:
         active_users[chat_id] = {}
-    active_users[chat_id][user_id] = now
+    active_users[chat_id][user_id] = (name, now)
 
-def get_mentions(chat_id: int, cutoff_minutes=60):
+def get_active_users(chat_id: int, minutes=60):
     now = datetime.utcnow()
-    mentions = []
-    for uid, ts in active_users.get(chat_id, {}).items():
-        if (now - ts).total_seconds() <= cutoff_minutes * 60:
-            mentions.append(f"[⠀](tg://user?id={uid})")
-    return "".join(mentions)
+    result = []
+    for uid, (name, ts) in active_users.get(chat_id, {}).items():
+        if (now - ts).total_seconds() <= minutes * 60:
+            result.append(name)
+    return result
 
-async def send_method(method: str, payload: dict):
+async def send(method: str, payload: dict):
     url = f"{API_URL}/{method}"
     try:
         async with session.post(url, json=payload, timeout=CLIENT_TIMEOUT) as resp:
-            text = await resp.text()
-            try:
-                data = json.loads(text)
-            except Exception:
-                data = {"ok": False, "raw": text}
-            return data
+            return await resp.json()
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
 async def handle_update(update: dict):
     if "message" in update:
         msg = update["message"]
-        chat_id = msg["chat"]["id"]
-        text = msg.get("text", "")
+        chat = msg["chat"]
+        chat_id = chat["id"]
+        chat_title = chat.get("title", f"Без названия ({chat_id})")
         user = msg.get("from", {})
         user_id = user.get("id")
-        username = f"@{user.get('username')}" if user.get("username") else user.get("first_name", "").strip()
+        name = f"@{user.get('username')}" if user.get("username") else user.get("first_name", "Аноним")
 
-        if msg["chat"]["type"] in ["group", "supergroup"]:
-            update_activity(chat_id, user_id)
+        if chat["type"] in ["group", "supergroup"]:
+            known_chats[chat_id] = chat_title
+            update_activity(chat_id, user_id, name)
 
-        if text and text.strip().startswith("/start"):
-            keyboard = {
-                "inline_keyboard": [
-                    [{"text": "📄 Инструкция", "callback_data": "show_instruction"}],
-                    [{"text": "👥 Активные за 60 мин", "callback_data": "show_active"}]
-                ]
-            }
-            await send_method("sendMessage", {"chat_id": chat_id, "text": MAIN_TEXT, "reply_markup": keyboard})
+        if chat["type"] == "private" and msg.get("text", "").startswith("/start"):
+            await send("sendMessage", {"chat_id": chat_id, "text": "👋 Добро пожаловать!\n\nВыберите действие:", "reply_markup": MAIN_MENU})
+
+    if "my_chat_member" in update:
+        chat = update["my_chat_member"]["chat"]
+        chat_id = chat["id"]
+        status = update["my_chat_member"]["new_chat_member"]["status"]
+        if status in ["member", "administrator"]:
+            known_chats[chat_id] = chat.get("title", f"Без названия ({chat_id})")
+        elif status in ["left", "kicked"]:
+            known_chats.pop(chat_id, None)
+            active_users.pop(chat_id, None)
 
     if "callback_query" in update:
         cb = update["callback_query"]
         data = cb.get("data", "")
-        chat_id = cb.get("message", {}).get("chat", {}).get("id")
-        message_id = cb.get("message", {}).get("message_id")
-        user_id = cb.get("from", {}).get("id")
+        chat_id = cb["message"]["chat"]["id"]
+        msg_id = cb["message"]["message_id"]
+        user_id = cb["from"]["id"]
 
         if data == "show_instruction":
-            await send_method("deleteMessage", {"chat_id": chat_id, "message_id": message_id})
-            keyboard = {"inline_keyboard": [[{"text": "⬅️ Назад", "callback_data": "back_to_main"}]]}
-            await send_method("sendMessage", {"chat_id": chat_id, "text": INSTRUCTION_TEXT, "reply_markup": keyboard})
-            await send_method("answerCallbackQuery", {"callback_query_id": cb.get("id", "")})
+            await send("deleteMessage", {"chat_id": chat_id, "message_id": msg_id})
+            await send("sendMessage", {
+                "chat_id": chat_id,
+                "text": INSTRUCTION_TEXT,
+                "reply_markup": {"inline_keyboard": [[{"text": "🔙 Назад", "callback_data": "back_to_main"}]]}
+            })
 
-        elif data == "show_active":
-            users = []
-            for cid, members in active_users.items():
-                for uid, ts in members.items():
-                    if (datetime.utcnow() - ts).total_seconds() <= 3600:
-                        users.append(f"🆔 {uid}")
-            user_list = "\n".join(users) if users else "Нет активных пользователей."
-            keyboard = {"inline_keyboard": [[{"text": "📋 Скопировать", "callback_data": "copy_mentions"}], [{"text": "⬅️ Назад", "callback_data": "back_to_main"}]]}
-            await send_method("deleteMessage", {"chat_id": chat_id, "message_id": message_id})
-            await send_method("sendMessage", {"chat_id": chat_id, "text": f"👥 Активные:\n\n{user_list}", "reply_markup": keyboard})
-            await send_method("answerCallbackQuery", {"callback_query_id": cb.get("id", "")})
+        elif data == "show_chats":
+            buttons = []
+            for cid, title in known_chats.items():
+                buttons.append([{"text": f"💬 {title}", "callback_data": f"chat_{cid}"}])
+            buttons.append([{"text": "🔙 Назад", "callback_data": "back_to_main"}])
+            await send("deleteMessage", {"chat_id": chat_id, "message_id": msg_id})
+            await send("sendMessage", {
+                "chat_id": chat_id,
+                "text": "📍 Чаты, где активен бот:",
+                "reply_markup": {"inline_keyboard": buttons}
+            })
 
-        elif data == "copy_mentions":
-            mentions = ""
-            for cid in active_users:
-                mentions += get_mentions(cid)
-            final = f"УПОМ {mentions}" if mentions else "Нет активных упоминаний."
-            await send_method("sendMessage", {"chat_id": chat_id, "text": final})
-            await send_method("answerCallbackQuery", {"callback_query_id": cb.get("id", "")})
+        elif data.startswith("chat_"):
+            target_id = int(data.split("_")[1])
+            title = known_chats.get(target_id, f"Без названия ({target_id})")
+            users = get_active_users(target_id)
+            text = f"💬 Чат: {title}\n\n👥 Активные за 60 минут:\n\n" + ("\n".join(f"— {u}" for u in users) if users else "Нет активных участников.")
+            await send("deleteMessage", {"chat_id": chat_id, "message_id": msg_id})
+            await send("sendMessage", {
+                "chat_id": chat_id,
+                "text": text,
+                "reply_markup": {"inline_keyboard": [[{"text": "🔙 Назад", "callback_data": "show_chats"}]]}
+            })
 
         elif data == "back_to_main":
-            keyboard = {
-                "inline_keyboard": [
-                    [{"text": "📄 Инструкция", "callback_data": "show_instruction"}],
-                    [{"text": "👥 Активные за 60 мин", "callback_data": "show_active"}]
-                ]
-            }
-            await send_method("deleteMessage", {"chat_id": chat_id, "message_id": message_id})
-            await send_method("sendMessage", {"chat_id": chat_id, "text": MAIN_TEXT, "reply_markup": keyboard})
-            await send_method("answerCallbackQuery", {"callback_query_id": cb.get("id", "")})
+            await send("deleteMessage", {"chat_id": chat_id, "message_id": msg_id})
+            await send("sendMessage", {"chat_id": chat_id, "text": "👋 Добро пожаловать!\n\nВыберите действие:", "reply_markup": MAIN_MENU})
 
 async def poll_loop():
     offset = 0
     while True:
         try:
-            params = {"timeout": LONG_POLL_TIMEOUT, "offset": offset, "limit": 50}
-            async with session.get(f"{API_URL}/getUpdates", params=params, timeout=CLIENT_TIMEOUT) as resp:
-                text = await resp.text()
-                try:
-                    data = json.loads(text)
-                except Exception:
-                    data = {"ok": False, "raw": text}
-            if not data.get("ok"):
-                print("getUpdates error:", data)
+            async with session.get(f"{API_URL}/getUpdates", params={"timeout": 30, "offset": offset}, timeout=CLIENT_TIMEOUT) as resp:
+                data = await resp.json()
             for upd in data.get("result", []):
-                offset = max(offset, upd.get("update_id", 0) + 1)
+                offset = max(offset, upd["update_id"] + 1)
                 await handle_update(upd)
-        except Exception as e:
+        except Exception:
             await asyncio.sleep(1)
-        await asyncio.sleep(POLL_INTERVAL)
+        await asyncio.sleep(0.5)
 
 async def healthcheck(request):
     return web.Response(text="ok")
@@ -149,19 +145,8 @@ async def run():
     app.router.add_get("/", healthcheck)
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", PORT)
-    await site.start()
-
-    loop = asyncio.get_running_loop()
-    poll_task = loop.create_task(poll_loop())
-
-    stop = asyncio.Event()
-    try:
-        await stop.wait()
-    finally:
-        poll_task.cancel()
-        await session.close()
-        await runner.cleanup()
+    await web.TCPSite(runner, "0.0.0.0", PORT).start()
+    await poll_loop()
 
 if __name__ == "__main__":
     asyncio.run(run())
