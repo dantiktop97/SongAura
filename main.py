@@ -57,34 +57,23 @@ async def handle_update(update: dict):
         msg = update["message"]
         chat = msg["chat"]
         chat_id = chat["id"]
-        chat_title = chat.get("title", f"Без названия ({chat_id})")
+        title = chat.get("title", f"Без названия ({chat_id})")
         user = msg.get("from", {})
         user_id = user.get("id")
         name = f"@{user.get('username')}" if user.get("username") else user.get("first_name", "Аноним")
 
         if chat["type"] in ["group", "supergroup"]:
-            known_chats[chat_id] = chat_title
+            known_chats[chat_id] = title
             update_activity(chat_id, user_id, name)
 
         if chat["type"] == "private" and msg.get("text", "").startswith("/start"):
             await send("sendMessage", {"chat_id": chat_id, "text": "👋 Добро пожаловать!\n\nВыберите действие:", "reply_markup": MAIN_MENU})
-
-    if "my_chat_member" in update:
-        chat = update["my_chat_member"]["chat"]
-        chat_id = chat["id"]
-        status = update["my_chat_member"]["new_chat_member"]["status"]
-        if status in ["member", "administrator"]:
-            known_chats[chat_id] = chat.get("title", f"Без названия ({chat_id})")
-        elif status in ["left", "kicked"]:
-            known_chats.pop(chat_id, None)
-            active_users.pop(chat_id, None)
 
     if "callback_query" in update:
         cb = update["callback_query"]
         data = cb.get("data", "")
         chat_id = cb["message"]["chat"]["id"]
         msg_id = cb["message"]["message_id"]
-        user_id = cb["from"]["id"]
 
         if data == "show_instruction":
             await send("deleteMessage", {"chat_id": chat_id, "message_id": msg_id})
