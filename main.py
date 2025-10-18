@@ -15,15 +15,8 @@ CLIENT_TIMEOUT = ClientTimeout(total=LONG_POLL_TIMEOUT + 20)
 
 session: ClientSession | None = None
 
-# Основной пояснительный текст
-MAIN_TEXT = """
-📌 Как бот работает:
-
-1️⃣ Бот отслеживает всех пользователей, которые писали в чате.  
-2️⃣ Чтобы упомянуть всех, бот создаёт одно сообщение с видимым словом "УПОМ".  
-3️⃣ Все, кто писал в чате, получают уведомление о сообщении.  
-4️⃣ Используйте команду /everyone или кнопку для упоминания всех участников.
-"""
+# Основной текст
+MAIN_TEXT = "УПОМ\n\n📌 Как бот работает:\n1️⃣ Бот отслеживает всех пользователей, которые писали в чате.\n2️⃣ Чтобы упомянуть всех, бот создаёт одно сообщение с видимым словом 'УПОМ'.\n3️⃣ Все, кто писал в чате, получают уведомление.\n4️⃣ Используйте команду /everyone или кнопку для упоминания всех участников."
 
 # Подробная инструкция
 DETAILED_TEXT = """
@@ -46,8 +39,6 @@ async def send_method(method: str, payload: dict):
                 data = json.loads(text)
             except Exception:
                 data = {"ok": False, "raw": text}
-            print(f"{method} request payload: {payload}")
-            print(f"{method} response: {data}")
             return data
     except Exception as e:
         print(f"{method} exception: {repr(e)}")
@@ -62,39 +53,55 @@ async def handle_update(update: dict):
         user_id = user.get("id")
         username = f"@{user.get('username')}" if user.get("username") else user.get("first_name","").strip()
 
+        # Проверка подписки
+        async with session.get(
+            f"{API_URL}/getChatMember",
+            params={"chat_id": f"@{CHANNEL_USERNAME}", "user_id": user_id},
+            timeout=CLIENT_TIMEOUT
+        ) as resp:
+            resp_text = await resp.text()
+            try:
+                info = json.loads(resp_text)
+            except Exception:
+                info = {"ok": False, "raw": resp_text}
+
+        status = info.get("result", {}).get("status", "")
+
         if text and text.strip().startswith("/start"):
-            # Кнопка проверки подписки
-            keyboard = {
-                "inline_keyboard": [
-                    [{"text": "✅ Проверить подписку", "callback_data": "check_sub"}]
-                ]
-            }
-            await send_method("sendMessage", {
-                "chat_id": chat_id,
-                "text": "👋 Добро пожаловать! Подпишитесь на канал и нажмите кнопку ниже:",
-                "reply_markup": keyboard
-            })
+            if status in ["member", "creator", "administrator"]:
+                # Подписан → ничего не присылаем
+                print(f"{username} уже подписан, /start не засоряет чат")
+            else:
+                # Не подписан → присылаем сообщение с кнопкой
+                keyboard = {"inline_keyboard": [[{"text": "✅ Проверить подписку", "callback_data": "check_sub"}]]}
+                await send_method("sendMessage", {
+                    "chat_id": chat_id,
+                    "text": "👋 Подключись к каналу, чтобы продолжить работу:",
+                    "reply_markup": keyboard
+                })
 
             # Отправка данных в админ-канал
             timestamp = datetime.now().strftime("%d.%m.%Y %H:%M")
-            report = (
-                "👤 Новый пользователь\n"
-                f"🧑 Username: {username}\n"
-                f"🆔 ID: {user_id}\n"
-                f"🕒 Время: {timestamp}"
-            )
+            report = f"👤 Новый пользователь\n🧑 Username: {username}\n🆔 ID: {user_id}\n🕒 Время: {timestamp}"
             await send_method("sendMessage", {"chat_id": ADMIN_CHANNEL_ID, "text": report})
+
+        elif text.strip():  # Любое непонятное сообщение
+            if status in ["member", "creator", "administrator"]:
+                # Подписан → основной текст
+                keyboard_main = {"inline_keyboard": [[{"text": "ℹ️ Подробная инструкция", "callback_data": "show_instruction"}]]}
+                await send_method("sendMessage", {"chat_id": chat_id, "text": MAIN_TEXT, "reply_markup": keyboard_main})
+            else:
+                # Не подписан → напоминание подписаться
+                await send_method("sendMessage", {"chat_id": chat_id, "text": "❌ Подпишись на канал и нажми ещё раз."})
 
     if "callback_query" in update:
         cb = update["callback_query"]
         data = cb.get("data", "")
-        from_user = cb.get("from", {})
         chat_id = cb.get("message", {}).get("chat", {}).get("id")
         message_id = cb.get("message", {}).get("message_id")
-        user_id = from_user.get("id")
 
-        # Проверка подписки
         if data == "check_sub":
+            user_id = cb.get("from", {}).get("id")
             async with session.get(
                 f"{API_URL}/getChatMember",
                 params={"chat_id": f"@{CHANNEL_USERNAME}", "user_id": user_id},
@@ -108,39 +115,22 @@ async def handle_update(update: dict):
 
             status = info.get("result", {}).get("status", "")
             if status in ["member", "creator", "administrator"]:
-                # Подписан → сразу основной текст с кнопкой
-                keyboard_main = {
-                    "inline_keyboard": [
-                        [{"text": "ℹ️ Подробная инструкция", "callback_data": "show_instruction"}]
-                    ]
-                }
+                keyboard_main = {"inline_keyboard": [[{"text": "ℹ️ Подробная инструкция", "callback_data": "show_instruction"}]]}
                 await send_method("sendMessage", {"chat_id": chat_id, "text": MAIN_TEXT, "reply_markup": keyboard_main})
             else:
-                # Не подписан → сообщение с просьбой подписаться
                 await send_method("sendMessage", {"chat_id": chat_id, "text": "❌ Подпишись на канал и нажми ещё раз."})
 
             await send_method("answerCallbackQuery", {"callback_query_id": cb.get("id", "")})
 
-        # Показ подробной инструкции
         elif data == "show_instruction":
-            # Удаляем предыдущее сообщение
             await send_method("deleteMessage", {"chat_id": chat_id, "message_id": message_id})
-            keyboard_instruction = {
-                "inline_keyboard": [
-                    [{"text": "⬅️ Назад", "callback_data": "back_to_main"}]
-                ]
-            }
+            keyboard_instruction = {"inline_keyboard": [[{"text": "⬅️ Назад", "callback_data": "back_to_main"}]]}
             await send_method("sendMessage", {"chat_id": chat_id, "text": DETAILED_TEXT, "reply_markup": keyboard_instruction})
             await send_method("answerCallbackQuery", {"callback_query_id": cb.get("id", "")})
 
-        # Назад к основному тексту
         elif data == "back_to_main":
             await send_method("deleteMessage", {"chat_id": chat_id, "message_id": message_id})
-            keyboard_main = {
-                "inline_keyboard": [
-                    [{"text": "ℹ️ Подробная инструкция", "callback_data": "show_instruction"}]
-                ]
-            }
+            keyboard_main = {"inline_keyboard": [[{"text": "ℹ️ Подробная инструкция", "callback_data": "show_instruction"}]]}
             await send_method("sendMessage", {"chat_id": chat_id, "text": MAIN_TEXT, "reply_markup": keyboard_main})
             await send_method("answerCallbackQuery", {"callback_query_id": cb.get("id", "")})
 
