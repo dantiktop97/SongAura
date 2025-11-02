@@ -3,11 +3,13 @@ import re
 import sqlite3
 import telebot
 from datetime import datetime, timedelta
+from flask import Flask, request
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 TOKEN = os.getenv("PLAY")
 bot = telebot.TeleBot(TOKEN)
 DB_PATH = "data.db"
+app = Flask(__name__)
 
 def init_db():
     with sqlite3.connect(DB_PATH) as db:
@@ -37,14 +39,14 @@ def fmt_dt(dt):
 
 @bot.message_handler(commands=["start"])
 def start(msg):
-    name = msg.from_user.first_name or msg.from_user.username or "друг"
     bot.send_message(msg.chat.id,
-        f"👋 Привет, {name}!\n\n"
-        "Я контролирую обязательные подписки.\n\n"
-        "Команды:\n"
-        "/setup @канал 24h — добавить обязательную подписку\n"
-        "/unsetup @канал — удалить\n"
-        "/status — список активных проверок"
+        "👋 Привет!\n\n"
+        "Я бот‑фильтр для обязательных подписок.\n"
+        "Если ты не подписан на нужные каналы, писать в чат не получится.\n\n"
+        "📌 Доступные команды:\n"
+        "• /setup @канал 24h — добавить обязательную подписку\n"
+        "• /unsetup @канал — удалить подписку\n"
+        "• /status — список активных проверок"
     )
 
 @bot.message_handler(commands=["setup"])
@@ -59,7 +61,7 @@ def setup(msg):
     expires = datetime.now() + delta
     with sqlite3.connect(DB_PATH) as db:
         db.execute("INSERT INTO required_subs (chat_id, channel, expires) VALUES (?, ?, ?)", (msg.chat.id, channel, expires.isoformat()))
-    bot.reply_to(msg, f"✅ Добавлено ОП на {channel} до {fmt_dt(expires)}")
+    bot.reply_to(msg, f"✅ Добавлено обязательное условие: подписка на {channel} до {fmt_dt(expires)}")
 
 @bot.message_handler(commands=["unsetup"])
 def unsetup(msg):
@@ -69,7 +71,7 @@ def unsetup(msg):
     channel = args[1]
     with sqlite3.connect(DB_PATH) as db:
         db.execute("DELETE FROM required_subs WHERE channel=?", (channel,))
-    bot.reply_to(msg, f"✅ Убрано ОП с {channel}")
+    bot.reply_to(msg, f"✅ Убрано обязательное условие с {channel}")
 
 @bot.message_handler(commands=["status"])
 def status(msg):
@@ -78,7 +80,7 @@ def status(msg):
         rows = cur.fetchall()
     if not rows:
         return bot.reply_to(msg, "📋 Активных обязательных подписок нет.")
-    text = [f"📋 Активные ОП ({len(rows)}):"]
+    text = [f"📋 Активные проверки ({len(rows)}):"]
     for i, (channel, expires) in enumerate(rows, 1):
         dt = fmt_dt(datetime.fromisoformat(expires)) if expires else "∞"
         text.append(f"{i}. {channel} — до {dt}")
@@ -121,5 +123,18 @@ def check(msg):
             reply_markup=kb
         )
 
-init_db()
-bot.infinity_polling()
+@app.route(f"/{TOKEN}", methods=["POST"])
+def webhook():
+    update = telebot.types.Update.de_json(request.stream.read().decode("utf-8"))
+    bot.process_new_updates([update])
+    return "ok", 200
+
+@app.route("/", methods=["GET"])
+def index():
+    return "Бот работает", 200
+
+if __name__ == "__main__":
+    init_db()
+    bot.remove_webhook()
+    bot.set_webhook(url=f"{os.getenv('RENDER_EXTERNAL_URL')}/{TOKEN}")
+    app.run(host="0.0.0.0", port=8000)
