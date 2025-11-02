@@ -59,11 +59,17 @@ def start(msg):
     if msg.chat.type in ["group", "supergroup"]:
         bot.send_message(msg.chat.id, "👋 Привет, я <b>бот‑фильтр</b>.\nЯ проверяю <b>обязательные подписки</b> и удаляю сообщения тех, кто не подписан.\n\n📌 Для <b>настройки</b> напиши мне в личку.", parse_mode="HTML")
     elif msg.chat.type == "private":
-        send_subscribe_request(msg.chat.id)
+        if is_subscribed(msg.from_user.id, "@vzref2"):
+            send_private_intro(msg)
+        else:
+            send_subscribe_request(msg.chat.id)
 
 @bot.message_handler(func=lambda m: m.chat.type == "private")
 def private_any(msg):
-    send_subscribe_request(msg.chat.id)
+    if is_subscribed(msg.from_user.id, "@vzref2"):
+        send_private_intro(msg)
+    else:
+        send_subscribe_request(msg.chat.id)
 
 @bot.callback_query_handler(func=lambda call: call.data == "check_sub")
 def callback_check(call: CallbackQuery):
