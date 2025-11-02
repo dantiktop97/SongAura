@@ -24,32 +24,28 @@ from telegram.ext import (
 # -----------------------------
 # Конфигурация
 # -----------------------------
-logging.basicConfig(
-    format="%(asctime)s - %(levelname)s - %(message)s", level=logging.INFO
-)
+logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 TOKEN = os.getenv("PLAY")
 if not TOKEN:
-    raise SystemExit("❌ Не найден токен бота в переменной PLAY")
+    raise SystemExit("❌ PLAY токен не найден")
 
 DB_PATH = "data.db"
 
 # -----------------------------
-# Работа с базой данных
+# База данных
 # -----------------------------
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute(
-            """
+        await db.execute("""
             CREATE TABLE IF NOT EXISTS required_subs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 chat_id INTEGER,
                 channel_identifier TEXT,
                 expires_at TEXT
             )
-            """
-        )
+        """)
         await db.commit()
 
 async def db_query(query, params=(), fetch=False):
@@ -80,21 +76,25 @@ def fmt_dt(dt):
         return "∞"
     return dt.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
+def main_menu():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📘 Инструкция", callback_data="instruction")],
+        [InlineKeyboardButton("📁 Профиль", callback_data="profile")],
+        [InlineKeyboardButton("📋 Статус подписок", callback_data="status")],
+    ])
+
 # -----------------------------
 # Хендлеры
 # -----------------------------
 async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    kb = [
-        [InlineKeyboardButton("📁 Профиль", callback_data="profile")],
-        [InlineKeyboardButton("📘 Инструкция", callback_data="instruction")],
-    ]
+    user = update.effective_user
+    name = user.first_name or user.username or "друг"
     await update.message.reply_text(
-        "👋 Привет! Я бот для проверки обязательных подписок.\n\n"
-        "💡 Команды:\n"
-        "/setup @канал 24h — добавить обязательную подписку\n"
-        "/unsetup @канал — удалить\n"
-        "/status — посмотреть активные проверки.",
-        reply_markup=InlineKeyboardMarkup(kb),
+        f"👋 Привет, {name}!\n\n"
+        "Я бот, который помогает контролировать обязательные подписки в Telegram-группах.\n"
+        "📌 Я блокирую сообщения от пользователей, которые не подписались на нужные каналы.\n\n"
+        "Выбери действие ниже 👇",
+        reply_markup=main_menu(),
     )
 
 async def ping_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -103,21 +103,57 @@ async def ping_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
+    try:
+        await q.message.delete()
+    except Exception:
+        pass
+
     if q.data == "instruction":
-        await q.message.reply_text(
-            "📘 Инструкция:\n"
-            "1️⃣ Добавь бота в группу и сделай админом.\n"
-            "2️⃣ Используй /setup @канал 24h — добавить проверку.\n"
-            "3️⃣ /unsetup @канал — убрать.\n"
-            "4️⃣ /status — список активных проверок."
+        kb = [[InlineKeyboardButton("🔙 Назад", callback_data="back")]]
+        await q.message.chat.send_message(
+            "📘 Инструкция:\n\n"
+            "1️⃣ Добавь меня в группу и сделай админом.\n"
+            "2️⃣ Используй команду /setup @канал 24h — чтобы добавить обязательную подписку.\n"
+            "3️⃣ /unsetup @канал — чтобы удалить.\n"
+            "4️⃣ /status — чтобы посмотреть текущие проверки.",
+            reply_markup=InlineKeyboardMarkup(kb),
         )
+
     elif q.data == "profile":
         chat = q.message.chat
-        await q.message.reply_text(
-            f"📁 Профиль:\n"
-            f"ID: {chat.id}\n"
-            f"Тип: {chat.type}\n"
-            f"Имя: {chat.title or chat.username or chat.first_name}"
+        kb = [[InlineKeyboardButton("🔙 Назад", callback_data="back")]]
+        await q.message.chat.send_message(
+            f"📁 Профиль:\n\n"
+            f"🆔 ID: {chat.id}\n"
+            f"💬 Тип: {chat.type}\n"
+            f"📛 Имя: {chat.title or chat.username or chat.first_name}",
+            reply_markup=InlineKeyboardMarkup(kb),
+        )
+
+    elif q.data == "status":
+        chat_id = q.message.chat.id
+        subs = await db_query(
+            "SELECT channel_identifier, expires_at FROM required_subs WHERE chat_id=?",
+            (chat_id,),
+            True,
+        )
+        kb = [[InlineKeyboardButton("🔙 Назад", callback_data="back")]]
+        if not subs:
+            await q.message.chat.send_message(
+                "📋 Активных обязательных подписок нет.",
+                reply_markup=InlineKeyboardMarkup(kb),
+            )
+        else:
+            text = [f"📋 Активные ОП ({len(subs)}):\n"]
+            for i, (identifier, expires) in enumerate(subs, 1):
+                dt = fmt_dt(datetime.fromisoformat(expires)) if expires else "∞"
+                text.append(f"{i}. {identifier} — до {dt}")
+            await q.message.chat.send_message("\n".join(text), reply_markup=InlineKeyboardMarkup(kb))
+
+    elif q.data == "back":
+        await q.message.chat.send_message(
+            "🔙 Возврат в главное меню.\n\nВыбери действие ниже 👇",
+            reply_markup=main_menu(),
         )
 
 async def setup_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -143,22 +179,6 @@ async def unsetup_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     identifier = context.args[0]
     await db_query("DELETE FROM required_subs WHERE channel_identifier=?", (identifier,))
     await update.message.reply_text(f"✅ Убрано ОП с {identifier}")
-
-async def status_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-    subs = await db_query(
-        "SELECT channel_identifier, expires_at FROM required_subs WHERE chat_id=?",
-        (chat_id,),
-        True,
-    )
-    if not subs:
-        return await update.message.reply_text("📋 Активных обязательных подписок нет.")
-
-    text = [f"📋 Активные ОП ({len(subs)}):\n"]
-    for i, (identifier, expires) in enumerate(subs, 1):
-        dt = fmt_dt(datetime.fromisoformat(expires)) if expires else "∞"
-        text.append(f"{i}. {identifier} — до {dt}")
-    await update.message.reply_text("\n".join(text))
 
 async def check_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
@@ -234,16 +254,4 @@ async def main():
     app.add_handler(CommandHandler("start", start_handler))
     app.add_handler(CommandHandler("ping", ping_handler))
     app.add_handler(CallbackQueryHandler(callback_handler))
-    app.add_handler(CommandHandler("setup", setup_handler))
-    app.add_handler(CommandHandler("unsetup", unsetup_handler))
-    app.add_handler(CommandHandler("status", status_handler))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, check_message))
-    app.add_handler(ChatMemberHandler(chat_member_handler, chat_member_types=ChatMemberHandler.MY_CHAT_MEMBER))
-
-    logger.info("🚀 Бот запущен через polling")
-    await app.run_polling()
-
-
-if __name__ == "__main__":
-    nest_asyncio.apply()
-    asyncio.get_event_loop().run_until_complete(main())
+    app.add_handler(CommandHandler("setup", setup_handler
