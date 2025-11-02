@@ -15,33 +15,32 @@ from telegram.ext import (
     Application,
     CommandHandler,
     MessageHandler,
-    ContextTypes,
     CallbackQueryHandler,
+    ContextTypes,
     filters,
 )
 
-# ---------------------------------------------
-# Конфигурация и логирование
-# ---------------------------------------------
+# -----------------------------
+# Конфигурация
+# -----------------------------
 logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+    format="%(asctime)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
 TOKEN = os.getenv("PLAY")
 if not TOKEN:
-    raise SystemExit("❌ Не найден токен в переменной PLAY")
+    raise SystemExit("❌ Не найден токен бота в переменной PLAY")
 
 PORT = int(os.getenv("PORT", "8000"))
 WEBHOOK_PATH = "/webhook"
-WEBHOOK_URL = os.getenv("WEBHOOK_URL", f"https://example.com{WEBHOOK_PATH}")  # свой домен Render
-
+WEBHOOK_URL = "https://songaura.onrender.com/webhook"
 DB_PATH = "data.db"
 
 
-# ---------------------------------------------
-# Инициализация базы
-# ---------------------------------------------
+# -----------------------------
+# Работа с базой данных
+# -----------------------------
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
@@ -57,55 +56,54 @@ async def init_db():
         await db.commit()
 
 
-async def db_query(query: str, params=(), fetch=False):
+async def db_query(query, params=(), fetch=False):
     async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute(query, params)
+        cur = await db.execute(query, params)
         await db.commit()
         if fetch:
-            rows = await cursor.fetchall()
+            rows = await cur.fetchall()
             return rows
         return []
 
 
-# ---------------------------------------------
-# Утилиты
-# ---------------------------------------------
-def parse_duration(spec: str):
+# -----------------------------
+# Вспомогательные функции
+# -----------------------------
+def parse_duration(spec):
     m = re.fullmatch(r"(\d+)\s*([smhd])", spec.strip(), re.IGNORECASE)
     if not m:
         return None
-    value = int(m.group(1))
-    unit = m.group(2).lower()
+    num, unit = int(m.group(1)), m.group(2).lower()
     return {
-        "s": timedelta(seconds=value),
-        "m": timedelta(minutes=value),
-        "h": timedelta(hours=value),
-        "d": timedelta(days=value),
+        "s": timedelta(seconds=num),
+        "m": timedelta(minutes=num),
+        "h": timedelta(hours=num),
+        "d": timedelta(days=num),
     }.get(unit)
 
 
-def fmt_dt(dt: datetime):
+def fmt_dt(dt):
+    if not dt:
+        return "∞"
     return dt.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
 
-# ---------------------------------------------
-# Основные команды
-# ---------------------------------------------
+# -----------------------------
+# Команды
+# -----------------------------
 async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kb = [
         [InlineKeyboardButton("📁 Профиль", callback_data="profile")],
         [InlineKeyboardButton("📘 Инструкция", callback_data="instruction")],
-        [InlineKeyboardButton("⚙️ Настройка ОП", callback_data="setup_help")],
     ]
-    text = (
-        "👋 Привет! Я бот, который контролирует обязательные подписки (ОП).\n\n"
-        "Команды:\n"
-        "/setup @channel 24h — добавить ОП\n"
-        "/unsetup @channel off — убрать ОП\n"
-        "/status — список активных ОП\n"
-        "\nДобавь меня в группу и сделай админом, чтобы я мог ограничивать пользователей."
+    await update.message.reply_text(
+        "👋 Привет! Я бот для проверки обязательных подписок.\n\n"
+        "💡 Команды:\n"
+        "/setup @канал 24h — добавить обязательную подписку\n"
+        "/unsetup @канал off — удалить\n"
+        "/status — посмотреть активные проверки.",
+        reply_markup=InlineKeyboardMarkup(kb),
     )
-    await update.effective_message.reply_text(text, reply_markup=InlineKeyboardMarkup(kb))
 
 
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -113,14 +111,12 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await q.answer()
     if q.data == "instruction":
         await q.message.reply_text(
-            "📘 Инструкция:\n\n"
-            "1️⃣ Добавь бота в канал и в группу (бот должен быть админом).\n"
-            "2️⃣ В группе используй /setup @канал 24h (или 7d и т.д.)\n"
+            "📘 Инструкция:\n"
+            "1️⃣ Добавь бота в группу и сделай админом.\n"
+            "2️⃣ Используй /setup @канал 24h — добавить проверку.\n"
             "3️⃣ /unsetup @канал off — убрать.\n"
-            "4️⃣ /status — активные проверки."
+            "4️⃣ /status — список активных проверок."
         )
-    elif q.data == "setup_help":
-        await q.message.reply_text("/setup @канал 24h — добавить\n/unsetup @канал off — убрать")
     elif q.data == "profile":
         chat = q.message.chat
         await q.message.reply_text(
@@ -139,44 +135,44 @@ async def setup_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     identifier, duration = context.args[0], context.args[1]
     delta = parse_duration(duration)
     if not delta:
-        return await msg.reply_text("Неверный формат времени. Пример: 24h, 30m, 7d")
+        return await msg.reply_text("Неверный формат времени. Пример: 24h, 7d")
 
-    expires_at = datetime.now(timezone.utc) + delta
+    expires = datetime.now(timezone.utc) + delta
     await db_query(
         "INSERT INTO required_subs (chat_id, channel_identifier, expires_at) VALUES (?, ?, ?)",
-        (msg.chat_id, identifier, expires_at),
+        (msg.chat_id, identifier, expires),
     )
-    await msg.reply_text(f"✅ Добавлено ОП на {identifier} до {fmt_dt(expires_at)}")
+    await msg.reply_text(f"✅ Добавлено ОП на {identifier} до {fmt_dt(expires)}")
 
 
 async def unsetup_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(context.args) < 2:
-        return await update.effective_message.reply_text("Использование: /unsetup @канал off")
-
-    identifier, flag = context.args[0], context.args[1].lower()
-    if flag != "off":
-        return await update.effective_message.reply_text("Второй аргумент должен быть off")
-
-    await db_query("DELETE FROM required_subs WHERE channel_identifier = ?", (identifier,))
-    await update.effective_message.reply_text(f"✅ ОП {identifier} удалено")
+        return await update.message.reply_text("Использование: /unsetup @канал off")
+    identifier = context.args[0]
+    await db_query("DELETE FROM required_subs WHERE channel_identifier=?", (identifier,))
+    await update.message.reply_text(f"✅ Убрано ОП с {identifier}")
 
 
 async def status_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    subs = await db_query("SELECT channel_identifier, expires_at FROM required_subs WHERE chat_id=?", (chat_id,), True)
+    subs = await db_query(
+        "SELECT channel_identifier, expires_at FROM required_subs WHERE chat_id=?",
+        (chat_id,),
+        True,
+    )
     if not subs:
-        return await update.message.reply_text("📋 Ваши активные подписки:\n┗ Общее количество: 0")
+        return await update.message.reply_text("📋 Активных обязательных подписок нет.")
 
-    text = [f"📋 Ваши активные подписки:\n┗ Общее количество: {len(subs)}\n"]
-    for i, (identifier, exp) in enumerate(subs, 1):
-        dt = fmt_dt(datetime.fromisoformat(exp)) if exp else "∞"
-        text.append(f"{i}️⃣ {identifier}\n┣ ⏳ Активна до: {dt}")
+    text = [f"📋 Активные ОП ({len(subs)}):\n"]
+    for i, (identifier, expires) in enumerate(subs, 1):
+        dt = fmt_dt(datetime.fromisoformat(expires)) if expires else "∞"
+        text.append(f"{i}. {identifier} — до {dt}")
     await update.message.reply_text("\n".join(text))
 
 
-# ---------------------------------------------
-# Проверка подписки и реакция на сообщение
-# ---------------------------------------------
+# -----------------------------
+# Проверка подписки
+# -----------------------------
 async def check_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
     user = update.effective_user
@@ -184,36 +180,28 @@ async def check_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not user or not msg:
         return
 
-    # Получить активные ОП
     subs = await db_query(
-        "SELECT id, channel_identifier, expires_at FROM required_subs WHERE chat_id=?",
+        "SELECT channel_identifier, expires_at FROM required_subs WHERE chat_id=?",
         (chat.id,),
         True,
     )
     if not subs:
         return
 
-    # Проверяем каждую подписку
     not_subscribed = []
-    for _, identifier, expires_at in subs:
-        if expires_at:
-            if datetime.fromisoformat(expires_at) < datetime.now(timezone.utc):
-                await db_query("DELETE FROM required_subs WHERE channel_identifier=?", (identifier,))
-                continue
+    for identifier, expires in subs:
+        if expires and datetime.fromisoformat(expires) < datetime.now(timezone.utc):
+            await db_query("DELETE FROM required_subs WHERE channel_identifier=?", (identifier,))
+            continue
 
         try:
-            channel_username = identifier.strip()
-            if channel_username.startswith("@"):
-                channel_username = channel_username[1:]
-
-            member = await context.bot.get_chat_member(f"@{channel_username}", user.id)
+            member = await context.bot.get_chat_member(identifier, user.id)
             if member.status in ("left", "kicked"):
                 not_subscribed.append(identifier)
         except Exception:
             not_subscribed.append(identifier)
 
     if not not_subscribed:
-        # Если пользователь подписан, снять ограничение (если есть)
         try:
             await context.bot.restrict_chat_member(
                 chat.id, user.id, permissions=ChatPermissions(can_send_messages=True)
@@ -222,13 +210,11 @@ async def check_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
         return
 
-    # Удалить сообщение
     try:
         await msg.delete()
     except Exception:
         pass
 
-    # Ограничить пользователя
     try:
         await context.bot.restrict_chat_member(
             chat.id, user.id, permissions=ChatPermissions(can_send_messages=False)
@@ -236,33 +222,26 @@ async def check_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         pass
 
-    # Отправить уведомление с кнопкой
     for channel in not_subscribed:
-        username_clean = channel.lstrip("@")
-        link = f"https://t.me/{username_clean}"
+        link = f"https://t.me/{channel.strip('@')}"
         keyboard = InlineKeyboardMarkup(
             [[InlineKeyboardButton("🔗 Подписаться", url=link)]]
         )
-        text = (
-            f"{user.mention_html()} чтобы писать в чат, необходимо подписаться на канал(ы):\n"
-            f"{channel}"
-        )
         await context.bot.send_message(
             chat.id,
-            text,
+            f"{user.mention_html()}, чтобы писать в чат, необходимо подписаться на:\n{channel}",
             reply_markup=keyboard,
             parse_mode="HTML",
         )
 
 
-# ---------------------------------------------
-# Основной запуск с aiohttp
-# ---------------------------------------------
+# -----------------------------
+# Запуск aiohttp + webhook
+# -----------------------------
 async def main():
     await init_db()
 
     app = Application.builder().token(TOKEN).build()
-
     app.add_handler(CommandHandler("start", start_handler))
     app.add_handler(CallbackQueryHandler(callback_handler))
     app.add_handler(CommandHandler("setup", setup_handler))
@@ -270,7 +249,6 @@ async def main():
     app.add_handler(CommandHandler("status", status_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, check_message))
 
-    # aiohttp сервер
     aio_app = web.Application()
 
     async def handle(request):
@@ -282,13 +260,14 @@ async def main():
     aio_app.router.add_post(WEBHOOK_PATH, handle)
 
     await app.bot.set_webhook(WEBHOOK_URL)
-    logger.info(f"🚀 Webhook установлен на {WEBHOOK_URL}")
+    logger.info(f"✅ Webhook установлен: {WEBHOOK_URL}")
+
     runner = web.AppRunner(aio_app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", PORT)
     await site.start()
 
-    logger.info(f"Бот запущен на порту {PORT}")
+    logger.info(f"🚀 Бот запущен на порту {PORT}")
     await asyncio.Event().wait()
 
 
