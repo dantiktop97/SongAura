@@ -37,6 +37,30 @@ def parse_duration(spec):
 def fmt_dt(dt):
     return dt.strftime("%Y-%m-%d %H:%M")
 
+def send_private_intro(msg):
+    bot.send_message(
+        msg.chat.id,
+        f"👋 Привет, <b>{msg.from_user.first_name}</b>! Я <b>бот‑фильтр</b>.\n"
+        "Я проверяю <b>обязательные подписки</b> и удаляю сообщения тех, кто не подписан.",
+        parse_mode="HTML"
+    )
+    bot.send_message(
+        msg.chat.id,
+        "📘 <b>Инструкция по настройке</b>:\n\n"
+        "1️⃣ Добавь меня в <b>группу/чат</b> и сделай <b>админом</b>.\n"
+        "2️⃣ В группе/чате используй:\n"
+        "/setup @канал 24h — добавить обязательную подписку.\n"
+        "⏱ Время можно указывать так: <b>30s</b>, <b>15m</b>, <b>12h</b>, <b>7d</b>.\n"
+        "3️⃣ /unsetup @канал — убрать подписку.\n"
+        "4️⃣ /status — список активных проверок.\n\n"
+        "ℹ️ <b>Как это работает</b>:\n"
+        "• Пользователь пишет сообщение в чат.\n"
+        "• Бот проверяет его подписку.\n"
+        "• Если подписка есть — сообщение остаётся.\n"
+        "• Если нет — сообщение удаляется, а пользователю отправляется кнопка «Подписаться».",
+        parse_mode="HTML"
+    )
+
 @bot.message_handler(commands=["start"])
 def start(msg):
     if msg.chat.type in ["group", "supergroup"]:
@@ -48,31 +72,17 @@ def start(msg):
             parse_mode="HTML"
         )
     elif msg.chat.type == "private":
-        bot.send_message(
-            msg.chat.id,
-            f"👋 Привет <b>{msg.from_user.first_name}</b>, я <b>бот‑фильтр</b>.\n"
-            "Я проверяю <b>обязательные подписки</b> и удаляю сообщения тех, кто не подписан.",
-            parse_mode="HTML"
-        )
-        bot.send_message(
-            msg.chat.id,
-            "📘 <b>Инструкция по настройке</b>:\n\n"
-            "1️⃣ Добавь меня в <b>группу/чат</b> и сделай <b>админом</b>.\n"
-            "2️⃣ В группе/чате используй:\n"
-            "/setup @канал 24h — добавить обязательную подписку.\n"
-            "⏱ Время можно указывать так: <b>30s</b>, <b>15m</b>, <b>12h</b>, <b>7d</b>.\n"
-            "3️⃣ /unsetup @канал — убрать подписку.\n"
-            "4️⃣ /status — список активных проверок.\n\n"
-            "ℹ️ <b>Как это работает</b>:\n"
-            "• Пользователь пишет сообщение в чат.\n"
-            "• Бот проверяет его подписку.\n"
-            "• Если подписка есть — сообщение остаётся.\n"
-            "• Если нет — сообщение удаляется, а пользователю отправляется кнопка «Подписаться».",
-            parse_mode="HTML"
-        )
+        send_private_intro(msg)
+
+# Любое сообщение в ЛС → отправляем два сообщения (как при /start)
+@bot.message_handler(func=lambda m: m.chat.type == "private")
+def private_any(msg):
+    send_private_intro(msg)
 
 @bot.message_handler(commands=["setup"])
 def setup(msg):
+    if msg.chat.type == "private":
+        return send_private_intro(msg)
     args = msg.text.split()
     if len(args) < 3:
         return bot.reply_to(msg, "Использование: /setup @канал 24h")
@@ -87,6 +97,8 @@ def setup(msg):
 
 @bot.message_handler(commands=["unsetup"])
 def unsetup(msg):
+    if msg.chat.type == "private":
+        return send_private_intro(msg)
     args = msg.text.split()
     if len(args) < 2:
         return bot.reply_to(msg, "Использование: /unsetup @канал")
@@ -97,6 +109,8 @@ def unsetup(msg):
 
 @bot.message_handler(commands=["status"])
 def status(msg):
+    if msg.chat.type == "private":
+        return send_private_intro(msg)
     with sqlite3.connect(DB_PATH) as db:
         cur = db.execute("SELECT channel, expires FROM required_subs WHERE chat_id=?", (msg.chat.id,))
         rows = cur.fetchall()
@@ -108,7 +122,7 @@ def status(msg):
         text.append(f"{i}. {channel} — до {dt}")
     bot.reply_to(msg, "\n".join(text))
 
-@bot.message_handler(func=lambda m: True)
+@bot.message_handler(func=lambda m: m.chat.type in ["group", "supergroup"])
 def check(msg):
     user_id = msg.from_user.id
     chat_id = msg.chat.id
