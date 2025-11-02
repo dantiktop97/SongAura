@@ -251,9 +251,17 @@ async def main():
     aio_app = web.Application()
 
     async def handle(request):
-        data = await request.json()
+        try:
+            data = await request.json()
+        except Exception:
+            return web.Response(text="no json")
+
+        logger.info(f"Incoming update: {data}")
+
         update = Update.de_json(data, app.bot)
-        await app.process_update(update)
+        if update:
+            await app.process_update(update)
+
         return web.Response(text="ok")
 
     aio_app.router.add_post(WEBHOOK_PATH, handle)
