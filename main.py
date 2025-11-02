@@ -37,7 +37,33 @@ def parse_duration(spec):
 def fmt_dt(dt):
     return dt.strftime("%Y-%m-%d %H:%M")
 
+def is_subscribed(user_id, channel="@vzref2"):
+    try:
+        member = bot.get_chat_member(channel, user_id)
+        return member.status not in ["left", "kicked"]
+    except:
+        return False
+
 def send_private_intro(msg):
+    # Проверка подписки
+    if not is_subscribed(msg.from_user.id, "@vzref2"):
+        kb = InlineKeyboardMarkup()
+        kb.add(InlineKeyboardButton("🔗 Подписаться", url="https://t.me/vzref2"))
+        bot.send_message(
+            msg.chat.id,
+            "⚠️ Чтобы пользоваться ботом, нужно подписаться на канал:",
+            reply_markup=kb
+        )
+        return
+
+    # Если подписан → приветствие и инструкция
+    kb = InlineKeyboardMarkup()
+    kb.add(InlineKeyboardButton("🔗 Подписаться", url="https://t.me/vzref2"))
+    bot.send_message(
+        msg.chat.id,
+        "⚠️ Чтобы пользоваться ботом, нужно быть подписанным на канал:",
+        reply_markup=kb
+    )
     bot.send_message(
         msg.chat.id,
         f"👋 Привет, <b>{msg.from_user.first_name}</b>! Я <b>бот‑фильтр</b>.\n"
@@ -74,7 +100,7 @@ def start(msg):
     elif msg.chat.type == "private":
         send_private_intro(msg)
 
-# Любое сообщение в ЛС → отправляем два сообщения (как при /start)
+# Любое сообщение в ЛС → отправляем проверку и инструкции
 @bot.message_handler(func=lambda m: m.chat.type == "private")
 def private_any(msg):
     send_private_intro(msg)
@@ -169,8 +195,4 @@ def webhook():
 def index():
     return "Бот работает", 200
 
-if __name__ == "__main__":
-    init_db()
-    bot.remove_webhook()
-    bot.set_webhook(url=f"{os.getenv('RENDER_EXTERNAL_URL')}/{TOKEN}")
-    app.run(host="0.0.0.0", port=8000)
+if __name
