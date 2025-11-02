@@ -1,9 +1,9 @@
 import os
 import asyncio
 import logging
-from datetime import datetime, timedelta, timezone
 import re
 import aiosqlite
+from datetime import datetime, timedelta, timezone
 from aiohttp import web
 from telegram import (
     Update,
@@ -16,6 +16,7 @@ from telegram.ext import (
     CommandHandler,
     MessageHandler,
     CallbackQueryHandler,
+    ChatMemberHandler,
     ContextTypes,
     filters,
 )
@@ -235,6 +236,14 @@ async def check_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # -----------------------------
+# Обработчик my_chat_member
+# -----------------------------
+async def chat_member_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info(f"my_chat_member update: {update.to_dict()}")
+    # можно добавить свою логику, пока просто логируем
+
+
+# -----------------------------
 # Запуск aiohttp + webhook
 # -----------------------------
 async def main():
@@ -247,6 +256,7 @@ async def main():
     app.add_handler(CommandHandler("unsetup", unsetup_handler))
     app.add_handler(CommandHandler("status", status_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, check_message))
+    app.add_handler(ChatMemberHandler(chat_member_handler, chat_member_types=ChatMemberHandler.MY_CHAT_MEMBER))
 
     aio_app = web.Application()
 
@@ -260,24 +270,11 @@ async def main():
 
         update = Update.de_json(data, app.bot)
         if update:
-            await app.process_update(update)
+            try:
+                await app.process_update(update)
+            except Exception as e:
+                logger.error(f"Ошибка при обработке update: {e}")
 
         return web.Response(text="ok")
 
-    aio_app.router.add_post(WEBHOOK_PATH, handle)
-
-    await app.bot.delete_webhook()
-    await app.bot.set_webhook(WEBHOOK_URL)
-    logger.info(f"✅ Webhook установлен: {WEBHOOK_URL}")
-
-    runner = web.AppRunner(aio_app)
-    await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", PORT)
-    await site.start()
-
-    logger.info(f"🚀 Бот запущен на порту {PORT}")
-    await asyncio.Event().wait()
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
+    aio_app.router.add
