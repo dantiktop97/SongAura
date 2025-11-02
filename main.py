@@ -4,7 +4,6 @@ import logging
 import re
 import aiosqlite
 from datetime import datetime, timedelta, timezone
-from aiohttp import web
 from telegram import (
     Update,
     InlineKeyboardButton,
@@ -33,9 +32,6 @@ TOKEN = os.getenv("PLAY")
 if not TOKEN:
     raise SystemExit("❌ Не найден токен бота в переменной PLAY")
 
-PORT = int(os.getenv("PORT", "8000"))
-WEBHOOK_PATH = "/webhook"
-WEBHOOK_URL = "https://songaura.onrender.com/webhook"
 DB_PATH = "data.db"
 
 
@@ -89,7 +85,7 @@ def fmt_dt(dt):
 
 
 # -----------------------------
-# Команды
+# Хендлеры
 # -----------------------------
 async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kb = [
@@ -170,9 +166,6 @@ async def status_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("\n".join(text))
 
 
-# -----------------------------
-# Проверка подписки
-# -----------------------------
 async def check_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
     user = update.effective_user
@@ -235,16 +228,12 @@ async def check_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
-# -----------------------------
-# Обработчик my_chat_member
-# -----------------------------
 async def chat_member_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"my_chat_member update: {update.to_dict()}")
-    # можно добавить свою логику, пока просто логируем
 
 
 # -----------------------------
-# Запуск aiohttp + webhook
+# Запуск polling
 # -----------------------------
 async def main():
     await init_db()
@@ -258,23 +247,9 @@ async def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, check_message))
     app.add_handler(ChatMemberHandler(chat_member_handler, chat_member_types=ChatMemberHandler.MY_CHAT_MEMBER))
 
-    aio_app = web.Application()
+    logger.info("🚀 Бот запущен через polling")
+    await app.run_polling()
 
-    async def handle(request):
-        try:
-            data = await request.json()
-        except Exception:
-            return web.Response(text="no json")
 
-        logger.info(f"Incoming update: {data}")
-
-        update = Update.de_json(data, app.bot)
-        if update:
-            try:
-                await app.process_update(update)
-            except Exception as e:
-                logger.error(f"Ошибка при обработке update: {e}")
-
-        return web.Response(text="ok")
-
-    aio_app.router.add
+if __name__ == "__main__":
+    asyncio.run(main())
