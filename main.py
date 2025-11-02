@@ -4,7 +4,7 @@ import sqlite3
 import telebot
 from datetime import datetime, timedelta
 from flask import Flask, request
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 
 TOKEN = os.getenv("PLAY")
 bot = telebot.TeleBot(TOKEN)
@@ -44,15 +44,13 @@ def is_subscribed(user_id, channel="@vzref2"):
     except:
         return False
 
-def send_private_intro(msg):
-    if not is_subscribed(msg.from_user.id, "@vzref2"):
-        kb = InlineKeyboardMarkup()
-        kb.add(InlineKeyboardButton("🔗 Подписаться", url="https://t.me/vzref2"))
-        bot.send_message(msg.chat.id, "⚠️ Чтобы пользоваться ботом, нужно подписаться на канал:", reply_markup=kb)
-        return
+def send_subscribe_request(chat_id):
     kb = InlineKeyboardMarkup()
     kb.add(InlineKeyboardButton("🔗 Подписаться", url="https://t.me/vzref2"))
-    bot.send_message(msg.chat.id, "⚠️ Чтобы пользоваться ботом, нужно быть подписанным на канал:", reply_markup=kb)
+    kb.add(InlineKeyboardButton("✅ Проверить", callback_data="check_sub"))
+    bot.send_message(chat_id, "⚠️ Чтобы пользоваться ботом, нужно подписаться на канал:", reply_markup=kb)
+
+def send_private_intro(msg):
     bot.send_message(msg.chat.id, f"👋 Привет, <b>{msg.from_user.first_name}</b>! Я <b>бот‑фильтр</b>.\nЯ проверяю <b>обязательные подписки</b> и удаляю сообщения тех, кто не подписан.", parse_mode="HTML")
     bot.send_message(msg.chat.id, "📘 <b>Инструкция по настройке</b>:\n\n1️⃣ Добавь меня в <b>группу/чат</b> и сделай <b>админом</b>.\n2️⃣ В группе/чате используй:\n/setup @канал 24h — добавить обязательную подписку.\n⏱ Время можно указывать так: <b>30s</b>, <b>15m</b>, <b>12h</b>, <b>7d</b>.\n3️⃣ /unsetup @канал — убрать подписку.\n4️⃣ /status — список активных проверок.\n\nℹ️ <b>Как это работает</b>:\n• Пользователь пишет сообщение в чат.\n• Бот проверяет его подписку.\n• Если подписка есть — сообщение остаётся.\n• Если нет — сообщение удаляется, а пользователю отправляется кнопка «Подписаться».", parse_mode="HTML")
 
@@ -61,23 +59,30 @@ def start(msg):
     if msg.chat.type in ["group", "supergroup"]:
         bot.send_message(msg.chat.id, "👋 Привет, я <b>бот‑фильтр</b>.\nЯ проверяю <b>обязательные подписки</b> и удаляю сообщения тех, кто не подписан.\n\n📌 Для <b>настройки</b> напиши мне в личку.", parse_mode="HTML")
     elif msg.chat.type == "private":
-        send_private_intro(msg)
+        send_subscribe_request(msg.chat.id)
 
 @bot.message_handler(func=lambda m: m.chat.type == "private")
 def private_any(msg):
-    send_private_intro(msg)
+    send_subscribe_request(msg.chat.id)
+
+@bot.callback_query_handler(func=lambda call: call.data == "check_sub")
+def callback_check(call: CallbackQuery):
+    if is_subscribed(call.from_user.id, "@vzref2"):
+        send_private_intro(call.message)
+    else:
+        send_subscribe_request(call.message.chat.id)
 
 @bot.message_handler(commands=["setup"])
 def setup(msg):
     if msg.chat.type == "private":
-        return send_private_intro(msg)
+        return send_subscribe_request(msg.chat.id)
     args = msg.text.split()
     if len(args) < 3:
         return bot.reply_to(msg, "Использование: /setup @канал 24h")
     channel, duration = args[1], args[2]
     delta = parse_duration(duration)
     if not delta:
-        return bot.reply_to(msg, "Неверный формат времени. Пример: 24h, 7d (s=сек, m=мин, h=час, d=день)")
+        return bot.reply_to(msg, "Неверный формат времени. Пример: 24h, 7d")
     expires = datetime.now() + delta
     with sqlite3.connect(DB_PATH) as db:
         db.execute("INSERT INTO required_subs (chat_id, channel, expires) VALUES (?, ?, ?)", (msg.chat.id, channel, expires.isoformat()))
@@ -86,7 +91,7 @@ def setup(msg):
 @bot.message_handler(commands=["unsetup"])
 def unsetup(msg):
     if msg.chat.type == "private":
-        return send_private_intro(msg)
+        return send_subscribe_request(msg.chat.id)
     args = msg.text.split()
     if len(args) < 2:
         return bot.reply_to(msg, "Использование: /unsetup @канал")
@@ -98,7 +103,7 @@ def unsetup(msg):
 @bot.message_handler(commands=["status"])
 def status(msg):
     if msg.chat.type == "private":
-        return send_private_intro(msg)
+        return send_subscribe_request(msg.chat.id)
     with sqlite3.connect(DB_PATH) as db:
         cur = db.execute("SELECT channel, expires FROM required_subs WHERE chat_id=?", (msg.chat.id,))
         rows = cur.fetchall()
