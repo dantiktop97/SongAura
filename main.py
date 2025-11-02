@@ -113,7 +113,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.message.chat.send_message(
             "📘 Инструкция:\n\n"
             "1️⃣ Добавь меня в группу и сделай админом.\n"
-            "2️⃣ Используй команду /setup @канал 24h — чтобы добавить обязательную подписку.\n"
+            "2️⃣ Используй /setup @канал 24h — чтобы добавить обязательную подписку.\n"
             "3️⃣ /unsetup @канал — чтобы удалить.\n"
             "4️⃣ /status — чтобы посмотреть текущие проверки.",
             reply_markup=InlineKeyboardMarkup(kb),
@@ -250,8 +250,4 @@ async def chat_member_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def main():
     await init_db()
 
-    app = Application.builder().token(TOKEN).build()
-    app.add_handler(CommandHandler("start", start_handler))
-    app.add_handler(CommandHandler("ping", ping_handler))
-    app.add_handler(CallbackQueryHandler(callback_handler))
-    app.add_handler(CommandHandler("setup", setup_handler
+    app = Application.builder
