@@ -1,8 +1,9 @@
 import os
-import asyncio
 import logging
 import re
 import aiosqlite
+import asyncio
+import nest_asyncio
 from datetime import datetime, timedelta, timezone
 from telegram import (
     Update,
@@ -34,7 +35,6 @@ if not TOKEN:
 
 DB_PATH = "data.db"
 
-
 # -----------------------------
 # Работа с базой данных
 # -----------------------------
@@ -52,7 +52,6 @@ async def init_db():
         )
         await db.commit()
 
-
 async def db_query(query, params=(), fetch=False):
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute(query, params)
@@ -60,7 +59,6 @@ async def db_query(query, params=(), fetch=False):
         if fetch:
             return await cur.fetchall()
         return []
-
 
 # -----------------------------
 # Вспомогательные функции
@@ -77,12 +75,10 @@ def parse_duration(spec):
         "d": timedelta(days=num),
     }.get(unit)
 
-
 def fmt_dt(dt):
     if not dt:
         return "∞"
     return dt.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-
 
 # -----------------------------
 # Хендлеры
@@ -101,6 +97,8 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=InlineKeyboardMarkup(kb),
     )
 
+async def ping_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("🏓 Я жив!")
 
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
@@ -122,7 +120,6 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Имя: {chat.title or chat.username or chat.first_name}"
         )
 
-
 async def setup_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
     if len(context.args) < 2:
@@ -140,14 +137,12 @@ async def setup_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await msg.reply_text(f"✅ Добавлено ОП на {identifier} до {fmt_dt(expires)}")
 
-
 async def unsetup_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(context.args) < 1:
         return await update.message.reply_text("Использование: /unsetup @канал")
     identifier = context.args[0]
     await db_query("DELETE FROM required_subs WHERE channel_identifier=?", (identifier,))
     await update.message.reply_text(f"✅ Убрано ОП с {identifier}")
-
 
 async def status_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
@@ -164,7 +159,6 @@ async def status_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         dt = fmt_dt(datetime.fromisoformat(expires)) if expires else "∞"
         text.append(f"{i}. {identifier} — до {dt}")
     await update.message.reply_text("\n".join(text))
-
 
 async def check_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
@@ -227,10 +221,8 @@ async def check_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="HTML",
         )
 
-
 async def chat_member_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"my_chat_member update: {update.to_dict()}")
-
 
 # -----------------------------
 # Запуск polling
@@ -240,6 +232,7 @@ async def main():
 
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start_handler))
+    app.add_handler(CommandHandler("ping", ping_handler))
     app.add_handler(CallbackQueryHandler(callback_handler))
     app.add_handler(CommandHandler("setup", setup_handler))
     app.add_handler(CommandHandler("unsetup", unsetup_handler))
@@ -252,4 +245,5 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    nest_asyncio.apply()
+    asyncio.get_event_loop().run_until_complete(main())
