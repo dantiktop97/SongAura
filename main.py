@@ -1,8 +1,10 @@
 import os
+import asyncio
 import logging
-import re
-import sqlite3
 from datetime import datetime, timedelta, timezone
+import re
+import aiosqlite
+from aiohttp import web
 from telegram import (
     Update,
     InlineKeyboardButton,
@@ -10,12 +12,12 @@ from telegram import (
     ChatPermissions,
 )
 from telegram.ext import (
-    Updater,
+    Application,
     CommandHandler,
     MessageHandler,
     CallbackQueryHandler,
-    Filters,
-    CallbackContext,
+    ContextTypes,
+    filters,
 )
 
 # -----------------------------
@@ -31,6 +33,7 @@ if not TOKEN:
     raise SystemExit("❌ Не найден токен бота в переменной PLAY")
 
 PORT = int(os.getenv("PORT", "8000"))
+WEBHOOK_PATH = "/webhook"
 WEBHOOK_URL = "https://songaura.onrender.com/webhook"
 DB_PATH = "data.db"
 
@@ -38,9 +41,9 @@ DB_PATH = "data.db"
 # -----------------------------
 # Работа с базой данных
 # -----------------------------
-def init_db():
-    with sqlite3.connect(DB_PATH) as db:
-        db.execute(
+async def init_db():
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
             """
             CREATE TABLE IF NOT EXISTS required_subs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -50,15 +53,15 @@ def init_db():
             )
             """
         )
-        db.commit()
+        await db.commit()
 
 
-def db_query(query, params=(), fetch=False):
-    with sqlite3.connect(DB_PATH) as db:
-        cur = db.execute(query, params)
-        db.commit()
+async def db_query(query, params=(), fetch=False):
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(query, params)
+        await db.commit()
         if fetch:
-            return cur.fetchall()
+            return await cur.fetchall()
         return []
 
 
@@ -87,35 +90,35 @@ def fmt_dt(dt):
 # -----------------------------
 # Команды
 # -----------------------------
-def start_handler(update: Update, context: CallbackContext):
+async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kb = [
         [InlineKeyboardButton("📁 Профиль", callback_data="profile")],
         [InlineKeyboardButton("📘 Инструкция", callback_data="instruction")],
     ]
-    update.message.reply_text(
+    await update.message.reply_text(
         "👋 Привет! Я бот для проверки обязательных подписок.\n\n"
         "💡 Команды:\n"
         "/setup @канал 24h — добавить обязательную подписку\n"
-        "/unsetup @канал off — удалить\n"
+        "/unsetup @канал — удалить\n"
         "/status — посмотреть активные проверки.",
         reply_markup=InlineKeyboardMarkup(kb),
     )
 
 
-def callback_handler(update: Update, context: CallbackContext):
+async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
-    q.answer()
+    await q.answer()
     if q.data == "instruction":
-        q.message.reply_text(
+        await q.message.reply_text(
             "📘 Инструкция:\n"
             "1️⃣ Добавь бота в группу и сделай админом.\n"
             "2️⃣ Используй /setup @канал 24h — добавить проверку.\n"
-            "3️⃣ /unsetup @канал off — убрать.\n"
+            "3️⃣ /unsetup @канал — убрать.\n"
             "4️⃣ /status — список активных проверок."
         )
     elif q.data == "profile":
         chat = q.message.chat
-        q.message.reply_text(
+        await q.message.reply_text(
             f"📁 Профиль:\n"
             f"ID: {chat.id}\n"
             f"Тип: {chat.type}\n"
@@ -123,60 +126,60 @@ def callback_handler(update: Update, context: CallbackContext):
         )
 
 
-def setup_handler(update: Update, context: CallbackContext):
+async def setup_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
     if len(context.args) < 2:
-        return msg.reply_text("Использование: /setup @канал 24h")
+        return await msg.reply_text("Использование: /setup @канал 24h")
 
     identifier, duration = context.args[0], context.args[1]
     delta = parse_duration(duration)
     if not delta:
-        return msg.reply_text("Неверный формат времени. Пример: 24h, 7d")
+        return await msg.reply_text("Неверный формат времени. Пример: 24h, 7d")
 
     expires = datetime.now(timezone.utc) + delta
-    db_query(
+    await db_query(
         "INSERT INTO required_subs (chat_id, channel_identifier, expires_at) VALUES (?, ?, ?)",
         (msg.chat_id, identifier, expires.isoformat()),
     )
-    msg.reply_text(f"✅ Добавлено ОП на {identifier} до {fmt_dt(expires)}")
+    await msg.reply_text(f"✅ Добавлено ОП на {identifier} до {fmt_dt(expires)}")
 
 
-def unsetup_handler(update: Update, context: CallbackContext):
+async def unsetup_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(context.args) < 1:
-        return update.message.reply_text("Использование: /unsetup @канал")
+        return await update.message.reply_text("Использование: /unsetup @канал")
     identifier = context.args[0]
-    db_query("DELETE FROM required_subs WHERE channel_identifier=?", (identifier,))
-    update.message.reply_text(f"✅ Убрано ОП с {identifier}")
+    await db_query("DELETE FROM required_subs WHERE channel_identifier=?", (identifier,))
+    await update.message.reply_text(f"✅ Убрано ОП с {identifier}")
 
 
-def status_handler(update: Update, context: CallbackContext):
+async def status_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    subs = db_query(
+    subs = await db_query(
         "SELECT channel_identifier, expires_at FROM required_subs WHERE chat_id=?",
         (chat_id,),
         True,
     )
     if not subs:
-        return update.message.reply_text("📋 Активных обязательных подписок нет.")
+        return await update.message.reply_text("📋 Активных обязательных подписок нет.")
 
     text = [f"📋 Активные ОП ({len(subs)}):\n"]
     for i, (identifier, expires) in enumerate(subs, 1):
         dt = fmt_dt(datetime.fromisoformat(expires)) if expires else "∞"
         text.append(f"{i}. {identifier} — до {dt}")
-    update.message.reply_text("\n".join(text))
+    await update.message.reply_text("\n".join(text))
 
 
 # -----------------------------
 # Проверка подписки
 # -----------------------------
-def check_message(update: Update, context: CallbackContext):
+async def check_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
     user = update.effective_user
     chat = update.effective_chat
     if not user or not msg:
         return
 
-    subs = db_query(
+    subs = await db_query(
         "SELECT channel_identifier, expires_at FROM required_subs WHERE chat_id=?",
         (chat.id,),
         True,
@@ -187,11 +190,11 @@ def check_message(update: Update, context: CallbackContext):
     not_subscribed = []
     for identifier, expires in subs:
         if expires and datetime.fromisoformat(expires) < datetime.now(timezone.utc):
-            db_query("DELETE FROM required_subs WHERE channel_identifier=?", (identifier,))
+            await db_query("DELETE FROM required_subs WHERE channel_identifier=?", (identifier,))
             continue
 
         try:
-            member = context.bot.get_chat_member(identifier, user.id)
+            member = await context.bot.get_chat_member(identifier, user.id)
             if member.status in ("left", "kicked"):
                 not_subscribed.append(identifier)
         except Exception:
@@ -199,7 +202,7 @@ def check_message(update: Update, context: CallbackContext):
 
     if not not_subscribed:
         try:
-            context.bot.restrict_chat_member(
+            await context.bot.restrict_chat_member(
                 chat.id, user.id, permissions=ChatPermissions(can_send_messages=True)
             )
         except Exception:
@@ -207,12 +210,12 @@ def check_message(update: Update, context: CallbackContext):
         return
 
     try:
-        msg.delete()
+        await msg.delete()
     except Exception:
         pass
 
     try:
-        context.bot.restrict_chat_member(
+        await context.bot.restrict_chat_member(
             chat.id, user.id, permissions=ChatPermissions(can_send_messages=False)
         )
     except Exception:
@@ -223,7 +226,7 @@ def check_message(update: Update, context: CallbackContext):
         keyboard = InlineKeyboardMarkup(
             [[InlineKeyboardButton("🔗 Подписаться", url=link)]]
         )
-        context.bot.send_message(
+        await context.bot.send_message(
             chat.id,
             f"{user.mention_html()}, чтобы писать в чат, необходимо подписаться на:\n{channel}",
             reply_markup=keyboard,
@@ -232,31 +235,41 @@ def check_message(update: Update, context: CallbackContext):
 
 
 # -----------------------------
-# Запуск webhook
+# Запуск aiohttp + webhook
 # -----------------------------
-def main():
-    init_db()
+async def main():
+    await init_db()
 
-    updater = Updater(TOKEN, use_context=True)
-    dp = updater.dispatcher
+    app = Application.builder().token(TOKEN).build()
+    app.add_handler(CommandHandler("start", start_handler))
+    app.add_handler(CallbackQueryHandler(callback_handler))
+    app.add_handler(CommandHandler("setup", setup_handler))
+    app.add_handler(CommandHandler("unsetup", unsetup_handler))
+    app.add_handler(CommandHandler("status", status_handler))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, check_message))
 
-    dp.add_handler(CommandHandler("start", start_handler))
-    dp.add_handler(CallbackQueryHandler(callback_handler))
-    dp.add_handler(CommandHandler("setup", setup_handler))
-    dp.add_handler(CommandHandler("unsetup", unsetup_handler))
-    dp.add_handler(CommandHandler("status", status_handler))
-    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, check_message))
+    aio_app = web.Application()
 
-    updater.start_webhook(
-        listen="0.0.0.0",
-        port=PORT,
-        url_path=TOKEN,
-        webhook_url=f"{WEBHOOK_URL}/{TOKEN}",
-    )
+    async def handle(request):
+        data = await request.json()
+        update = Update.de_json(data, app.bot)
+        await app.process_update(update)
+        return web.Response(text="ok")
 
-    logger.info(f"🚀 Бот запущен на порту {PORT}, webhook {WEBHOOK_URL}/{TOKEN}")
-    updater.idle()
+    aio_app.router.add_post(WEBHOOK_PATH, handle)
+
+    await app.bot.delete_webhook()
+    await app.bot.set_webhook(WEBHOOK_URL)
+    logger.info(f"✅ Webhook установлен: {WEBHOOK_URL}")
+
+    runner = web.AppRunner(aio_app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", PORT)
+    await site.start()
+
+    logger.info(f"🚀 Бот запущен на порту {PORT}")
+    await asyncio.Event().wait()
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
