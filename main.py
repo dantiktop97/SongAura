@@ -23,6 +23,8 @@ def init_db():
         """)
 
 def parse_duration(spec):
+    if not spec:
+        return None
     m = re.fullmatch(r"(\d+)\s*([smhd])", spec.strip(), re.IGNORECASE)
     if not m:
         return None
@@ -89,6 +91,7 @@ def send_private_intro(msg):
         "• Бот проверяет подписки по активным ОП.\n"
         "• Если подписки нет — сообщение удаляется и пользователю предлагается подписаться.\n\n"
         "———————————————\n\n"
+        "👋 Привет, я бот‑фильтр. Для настройки напиши мне в личку.\n\n"
         "📎 Наш канал: https://t.me/vzref2"
     )
     bot.send_message(msg.chat.id, text, parse_mode="Markdown", disable_web_page_preview=True)
@@ -96,7 +99,10 @@ def send_private_intro(msg):
 @bot.message_handler(commands=["start"])
 def start(msg):
     if msg.chat.type in ("group", "supergroup"):
-        bot.send_message(msg.chat.id, "👋 Привет, я бот‑фильтр. Для настройки напиши мне в личку.")
+        bot.send_message(
+            msg.chat.id,
+            "👋 Привет, я бот‑фильтр. Для настройки напиши мне в личку."
+        )
     else:
         if user_subscribed(msg.from_user.id, "@vzref2"):
             send_private_intro(msg)
@@ -178,7 +184,10 @@ def status(msg):
         return send_subscribe_request(msg.chat.id)
     now = datetime.now()
     with sqlite3.connect(DB_PATH) as db:
-        db.execute("DELETE FROM required_subs WHERE chat_id=? AND expires IS NOT NULL AND expires < ?", (msg.chat.id, now.isoformat()))
+        db.execute(
+            "DELETE FROM required_subs WHERE chat_id=? AND expires IS NOT NULL AND expires < ?",
+            (msg.chat.id, now.isoformat())
+        )
         rows = db.execute("SELECT channel, expires FROM required_subs WHERE chat_id=?", (msg.chat.id,)).fetchall()
     if not rows:
         return bot.send_message(msg.chat.id, "📋 Активных обязательных подписок нет.")
@@ -186,7 +195,7 @@ def status(msg):
     for i, (channel, expires) in enumerate(rows, 1):
         dt = fmt_dt(datetime.fromisoformat(expires)) if expires else "∞"
         lines.append(f"{i}. {channel} — до {dt}")
-        lines.append(f"Убрать ОП - `/unsetup {channel}`")
+        lines.append(f"Убрать ОП — `/unsetup {channel}`")
     lines.append("———————————————")
     bot.send_message(msg.chat.id, "\n".join(lines), parse_mode="Markdown")
 
@@ -196,7 +205,10 @@ def check(msg):
     user_id = msg.from_user.id
     now = datetime.now()
     with sqlite3.connect(DB_PATH) as db:
-        db.execute("DELETE FROM required_subs WHERE chat_id=? AND expires IS NOT NULL AND expires < ?", (chat_id, now.isoformat()))
+        db.execute(
+            "DELETE FROM required_subs WHERE chat_id=? AND expires IS NOT NULL AND expires < ?",
+            (chat_id, now.isoformat())
+        )
         subs = db.execute("SELECT channel, expires FROM required_subs WHERE chat_id=?", (chat_id,)).fetchall()
     if not subs:
         return
@@ -223,6 +235,7 @@ def check(msg):
     channels_text = ", ".join(not_subscribed)
     kb = InlineKeyboardMarkup()
     kb.add(InlineKeyboardButton("🔗 Подписаться", url=f"https://t.me/{not_subscribed[0].strip('@')}"))
+    kb.add(InlineKeyboardButton("✅ Проверить", callback_data="check_sub"))
     bot.send_message(chat_id, f"{name}, чтобы писать в чат, необходимо подписаться на канал(ы): {channels_text}", reply_markup=kb)
 
 @app.route(f"/{TOKEN}", methods=["POST"])
