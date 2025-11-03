@@ -69,9 +69,9 @@ def user_subscribed(user_id, channel):
     except Exception:
         return False
 
-def send_subscribe_request(chat_id):
+def send_subscribe_request(chat_id, channel_hint="@vzref2"):
     kb = InlineKeyboardMarkup()
-    kb.add(InlineKeyboardButton("🔗 Подписаться", url="https://t.me/vzref2"))
+    kb.add(InlineKeyboardButton("🔗 Подписаться", url=f"https://t.me/{channel_hint.strip('@')}"))
     kb.add(InlineKeyboardButton("✅ Проверить", callback_data="check_sub"))
     bot.send_message(chat_id, "⚠️ Чтобы пользоваться ботом, нужно подписаться на канал:", reply_markup=kb)
 
@@ -80,20 +80,20 @@ def send_private_intro(msg):
         "📘 Инструкция по настройке:\n\n"
         "1️⃣ Добавь меня в группу/чат и сделай админом.\n"
         "2️⃣ В группе/чате используй:\n"
-        "/setup @канал 24h — добавить обязательную подписку.\n"
-        "⏱ Время можно указывать так: 30s, 15m, 12h, 7d.\n"
-        "3️⃣ /unsetup @канал — убрать подписку.\n"
-        "4️⃣ /status — список активных проверок.\n\n"
+        "`/setup @канал 24h` — добавить обязательную подписку.\n"
+        "⏱ Время можно указывать так: `30s`, `15m`, `12h`, `7d`.\n"
+        "3️⃣ `/unsetup @канал` — убрать подписку.\n"
+        "4️⃣ `/status` — список активных проверок.\n\n"
         "ℹ️ Как это работает:\n"
         "• Пользователь пишет сообщение в чат.\n"
         "• Бот проверяет его подписку.\n"
         "• Если подписка есть — сообщение остаётся.\n"
-        "• Если нет — сообщение удаляется, а пользователю отправляется кнопка «Подписаться».\n\n"
+        "• Если нет — сообщение удаляется, а пользователю отправляется кнопка `🔗 Подписаться`.\n\n"
         "———————————————\n\n"
         "💡 Используя этого бота, вы подтверждаете согласие с нашей политикой конфиденциальности.\n"
         "📎 Наш канал: https://t.me/vzref2"
     )
-    bot.send_message(msg.chat.id, text, disable_web_page_preview=True)
+    bot.send_message(msg.chat.id, text, parse_mode="Markdown", disable_web_page_preview=True)
 
 @bot.message_handler(commands=["start"])
 def start(msg):
@@ -136,19 +136,18 @@ def setup(msg):
         return send_subscribe_request(msg.chat.id)
     args = msg.text.split(maxsplit=2)
     if len(args) < 3:
-        return bot.reply_to(msg, "Использование: /setup @канал 24h")
+        return bot.reply_to(msg, "Использование: `/setup @канал 24h`", parse_mode="Markdown")
     raw_channel, duration = args[1], args[2]
     channel = normalize_channel(raw_channel)
     if not channel:
-        return bot.reply_to(msg, "⛔️ Неверный формат канала. Пример: @example_channel")
+        return bot.reply_to(msg, "⛔️ Неверный формат канала. Пример: `@example_channel`", parse_mode="Markdown")
     if not channel_exists(channel):
         return bot.reply_to(msg, f"⛔️ Канал {channel} не найден в Telegram.")
     if not bot_is_admin_in(channel):
         return bot.reply_to(msg, f"⛔️ Бот не администратор канала {channel}. Добавьте бота в админы канала.")
     delta = parse_duration(duration)
     if not delta:
-        return bot.reply_to(msg, "⛔️ Неверный формат времени. Примеры: 30s, 15m, 12h, 7d")
-
+        return bot.reply_to(msg, "⛔️ Неверный формат времени. Примеры: `30s`, `15m`, `12h`, `7d`", parse_mode="Markdown")
     with sqlite3.connect(DB_PATH) as db:
         cur = db.execute("SELECT 1 FROM required_subs WHERE chat_id=? AND channel=?", (msg.chat.id, channel))
         if cur.fetchone():
@@ -164,10 +163,10 @@ def unsetup(msg):
         return send_subscribe_request(msg.chat.id)
     args = msg.text.split(maxsplit=1)
     if len(args) < 2:
-        return bot.reply_to(msg, "Использование: /unsetup @канал")
+        return bot.reply_to(msg, "Использование: `/unsetup @канал`", parse_mode="Markdown")
     channel = normalize_channel(args[1])
     if not channel:
-        return bot.reply_to(msg, "⛔️ Неверный формат канала. Пример: @example_channel")
+        return bot.reply_to(msg, "⛔️ Неверный формат канала. Пример: `@example_channel`", parse_mode="Markdown")
     with sqlite3.connect(DB_PATH) as db:
         cur = db.execute("SELECT 1 FROM required_subs WHERE chat_id=? AND channel=?", (msg.chat.id, channel))
         if not cur.fetchone():
@@ -187,14 +186,14 @@ def status(msg):
     with sqlite3.connect(DB_PATH) as db:
         rows = db.execute("SELECT channel, expires FROM required_subs WHERE chat_id=?", (msg.chat.id,)).fetchall()
     if not rows:
-        return bot.reply_to(msg, "📋 Активных обязательных подписок нет.")
+        return bot.send_message(msg.chat.id, "📋 Активных обязательных подписок нет.")
     lines = [f"📋 Активные проверки ({len(rows)}):"]
     for i, (channel, expires) in enumerate(rows, 1):
         dt = fmt_dt(datetime.fromisoformat(expires)) if expires else "∞"
         lines.append(f"{i}. {channel} — до {dt}")
-        lines.append(f"Чтоб убрать ОП введите /unsetup {channel}")
+        lines.append(f"`Чтоб убрать ОП введите /unsetup {channel}`")
     lines.append("———————————————")
-    bot.send_message(msg.chat.id, "\n".join(lines))
+    bot.send_message(msg.chat.id, "\n".join(lines), parse_mode="Markdown")
 
 @bot.message_handler(func=lambda m: m.chat.type in ["group", "supergroup"])
 def check(msg):
