@@ -124,8 +124,8 @@ def setup(msg):
     try:
         admin = bot.get_chat_member(channel, bot.get_me().id)
         if admin.status != "administrator":
-            raise Exception("not admin")
-    except:
+            return bot.reply_to(msg, f"⛔️ Бот не добавлен в администраторы или не имеет прав.\nДобавьте бота в канал: {channel} и назначьте админом.")
+    except Exception:
         return bot.reply_to(msg, f"⛔️ Бот не добавлен в администраторы или не имеет прав.\nДобавьте бота в канал: {channel} и назначьте админом.")
     expires = datetime.now() + delta
     with sqlite3.connect(DB_PATH) as db:
@@ -141,7 +141,7 @@ def unsetup(msg):
         return bot.reply_to(msg, "Использование: /unsetup @канал")
     channel = args[1]
     with sqlite3.connect(DB_PATH) as db:
-        db.execute("DELETE FROM required_subs WHERE channel=?", (channel,))
+        db.execute("DELETE FROM required_subs WHERE channel=? AND chat_id=?", (channel, msg.chat.id))
     bot.reply_to(msg, f"✅ Убрано обязательное условие с {channel}")
 
 @bot.message_handler(commands=["status"])
@@ -156,7 +156,9 @@ def status(msg):
     text = [f"📋 Активные проверки ({len(rows)}):"]
     for i, (channel, expires) in enumerate(rows, 1):
         dt = fmt_dt(datetime.fromisoformat(expires)) if expires else "∞"
-        text.append(f"{i}. {channel} — до {dt}\nЧтоб убрать ОП введите /unsetup {channel}\n———————————————————————")
+        text.append(f"{i}. {channel} — до {dt}")
+        text.append(f"Чтоб убрать ОП введите /unsetup {channel}")
+        text.append("———————————————————————")
     bot.reply_to(msg, "\n".join(text))
 
 @bot.message_handler(func=lambda m: m.chat.type in ["group", "supergroup"])
@@ -169,10 +171,10 @@ def check(msg):
     if not subs:
         return
     not_subscribed = []
+    to_remove = []
     for channel, expires in subs:
         if expires and datetime.fromisoformat(expires) < datetime.now():
-            with sqlite3.connect(DB_PATH) as db:
-                db.execute("DELETE FROM required_subs WHERE channel=?", (channel,))
+            to_remove.append(channel)
             continue
         try:
             member = bot.get_chat_member(channel, user_id)
@@ -180,13 +182,17 @@ def check(msg):
                 not_subscribed.append(channel)
         except:
             not_subscribed.append(channel)
+    if to_remove:
+        with sqlite3.connect(DB_PATH) as db:
+            for ch in to_remove:
+                db.execute("DELETE FROM required_subs WHERE channel=? AND chat_id=?", (ch, chat_id))
     if not not_subscribed:
         return
-            try:
+    try:
         bot.delete_message(chat_id, msg.message_id)
     except:
         pass
-    name = f"@{msg.from_user.username}" if msg.from_user.username else msg.from_user.first_name
+    name = f"@{msg.from_user.username}" if getattr(msg.from_user, "username", None) else msg.from_user.first_name
     for channel in not_subscribed:
         link = f"https://t.me/{channel.strip('@')}"
         kb = InlineKeyboardMarkup()
@@ -210,5 +216,7 @@ def index():
 if __name__ == "__main__":
     init_db()
     bot.remove_webhook()
-    bot.set_webhook(url=f"{os.getenv('RENDER_EXTERNAL_URL')}/{TOKEN}")
-    app.run(host="0.0.0.0", port=8000)
+    webhook_url = os.getenv("RENDER_EXTERNAL_URL")
+    if webhook_url:
+        bot.set_webhook(url=f"{webhook_url}/{TOKEN}")
+    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 8000)))
