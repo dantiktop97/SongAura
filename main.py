@@ -172,7 +172,7 @@ def unsetup(msg):
         if not cur.fetchone():
             return bot.reply_to(msg, f"⛔️ Канал {channel} не добавлен в обязательные подписки для этого чата.")
         if not channel_exists(channel):
-            return bot.reply_to(msg, f"⛔️ Канал {channel} не найден в Telegram. Удаление ОП возможно только для реальных каналов.")
+            return bot.reply_to(msg, f"⛔️ Канал {channel} не найден в Telegram.")
         if not bot_is_admin_in(channel):
             return bot.reply_to(msg, f"⛔️ Бот не администратор в {channel}. Убедитесь, что бот добавлен в админы, затем повторите.")
         db.execute("DELETE FROM required_subs WHERE chat_id=? AND channel=?", (msg.chat.id, channel))
@@ -191,7 +191,7 @@ def status(msg):
     for i, (channel, expires) in enumerate(rows, 1):
         dt = fmt_dt(datetime.fromisoformat(expires)) if expires else "∞"
         lines.append(f"{i}. {channel} — до {dt}")
-        lines.append(f"`Чтоб убрать ОП введите /unsetup {channel}`")
+        lines.append(f"`/unsetup {channel}`")
     lines.append("———————————————")
     bot.send_message(msg.chat.id, "\n".join(lines), parse_mode="Markdown")
 
