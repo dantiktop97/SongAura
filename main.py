@@ -4,7 +4,7 @@ import sqlite3
 import telebot
 from datetime import datetime, timedelta
 from flask import Flask, request
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 
 TOKEN = os.getenv("PLAY")
 bot = telebot.TeleBot(TOKEN)
@@ -75,9 +75,11 @@ def send_private_intro(msg):
     )
     bot.send_message(
         msg.chat.id,
+        "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n\n"
         "💡 Используя этого бота, вы подтверждаете согласие с нашей политикой конфиденциальности.\n"
         "📎 <a href='https://t.me/vzref2'>Наш канал</a>",
-        parse_mode="HTML"
+        parse_mode="HTML",
+        disable_web_page_preview=True
     )
 
 @bot.message_handler(commands=["start"])
@@ -104,11 +106,17 @@ def private_any(msg):
         send_subscribe_request(msg.chat.id)
 
 @bot.callback_query_handler(func=lambda call: call.data == "check_sub")
-def callback_check(call):
-    if is_subscribed(call.from_user.id, "@vzref2"):
-        send_private_intro(call.message)
-    else:
-        send_subscribe_request(call.message.chat.id)
+def callback_check(call: CallbackQuery):
+    try:
+        if is_subscribed(call.from_user.id, "@vzref2"):
+            send_private_intro(call.message)
+        else:
+            send_subscribe_request(call.message.chat.id)
+    finally:
+        try:
+            bot.answer_callback_query(call.id)
+        except:
+            pass
 
 @bot.message_handler(commands=["setup"])
 def setup(msg):
@@ -121,8 +129,10 @@ def setup(msg):
     delta = parse_duration(duration)
     if not delta:
         return bot.reply_to(msg, "Неверный формат времени. Пример: 24h, 7d")
+    # Проверка: бот должен быть в канале и иметь права администратора
     try:
-        admin = bot.get_chat_member(channel, bot.get_me().id)
+        me = bot.get_me()
+        admin = bot.get_chat_member(channel, me.id)
         if admin.status != "administrator":
             return bot.reply_to(msg, f"⛔️ Бот не добавлен в администраторы или не имеет прав.\nДобавьте бота в канал: {channel} и назначьте админом.")
     except Exception:
@@ -130,6 +140,7 @@ def setup(msg):
     expires = datetime.now() + delta
     with sqlite3.connect(DB_PATH) as db:
         db.execute("INSERT INTO required_subs (chat_id, channel, expires) VALUES (?, ?, ?)", (msg.chat.id, channel, expires.isoformat()))
+        db.commit()
     bot.reply_to(msg, f"✅ Добавлено обязательное условие: подписка на {channel} до {fmt_dt(expires)}")
 
 @bot.message_handler(commands=["unsetup"])
@@ -142,6 +153,7 @@ def unsetup(msg):
     channel = args[1]
     with sqlite3.connect(DB_PATH) as db:
         db.execute("DELETE FROM required_subs WHERE channel=? AND chat_id=?", (channel, msg.chat.id))
+        db.commit()
     bot.reply_to(msg, f"✅ Убрано обязательное условие с {channel}")
 
 @bot.message_handler(commands=["status"])
@@ -186,6 +198,7 @@ def check(msg):
         with sqlite3.connect(DB_PATH) as db:
             for ch in to_remove:
                 db.execute("DELETE FROM required_subs WHERE channel=? AND chat_id=?", (ch, chat_id))
+            db.commit()
     if not not_subscribed:
         return
     try:
@@ -193,15 +206,15 @@ def check(msg):
     except:
         pass
     name = f"@{msg.from_user.username}" if getattr(msg.from_user, "username", None) else msg.from_user.first_name
-    for channel in not_subscribed:
-        link = f"https://t.me/{channel.strip('@')}"
-        kb = InlineKeyboardMarkup()
-        kb.add(InlineKeyboardButton("🔗 Подписаться", url=link))
-        bot.send_message(
-            chat_id,
-            f"{name}, чтобы писать в чат, необходимо подписаться на канал(ы): {channel}",
-            reply_markup=kb
-        )
+    # Отправляем одно сообщение с перечислением каналов; под ним одна кнопка "Подписаться" на первый канал
+    channels_text = ", ".join(not_subscribed)
+    kb = InlineKeyboardMarkup()
+    kb.add(InlineKeyboardButton("🔗 Подписаться", url=f"https://t.me/{not_subscribed[0].strip('@')}"))
+    bot.send_message(
+        chat_id,
+        f"{name}, чтобы писать в чат, необходимо подписаться на канал(ы): {channels_text}",
+        reply_markup=kb
+    )
 
 @app.route(f"/{TOKEN}", methods=["POST"])
 def webhook():
@@ -218,5 +231,5 @@ if __name__ == "__main__":
     bot.remove_webhook()
     webhook_url = os.getenv("RENDER_EXTERNAL_URL")
     if webhook_url:
-        bot.set_webhook(url=f"{webhook_url}/{TOKEN}")
+        bot.set_webhook(url=f"{webhook_url.rstrip('/')}/{TOKEN}")
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", 8000)))
