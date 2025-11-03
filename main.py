@@ -4,7 +4,7 @@ import sqlite3
 import telebot
 from datetime import datetime, timedelta
 from flask import Flask, request
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 TOKEN = os.getenv("PLAY")
 bot = telebot.TeleBot(TOKEN)
@@ -37,10 +37,33 @@ def parse_duration(spec):
 def fmt_dt(dt):
     return dt.strftime("%Y-%m-%d %H:%M")
 
-def is_subscribed(user_id, channel="@vzref2"):
+def normalize_channel(value):
+    v = value.strip()
+    if v.startswith("@"):
+        v = v[1:]
+    if not re.fullmatch(r"[A-Za-z0-9_]{5,32}", v):
+        return None
+    return f"@{v}"
+
+def channel_exists(channel):
     try:
-        member = bot.get_chat_member(channel, user_id)
-        return member.status not in ["left", "kicked"]
+        chat = bot.get_chat(channel)
+        return bool(chat)
+    except:
+        return False
+
+def bot_is_admin_in(channel):
+    try:
+        me = bot.get_me()
+        member = bot.get_chat_member(channel, me.id)
+        return member.status == "administrator"
+    except:
+        return False
+
+def user_subscribed(user_id, channel):
+    try:
+        m = bot.get_chat_member(channel, user_id)
+        return m.status not in ["left", "kicked"]
     except:
         return False
 
@@ -83,49 +106,43 @@ def start(msg):
             parse_mode="HTML"
         )
     elif msg.chat.type == "private":
-        if is_subscribed(msg.from_user.id, "@vzref2"):
+        if user_subscribed(msg.from_user.id, "@vzref2"):
             send_private_intro(msg)
         else:
             send_subscribe_request(msg.chat.id)
 
 @bot.message_handler(func=lambda m: m.chat.type == "private")
 def private_any(msg):
-    if is_subscribed(msg.from_user.id, "@vzref2"):
+    if user_subscribed(msg.from_user.id, "@vzref2"):
         send_private_intro(msg)
     else:
         send_subscribe_request(msg.chat.id)
 
 @bot.callback_query_handler(func=lambda call: call.data == "check_sub")
-def callback_check(call: CallbackQuery):
-    try:
-        if is_subscribed(call.from_user.id, "@vzref2"):
-            send_private_intro(call.message)
-        else:
-            send_subscribe_request(call.message.chat.id)
-    finally:
-        try:
-            bot.answer_callback_query(call.id)
-        except:
-            pass
+def callback_check(call):
+    if user_subscribed(call.from_user.id, "@vzref2"):
+        send_private_intro(call.message)
+    else:
+        send_subscribe_request(call.message.chat.id)
 
 @bot.message_handler(commands=["setup"])
 def setup(msg):
     if msg.chat.type == "private":
         return send_subscribe_request(msg.chat.id)
-    args = msg.text.split()
+    args = msg.text.split(maxsplit=2)
     if len(args) < 3:
         return bot.reply_to(msg, "Использование: /setup @канал 24h")
-    channel, duration = args[1], args[2]
+    raw_channel, duration = args[1], args[2]
+    channel = normalize_channel(raw_channel)
+    if not channel:
+        return bot.reply_to(msg, "⛔️ Неверный формат канала. Пример: @example_channel")
+    if not channel_exists(channel):
+        return bot.reply_to(msg, f"⛔️ Канал {channel} не найден в Telegram.")
+    if not bot_is_admin_in(channel):
+        return bot.reply_to(msg, f"⛔️ Бот не администратор канала {channel}. Добавьте бота в админы канала.")
     delta = parse_duration(duration)
     if not delta:
-        return bot.reply_to(msg, "Неверный формат времени. Пример: 24h, 7d")
-    try:
-        me = bot.get_me()
-        admin = bot.get_chat_member(channel, me.id)
-        if admin.status != "administrator":
-            return bot.reply_to(msg, f"⛔️ Бот не добавлен в администраторы или не имеет прав.\nДобавьте бота в канал: {channel} и назначьте админом.")
-    except Exception:
-        return bot.reply_to(msg, f"⛔️ Бот не добавлен в администраторы или не имеет прав.\nДобавьте бота в канал: {channel} и назначьте админом.")
+        return bot.reply_to(msg, "⛔️ Неверный формат времени. Примеры: 30s, 15m, 12h, 7d")
     expires = datetime.now() + delta
     with sqlite3.connect(DB_PATH) as db:
         db.execute("INSERT INTO required_subs (chat_id, channel, expires) VALUES (?, ?, ?)", (msg.chat.id, channel, expires.isoformat()))
@@ -136,12 +153,22 @@ def setup(msg):
 def unsetup(msg):
     if msg.chat.type == "private":
         return send_subscribe_request(msg.chat.id)
-    args = msg.text.split()
+    args = msg.text.split(maxsplit=1)
     if len(args) < 2:
         return bot.reply_to(msg, "Использование: /unsetup @канал")
-    channel = args[1]
+    channel = normalize_channel(args[1])
+    if not channel:
+        return bot.reply_to(msg, "⛔️ Неверный формат канала. Пример: @example_channel")
     with sqlite3.connect(DB_PATH) as db:
-        db.execute("DELETE FROM required_subs WHERE channel=? AND chat_id=?", (channel, msg.chat.id))
+        cur = db.execute("SELECT 1 FROM required_subs WHERE chat_id=? AND channel=?", (msg.chat.id, channel))
+        exists = cur.fetchone()
+        if not exists:
+            return bot.reply_to(msg, f"⛔️ Канал {channel} не добавлен в обязательные подписки для этого чата.")
+        if not channel_exists(channel):
+            return bot.reply_to(msg, f"⛔️ Канал {channel} не найден в Telegram. Удаление ОП возможно только для реальных каналов.")
+        if not bot_is_admin_in(channel):
+            return bot.reply_to(msg, f"⛔️ Бот не администратор в {channel}. Убедитесь, что бот добавлен в админы, затем повторите.")
+        db.execute("DELETE FROM required_subs WHERE chat_id=? AND channel=?", (msg.chat.id, channel))
         db.commit()
     bot.reply_to(msg, f"✅ Убрано обязательное условие с {channel}")
 
@@ -150,50 +177,47 @@ def status(msg):
     if msg.chat.type == "private":
         return send_subscribe_request(msg.chat.id)
     with sqlite3.connect(DB_PATH) as db:
-        cur = db.execute("SELECT channel, expires FROM required_subs WHERE chat_id=?", (msg.chat.id,))
-        rows = cur.fetchall()
+        rows = db.execute("SELECT channel, expires FROM required_subs WHERE chat_id=?", (msg.chat.id,)).fetchall()
     if not rows:
         return bot.reply_to(msg, "📋 Активных обязательных подписок нет.")
-    header = f"📋 Активные проверки ({len(rows)}):"
-    bot.send_message(msg.chat.id, header)
+    lines = [f"📋 Активные проверки ({len(rows)}):"]
     for i, (channel, expires) in enumerate(rows, 1):
         dt = fmt_dt(datetime.fromisoformat(expires)) if expires else "∞"
-        cmd = f"/unsetup {channel}"
-        kb = InlineKeyboardMarkup()
-        kb.add(InlineKeyboardButton("📎 Копировать команду", switch_inline_query_current_chat=cmd))
-        bot.send_message(
-            msg.chat.id,
-            f"{i}. {channel} — до {dt}\nЧтоб убрать ОП введите {cmd}",
-            reply_markup=kb
-        )
-    bot.send_message(msg.chat.id, "———————————————")
+        lines.append(f"{i}. {channel} — до {dt}")
+        lines.append(f"Чтоб убрать ОП введите /unsetup {channel}")
+    lines.append("———————————————")
+    bot.send_message(msg.chat.id, "\n".join(lines), parse_mode="HTML")
 
 @bot.message_handler(func=lambda m: m.chat.type in ["group", "supergroup"])
 def check(msg):
-    user_id = msg.from_user.id
     chat_id = msg.chat.id
+    user_id = msg.from_user.id
     with sqlite3.connect(DB_PATH) as db:
-        cur = db.execute("SELECT channel, expires FROM required_subs WHERE chat_id=?", (chat_id,))
-        subs = cur.fetchall()
+        subs = db.execute("SELECT channel, expires FROM required_subs WHERE chat_id=?", (chat_id,)).fetchall()
     if not subs:
         return
-    not_subscribed = []
-    to_remove = []
+    required = []
+    to_expire_cleanup = []
     for channel, expires in subs:
         if expires and datetime.fromisoformat(expires) < datetime.now():
-            to_remove.append(channel)
+            to_expire_cleanup.append(channel)
             continue
-        try:
-            member = bot.get_chat_member(channel, user_id)
-            if member.status in ["left", "kicked"]:
-                not_subscribed.append(channel)
-        except:
-            not_subscribed.append(channel)
-    if to_remove:
+        if not channel_exists(channel):
+            continue
+        if not bot_is_admin_in(channel):
+            continue
+        required.append(channel)
+    if to_expire_cleanup:
         with sqlite3.connect(DB_PATH) as db:
-            for ch in to_remove:
-                db.execute("DELETE FROM required_subs WHERE channel=? AND chat_id=?", (ch, chat_id))
+            for ch in to_expire_cleanup:
+                db.execute("DELETE FROM required_subs WHERE chat_id=? AND channel=?", (chat_id, ch))
             db.commit()
+    if not required:
+        return
+    not_subscribed = []
+    for channel in required:
+        if not user_subscribed(user_id, channel):
+            not_subscribed.append(channel)
     if not not_subscribed:
         return
     try:
@@ -201,14 +225,11 @@ def check(msg):
     except:
         pass
     name = f"@{msg.from_user.username}" if getattr(msg.from_user, "username", None) else msg.from_user.first_name
-    channels_text = ", ".join(not_subscribed)
-    kb = InlineKeyboardMarkup()
-    kb.add(InlineKeyboardButton("🔗 Подписаться", url=f"https://t.me/{not_subscribed[0].strip('@')}"))
-    bot.send_message(
-        chat_id,
-        f"{name}, чтобы писать в чат, необходимо подписаться на канал(ы): {channels_text}",
-        reply_markup=kb
-    )
+    for channel in not_subscribed:
+        link = f"https://t.me/{channel.strip('@')}"
+        kb = InlineKeyboardMarkup()
+        kb.add(InlineKeyboardButton("🔗 Подписаться", url=link))
+        bot.send_message(chat_id, f"{name}, чтобы писать в чат, необходимо подписаться на канал(ы): {channel}", reply_markup=kb)
 
 @app.route(f"/{TOKEN}", methods=["POST"])
 def webhook():
