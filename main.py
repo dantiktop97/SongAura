@@ -70,7 +70,6 @@ def user_subscribed(user_id, channel):
         return getattr(m, "status", "") not in ("left", "kicked")
     except Exception:
         return False
-
 def send_subscribe_request(chat_id, channel_hint="@vzref2"):
     kb = InlineKeyboardMarkup()
     kb.add(InlineKeyboardButton("🔗 Подписаться", url=f"https://t.me/{channel_hint.strip('@')}"))
@@ -79,14 +78,14 @@ def send_subscribe_request(chat_id, channel_hint="@vzref2"):
 
 def send_private_intro(msg):
     text = (
-        "📘 Инструкция по настройке:\n\n"
+        "*📘 Инструкция по настройке:*\n\n"
         "1️⃣ Добавь меня в группу/чат и сделай админом.\n\n"
         "2️⃣ В группе/чате используй:\n"
         "`/setup @канал 24h` — добавить обязательную подписку.\n"
         "⏱ Время можно указывать так: `30s`, `15m`, `12h`, `7d`.\n\n"
         "3️⃣ `/unsetup @канал` — убрать подписку.\n\n"
         "4️⃣ `/status` — список активных проверок.\n\n"
-        "ℹ️ Как это работает:\n"
+        "*ℹ️ Как это работает:*\n"
         "• Пользователь пишет сообщение в чат.\n"
         "• Бот проверяет его подписку.\n"
         "• Если подписка есть — сообщение остаётся.\n"
@@ -131,7 +130,6 @@ def callback_check(call):
             bot.answer_callback_query(call.id)
         except Exception:
             pass
-
 @bot.message_handler(commands=["setup"])
 def setup(msg):
     if msg.chat.type == "private":
@@ -180,7 +178,6 @@ def unsetup(msg):
         db.execute("DELETE FROM required_subs WHERE chat_id=? AND channel=?", (msg.chat.id, channel))
         db.commit()
     bot.reply_to(msg, f"✅ Убрано обязательное условие с {channel}")
-
 @bot.message_handler(commands=["status"])
 def status(msg):
     if msg.chat.type == "private":
@@ -194,12 +191,12 @@ def status(msg):
         rows = db.execute("SELECT channel, expires FROM required_subs WHERE chat_id=?", (msg.chat.id,)).fetchall()
     if not rows:
         return bot.send_message(msg.chat.id, "📋 Активных обязательных подписок нет.")
-    lines = [f"📋 Активные проверки ({len(rows)}):"]
+    lines = ["*📋 Активные проверки (" + str(len(rows)) + "):*"]
     for i, (channel, expires) in enumerate(rows, 1):
         dt = fmt_dt(datetime.fromisoformat(expires)) if expires else "∞"
         lines.append(f"{i}. {channel} — до {dt}")
         lines.append(f"Убрать ОП — `/unsetup {channel}`")
-    lines.append("———————————————")
+        lines.append("———————————————")
     bot.send_message(msg.chat.id, "\n".join(lines), parse_mode="Markdown")
 
 @bot.message_handler(func=lambda m: m.chat.type in ("group", "supergroup"))
@@ -239,7 +236,6 @@ def check(msg):
     kb = InlineKeyboardMarkup()
     kb.add(InlineKeyboardButton("🔗 Подписаться", url=f"https://t.me/{not_subscribed[0].strip('@')}"))
     bot.send_message(chat_id, f"{name}, чтобы писать в чат, необходимо подписаться на канал(ы): {channels_text}", reply_markup=kb)
-
 @app.route(f"/{TOKEN}", methods=["POST"])
 def webhook():
     update = telebot.types.Update.de_json(request.stream.read().decode("utf-8"))
