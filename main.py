@@ -4,7 +4,7 @@ import sqlite3
 import telebot
 from datetime import datetime, timedelta
 from flask import Flask, request
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 TOKEN = os.getenv("PLAY")
 bot = telebot.TeleBot(TOKEN)
@@ -51,13 +51,45 @@ def send_subscribe_request(chat_id):
     bot.send_message(chat_id, "⚠️ Чтобы пользоваться ботом, нужно подписаться на канал:", reply_markup=kb)
 
 def send_private_intro(msg):
-    bot.send_message(msg.chat.id, f"👋 Привет, <b>{msg.from_user.first_name}</b>! Я <b>бот‑фильтр</b>.\nЯ проверяю <b>обязательные подписки</b> и удаляю сообщения тех, кто не подписан.", parse_mode="HTML")
-    bot.send_message(msg.chat.id, "📘 <b>Инструкция по настройке</b>:\n\n1️⃣ Добавь меня в <b>группу/чат</b> и сделай <b>админом</b>.\n2️⃣ В группе/чате используй:\n/setup @канал 24h — добавить обязательную подписку.\n⏱ Время можно указывать так: <b>30s</b>, <b>15m</b>, <b>12h</b>, <b>7d</b>.\n3️⃣ /unsetup @канал — убрать подписку.\n4️⃣ /status — список активных проверок.\n\nℹ️ <b>Как это работает</b>:\n• Пользователь пишет сообщение в чат.\n• Бот проверяет его подписку.\n• Если подписка есть — сообщение остаётся.\n• Если нет — сообщение удаляется, а пользователю отправляется кнопка «Подписаться».", parse_mode="HTML")
+    bot.send_message(
+        msg.chat.id,
+        f"👋 Привет, <b>{msg.from_user.first_name}</b>! Я <b>бот‑фильтр</b>.\n"
+        "Я проверяю <b>обязательные подписки</b> и удаляю сообщения тех, кто не подписан.",
+        parse_mode="HTML"
+    )
+    bot.send_message(
+        msg.chat.id,
+        "📘 <b>Инструкция по настройке</b>:\n\n"
+        "1️⃣ Добавь меня в <b>группу/чат</b> и сделай <b>админом</b>.\n"
+        "2️⃣ В группе/чате используй:\n"
+        "/setup @канал 24h — добавить обязательную подписку.\n"
+        "⏱ Время можно указывать так: <b>30s</b>, <b>15m</b>, <b>12h</b>, <b>7d</b>.\n"
+        "3️⃣ /unsetup @канал — убрать подписку.\n"
+        "4️⃣ /status — список активных проверок.\n\n"
+        "ℹ️ <b>Как это работает</b>:\n"
+        "• Пользователь пишет сообщение в чат.\n"
+        "• Бот проверяет его подписку.\n"
+        "• Если подписка есть — сообщение остаётся.\n"
+        "• Если нет — сообщение удаляется, а пользователю отправляется кнопка «Подписаться».",
+        parse_mode="HTML"
+    )
+    bot.send_message(
+        msg.chat.id,
+        "💡 Используя этого бота, вы подтверждаете согласие с нашей политикой конфиденциальности.\n"
+        "📎 <a href='https://t.me/vzref2'>Наш канал</a>",
+        parse_mode="HTML"
+    )
 
 @bot.message_handler(commands=["start"])
 def start(msg):
     if msg.chat.type in ["group", "supergroup"]:
-        bot.send_message(msg.chat.id, "👋 Привет, я <b>бот‑фильтр</b>.\nЯ проверяю <b>обязательные подписки</b> и удаляю сообщения тех, кто не подписан.\n\n📌 Для <b>настройки</b> напиши мне в личку.", parse_mode="HTML")
+        bot.send_message(
+            msg.chat.id,
+            "👋 Привет, я <b>бот‑фильтр</b>.\n"
+            "Я проверяю <b>обязательные подписки</b> и удаляю сообщения тех, кто не подписан.\n\n"
+            "📌 Для <b>настройки</b> напиши мне в личку.",
+            parse_mode="HTML"
+        )
     elif msg.chat.type == "private":
         if is_subscribed(msg.from_user.id, "@vzref2"):
             send_private_intro(msg)
@@ -72,7 +104,7 @@ def private_any(msg):
         send_subscribe_request(msg.chat.id)
 
 @bot.callback_query_handler(func=lambda call: call.data == "check_sub")
-def callback_check(call: CallbackQuery):
+def callback_check(call):
     if is_subscribed(call.from_user.id, "@vzref2"):
         send_private_intro(call.message)
     else:
@@ -89,6 +121,12 @@ def setup(msg):
     delta = parse_duration(duration)
     if not delta:
         return bot.reply_to(msg, "Неверный формат времени. Пример: 24h, 7d")
+    try:
+        admin = bot.get_chat_member(channel, bot.get_me().id)
+        if admin.status != "administrator":
+            raise Exception("not admin")
+    except:
+        return bot.reply_to(msg, f"⛔️ Бот не добавлен в администраторы или не имеет прав.\nДобавьте бота в канал: {channel} и назначьте админом.")
     expires = datetime.now() + delta
     with sqlite3.connect(DB_PATH) as db:
         db.execute("INSERT INTO required_subs (chat_id, channel, expires) VALUES (?, ?, ?)", (msg.chat.id, channel, expires.isoformat()))
@@ -118,7 +156,7 @@ def status(msg):
     text = [f"📋 Активные проверки ({len(rows)}):"]
     for i, (channel, expires) in enumerate(rows, 1):
         dt = fmt_dt(datetime.fromisoformat(expires)) if expires else "∞"
-        text.append(f"{i}. {channel} — до {dt}")
+        text.append(f"{i}. {channel} — до {dt}\nЧтоб убрать ОП введите /unsetup {channel}\n———————————————————————")
     bot.reply_to(msg, "\n".join(text))
 
 @bot.message_handler(func=lambda m: m.chat.type in ["group", "supergroup"])
@@ -144,15 +182,20 @@ def check(msg):
             not_subscribed.append(channel)
     if not not_subscribed:
         return
-    try:
+            try:
         bot.delete_message(chat_id, msg.message_id)
     except:
         pass
+    name = f"@{msg.from_user.username}" if msg.from_user.username else msg.from_user.first_name
     for channel in not_subscribed:
         link = f"https://t.me/{channel.strip('@')}"
         kb = InlineKeyboardMarkup()
         kb.add(InlineKeyboardButton("🔗 Подписаться", url=link))
-        bot.send_message(chat_id, f"{msg.from_user.first_name}, чтобы писать в чат, необходимо подписаться на канал(ы): {channel}", reply_markup=kb)
+        bot.send_message(
+            chat_id,
+            f"{name}, чтобы писать в чат, необходимо подписаться на канал(ы): {channel}",
+            reply_markup=kb
+        )
 
 @app.route(f"/{TOKEN}", methods=["POST"])
 def webhook():
