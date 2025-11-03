@@ -90,19 +90,19 @@ def send_private_replace(chat_id, text, reply_markup=None):
     last_private_message[chat_id] = m.message_id
     return m
 
-def build_sub_kb():
+def build_sub_kb(channels=None):
     kb = InlineKeyboardMarkup()
-    kb.add(InlineKeyboardButton("🔗 Подписаться", url=f"https://t.me/{SUB_CHANNEL.strip('@')}"))
+    chs = channels or [SUB_CHANNEL]
+    for ch in chs:
+        kb.add(InlineKeyboardButton("🔗 Подписаться", url=f"https://t.me/{ch.strip('@')}"))
     kb.add(InlineKeyboardButton("✅ Проверить", callback_data="check_sub"))
     return kb
 
-def send_subscribe_request(uid):
-    text = (
-        "⚠️ *Чтобы пользоваться ботом, нужно подписаться на канал:*\n\n"
-        f"*{SUB_CHANNEL}*\n\n"
-        "Нажми кнопку Подписаться, затем ✅ Проверить."
-    )
-    return send_private_replace(uid, text, reply_markup=build_sub_kb())
+def send_subscribe_request(uid, channels=None):
+    chs = channels or [SUB_CHANNEL]
+    txt = "⚠️ *Чтобы пользоваться ботом, нужно подписаться на канал(ы):*\n\n"
+    txt += ", ".join(chs)
+    return send_private_replace(uid, txt, reply_markup=build_sub_kb(channels=chs))
 
 def user_record(user):
     with db_conn() as c:
@@ -151,8 +151,8 @@ def cmd_start(m):
     kb.add(InlineKeyboardButton("🔗 Канал", url=f"https://t.me/{SUB_CHANNEL.strip('@')}"))
     send_private_replace(m.from_user.id,
         "*Привет*\n\n"
-        "Этот бот управляет проверками подписки в группах и отправляет отчёты админам.\n\n"
-        "Нажми кнопку Профиль, чтобы увидеть данные.",
+        "*Этот бот управляет проверками подписки в группах и отправляет отчёты админам.*\n\n"
+        "*Нажми кнопку Профиль, чтобы увидеть данные.*",
         reply_markup=kb)
     notify_report(f"Новый пользователь: `{m.from_user.id}` @{getattr(m.from_user, 'username', '')}")
 
@@ -160,75 +160,74 @@ def cmd_start(m):
 def cmd_help(m):
     send_private_replace(m.from_user.id,
         "*Команды:*\n"
-        "`/start` — старт\n"
-        "`/help` — помощь\n"
-        "`/admin` — админ меню (только для админа)")
+        "`/start` — *старт*\n"
+        "`/help` — *помощь*\n"
+        "`/admin` — *админ меню (только для админа)*")
 
 @bot.message_handler(commands=["setup"])
 def cmd_setup(m):
     if m.chat.type == "private":
-        send_private_replace(m.from_user.id, "Команда работает только в группах/супергруппах.")
+        send_private_replace(m.from_user.id, "*Команда работает только в группах/супергруппах.*")
         return
     member = bot.get_chat_member(m.chat.id, m.from_user.id)
     if getattr(member, "status", "") not in ("administrator", "creator"):
-        bot.reply_to(m, "Только админы могут настраивать проверки.")
+        bot.reply_to(m, "*Только админы могут настраивать проверки.*")
         return
     args = m.text.split()
     if len(args) < 3:
-        bot.reply_to(m, "Использование: /setup @канал 24h")
+        bot.reply_to(m, "*Использование:* `/setup @канал 24h`")
         return
     ch = normalize_channel(args[1])
     dur = parse_duration(args[2])
     if not ch:
-        bot.reply_to(m, "Неверный канал. Укажи @username.")
+        bot.reply_to(m, "*⛔️ Неверный канал. Укажи @username.*")
         return
     expires = None
     if dur:
         expires = (datetime.utcnow() + dur).isoformat()
     add_required_sub(m.chat.id, ch, expires)
-    bot.reply_to(m, f"Добавлена проверка: {ch} до {fmt_dt(expires) if expires else '∞'}")
+    bot.reply_to(m, f"✅ *Добавлена проверка:* *{ch}* до *{fmt_dt(expires) if expires else '∞'}*")
     notify_report(f"Добавлена проверка в чате `{m.chat.id}`: {ch}")
 
 @bot.message_handler(commands=["unsetup"])
 def cmd_unsetup(m):
     if m.chat.type == "private":
-        send_private_replace(m.from_user.id, "Команда работает только в группах/супергруппах.")
+        send_private_replace(m.from_user.id, "*Команда работает только в группах/супергруппах.*")
         return
     member = bot.get_chat_member(m.chat.id, m.from_user.id)
     if getattr(member, "status", "") not in ("administrator", "creator"):
-        bot.reply_to(m, "Только админы могут настраивать проверки.")
+        bot.reply_to(m, "*Только админы могут настраивать проверки.*")
         return
     args = m.text.split()
     if len(args) < 2:
-        bot.reply_to(m, "Использование: /unsetup @канал")
+        bot.reply_to(m, "*Использование:* `/unsetup @канал`")
         return
     ch = normalize_channel(args[1])
     if not ch:
-        bot.reply_to(m, "Неверный канал. Укажи @username.")
+        bot.reply_to(m, "*⛔️ Неверный формат канала. Пример: @example_channel*")
         return
     remove_required_sub(m.chat.id, ch)
-    bot.reply_to(m, f"Удалена проверка: {ch}")
+    bot.reply_to(m, f"✅ *Удалена проверка:* *{ch}*")
     notify_report(f"Удалена проверка в чате `{m.chat.id}`: {ch}")
 
 @bot.message_handler(commands=["status"])
 def cmd_status(m):
     if m.chat.type == "private":
-        rows = []
         with db_conn() as c:
             cur = c.execute("SELECT chat_id, channel, expires FROM required_subs")
             rows = cur.fetchall()
         txt = "*Активные проверки:*\n\n"
         for r in rows[-50:]:
-            txt += f"`{r[0]}` — {r[1]} до {fmt_dt(r[2]) if r[2] else '∞'}\n"
+            txt += f"`{r[0]}` — *{r[1]}* до *{fmt_dt(r[2]) if r[2] else '∞'}*\n"
         send_private_replace(m.from_user.id, txt)
     else:
         subs = get_required_subs_for_chat(m.chat.id)
         if not subs:
-            bot.reply_to(m, "Нет активных проверок в этом чате.")
+            bot.reply_to(m, "*Нет активных проверок в этом чате.*")
             return
         txt = "*Проверки в этом чате:*\n\n"
         for s in subs:
-            txt += f"{s['channel']} до {fmt_dt(s['expires']) if s['expires'] else '∞'}\n"
+            txt += f"*{s['channel']}* до *{fmt_dt(s['expires']) if s['expires'] else '∞'}*\n"
         bot.reply_to(m, txt)
 
 @bot.message_handler(func=lambda m: m.chat.type != "private")
@@ -247,7 +246,7 @@ def group_message_handler(m):
                 pass
             try:
                 bot.send_message(m.from_user.id,
-                    "⚠️ Текст удалён. Чтобы писать в чате, подпишись на канал и нажми Проверить.",
+                    "*⚠️ Текст удалён. Чтобы писать в чате, подпишись на канал и нажми Проверить.*",
                     reply_markup=build_sub_kb())
             except:
                 pass
@@ -259,10 +258,10 @@ def cb_handler(c):
     if c.data == "check_sub":
         ok = channel_check_membership(c.from_user.id, SUB_CHANNEL)
         if ok:
-            send_private_replace(c.from_user.id, "*Проверка пройдена. Спасибо!*")
+            send_private_replace(c.from_user.id, "*✅ Проверка пройдена. Спасибо!*")
         else:
             send_private_replace(c.from_user.id,
-                "Ты не подписан на канал. Нажми Подписаться и затем ✅ Проверить.",
+                "*Ты не подписан на канал.* Нажми Подписаться и затем ✅ Проверить.",
                 reply_markup=build_sub_kb())
         try:
             bot.answer_callback_query(c.id)
@@ -278,7 +277,7 @@ def cb_handler(c):
         txt += f"Ник: @{getattr(c.from_user, 'username','')}\n"
         txt += f"Имя: {getattr(c.from_user,'first_name','')}\n"
         if r:
-            txt += f"Зарегистрирован: {fmt_dt(r[3])}\n"
+            txt += f"Зарегистрирован: *{fmt_dt(r[3])}*\n"
         send_private_replace(c.from_user.id, txt)
         try:
             bot.answer_callback_query(c.id)
@@ -292,24 +291,24 @@ def cb_handler(c):
                 pass
             return
         if c.data == "admin_broadcast":
-            send_private_replace(ADMIN_ID, "Отправь текст для рассылки всем пользователям. После отправки подтвердишь.")
+            send_private_replace(ADMIN_ID, "*Отправь текст для рассылки всем пользователям.*")
             bot.register_next_step_handler_by_chat_id(ADMIN_ID, admin_broadcast_step)
         elif c.data == "admin_stats":
             with db_conn() as con:
                 users = con.execute("SELECT COUNT(*) FROM users").fetchone()[0]
                 groups = con.execute("SELECT COUNT(DISTINCT chat_id) FROM required_subs").fetchone()[0]
                 subs = con.execute("SELECT COUNT(*) FROM required_subs").fetchone()[0]
-            send_private_replace(ADMIN_ID, f"*Статистика*\n\nПользователей: {users}\nЧатов с проверками: {groups}\nАктивных проверок: {subs}")
+            send_private_replace(ADMIN_ID, f"*Статистика*\n\nПользователей: *{users}*\nЧатов с проверками: *{groups}*\nАктивных проверок: *{subs}*")
         elif c.data == "admin_users":
             with db_conn() as con:
                 rows = con.execute("SELECT user_id, username, first_name, registered FROM users ORDER BY registered DESC LIMIT 10").fetchall()
             txt = "*Последние пользователи:*\n\n"
             for r in rows:
-                txt += f"`{r[0]}` @{r[1]} {r[2]} {fmt_dt(r[3])}\n"
+                txt += f"`{r[0]}` @{r[1]} {r[2]} *{fmt_dt(r[3])}*\n"
             send_private_replace(ADMIN_ID, txt)
         elif c.data == "admin_cleanup":
             cleanup_expired()
-            send_private_replace(ADMIN_ID, "Очистка завершена.")
+            send_private_replace(ADMIN_ID, "*Очистка завершена.*")
             notify_report("Админ запустил очистку просроченных проверок.")
         try:
             bot.answer_callback_query(c.id)
@@ -318,15 +317,15 @@ def cb_handler(c):
 
 def admin_broadcast_step(m):
     text = m.text
-    send_private_replace(ADMIN_ID, "Подтверди рассылку: отправить всем пользователей? (да/нет)")
+    send_private_replace(ADMIN_ID, "*Подтверди рассылку:* отправить всем пользователям? (да/нет)")
     def confirm_step(msg):
         ans = msg.text.strip().lower()
         if ans in ("да","yes","y"):
             threading.Thread(target=do_broadcast, args=(text,)).start()
-            send_private_replace(ADMIN_ID, "Рассылка запущена в фоне.")
+            send_private_replace(ADMIN_ID, "*Рассылка запущена в фоне.*")
             notify_report("Админ запустил рассылку.")
         else:
-            send_private_replace(ADMIN_ID, "Рассылка отменена.")
+            send_private_replace(ADMIN_ID, "*Рассылка отменена.*")
     bot.register_next_step_handler_by_chat_id(ADMIN_ID, confirm_step)
 
 def do_broadcast(text):
