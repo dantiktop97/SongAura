@@ -255,10 +255,10 @@ def cmd_setup(m):
         try:
             member = bot.get_chat_member(m.chat.id, m.from_user.id)
         except:
-            bot.reply_to(m, "*⛔️ Недостаточно прав. Только админы могут использовать эту команду\\.*")
+            bot.reply_to(m, "*⛔️ Недостаточно прав\\. Только админы могут использовать эту команду\\.*")
             return
         if getattr(member, "status", "") not in ADMIN_STATUSES:
-            bot.reply_to(m, "*⛔️ Недостаточно прав. Только админы могут использовать эту команду\\.*")
+            bot.reply_to(m, "*⛔️ Недостаточно прав\\. Только админы могут использовать эту команду\\.*")
             return
     else:
         if not user_subscribed(m.from_user.id, SUB_CHANNEL):
@@ -274,17 +274,17 @@ def cmd_setup(m):
     raw_ch, dur = args[1], args[2]
     ch = normalize_channel(raw_ch)
     if not ch:
-        bot.reply_to(m, "*⛔️ Неверный формат канала. Пример:* `@example_channel`")
+        bot.reply_to(m, "*⛔️ Неверный формат канала\\. Пример:* `@example_channel`")
         return
     if not channel_exists(ch):
         bot.reply_to(m, f"*⛔️ Канал {escape_md(ch)} не найден в Telegram*")
         return
     if not bot_is_admin_in(ch):
-        bot.reply_to(m, f"*⛔️ Бот не администратор в канале {escape_md(ch)}. Добавьте бота в админы канала\\.*")
+        bot.reply_to(m, f"*⛔️ Бот не администратор в канале {escape_md(ch)}\\. Добавьте бота в админы канала\\.*")
         return
     delta = parse_duration(dur)
     if not delta:
-        bot.reply_to(m, "*⛔️ Неверный формат времени. Примеры:* `30s`, `15m`, `12h`, `7d`")
+        bot.reply_to(m, "*⛔️ Неверный формат времени\\. Примеры:* `30s`, `15m`, `12h`, `7d`")
         return
     expires = (datetime.utcnow() + delta).isoformat()
     with db_conn() as c:
@@ -333,7 +333,7 @@ def cmd_unsetup(m):
         return
     ch = normalize_channel(args[1])
     if not ch:
-        bot.reply_to(m, "*⛔️ Неверный формат канала. Пример:* `@example_channel`")
+        bot.reply_to(m, "*⛔️ Неверный формат канала\\. Пример:* `@example_channel`")
         return
     with db_conn() as c:
         cur = c.execute("SELECT 1 FROM required_subs WHERE chat_id=? AND channel=?", (m.chat.id, ch))
@@ -365,10 +365,10 @@ def cmd_status(m):
         try:
             member = bot.get_chat_member(m.chat.id, m.from_user.id)
         except:
-            bot.reply_to(m, "*⛔️ Недостаточно прав. Только админы могут использовать эту команду\\.*")
+            bot.reply_to(m, "*⛔️ Недостаточно прав\\. Только админы могут использовать эту команду\\.*")
             return
         if getattr(member, "status", "") not in ADMIN_STATUSES:
-            bot.reply_to(m, "*⛔️ Недостаточно прав. Только админы могут использовать эту команду\\.*")
+            bot.reply_to(m, "*⛔️ Недостаточно прав\\. Только админы могут использовать эту команду\\.*")
             return
     else:
         if not user_subscribed(m.from_user.id, SUB_CHANNEL):
@@ -378,7 +378,7 @@ def cmd_status(m):
     cleanup_expired_for_chat(m.chat.id)
     subs = get_required_subs_for_chat(m.chat.id)
     if not subs:
-        bot.send_message(m.chat.id, "*📋 Активных обязательных подписок нет.*")
+        bot.send_message(m.chat.id, "*📋 Активных обязательных подписок нет\\.*")
         return
     lines = [f"*📋 Активные проверки ({len(subs)}):*"]
     for i, s in enumerate(subs, 1):
@@ -399,13 +399,13 @@ def group_message_handler(m):
         ch = s["channel"]
         if not channel_exists(ch):
             try:
-                bot.send_message(m.chat.id, f"*⛔️ Канал {escape_md(ch)} не найден. Уберите или исправьте ОП через `/unsetup {escape_md(ch)}`*")
+                bot.send_message(m.chat.id, f"*⛔️ Канал {escape_md(ch)} не найден\\. Уберите или исправьте ОП через `/unsetup {escape_md(ch)}`*")
             except:
                 pass
             continue
         if not bot_is_admin_in(ch):
             try:
-                bot.send_message(m.chat.id, f"*⛔️ Бот не администратор в канале {escape_md(ch)}. Добавьте бота в админы канала\\.*")
+                bot.send_message(m.chat.id, f"*⛔️ Бот не администратор в канале {escape_md(ch)}\\. Добавьте бота в админы канала\\.*")
             except:
                 pass
             continue
