@@ -13,7 +13,7 @@ ADMIN_STATUSES = ("administrator", "creator")
 
 bot = telebot.TeleBot(TOKEN, parse_mode="MarkdownV2")
 app = Flask(__name__)
-_last_private_message = {}
+_last_private_message = {}  # chat_id -> message_id
 
 def db_conn():
     return sqlite3.connect(DB_PATH, check_same_thread=False)
@@ -60,11 +60,12 @@ def normalize_channel(v):
     if not re.fullmatch(r"[A-Za-z0-9_]{5,32}", t): return None
     return "@" + t
 
+# Strict escape for MarkdownV2 including dot and backslash
 def escape_md(text):
     if text is None:
         return ""
     s = str(text)
-    return re.sub(r'([_*\[\]\(\)~`>#+=\-|{}.!])', r'\\\1', s)
+    return re.sub(r'([_*\[\]\(\)~`>#+=\-\|{}\.\!\\])', r'\\\1', s)
 
 def channel_exists(channel):
     try:
@@ -167,13 +168,11 @@ INSTRUCTION_TEXT = (
     "💡 Используя этого бота, вы подтверждаете согласие с нашей политикой конфиденциальности."
 )
 
-SUB_PROMPT_TEXT = "*📌 Чтобы пользоваться ботом, нужно подписаться на канал:*"
-
 @bot.message_handler(commands=["start"])
 def cmd_start(m):
     if m.chat.type in ("group", "supergroup"):
         bot.send_message(m.chat.id,
-            "*📌 Привет, я бот‑фильтр.*\n\n`Напиши мне в личку для настройки`"
+            "*📌 Привет, я бот‑фильтр.*\n\n`/start` — команда выполнена", disable_web_page_preview=True
         )
         return
     if user_subscribed(m.from_user.id, SUB_CHANNEL):
@@ -213,7 +212,7 @@ def cb_check(c):
             except:
                 pass
             return
-        name = f"@{c.from_user.username}" if getattr(c.from_user, "username", None) else escape_md(c.from_user.first_name)
+        name = f"@{c.from_user.username}" if getattr(c.from_user, "username", None) else c.from_user.first_name
         txt = f"*⚠️ {escape_md(name)}, чтобы писать в чат, необходимо подписаться на канал(ы):* `{escape_md(', '.join(not_sub))}`"
         kb = build_sub_kb(not_sub)
         try:
@@ -248,7 +247,7 @@ def cmd_setup(m):
                 bot.delete_message(m.chat.id, m.message_id)
             except:
                 pass
-            name = f"@{m.from_user.username}" if getattr(m.from_user, "username", None) else escape_md(m.from_user.first_name)
+            name = f"@{m.from_user.username}" if getattr(m.from_user, "username", None) else m.from_user.first_name
             txt = f"*⚠️ {escape_md(name)}, чтобы писать в чат, необходимо подписаться на канал(ы):* `{escape_md(', '.join(not_sub))}`"
             kb = build_sub_kb(not_sub)
             bot.send_message(m.chat.id, txt, reply_markup=kb)
@@ -309,7 +308,7 @@ def cmd_unsetup(m):
                 bot.delete_message(m.chat.id, m.message_id)
             except:
                 pass
-            name = f"@{m.from_user.username}" if getattr(m.from_user, "username", None) else escape_md(m.from_user.first_name)
+            name = f"@{m.from_user.username}" if getattr(m.from_user, "username", None) else m.from_user.first_name
             txt = f"*⚠️ {escape_md(name)}, чтобы писать в чат, необходимо подписаться на канал(ы):* `{escape_md(', '.join(not_sub))}`"
             kb = build_sub_kb(not_sub)
             bot.send_message(m.chat.id, txt, reply_markup=kb)
@@ -357,7 +356,7 @@ def cmd_status(m):
                 bot.delete_message(m.chat.id, m.message_id)
             except:
                 pass
-            name = f"@{m.from_user.username}" if getattr(m.from_user, "username", None) else escape_md(m.from_user.first_name)
+            name = f"@{m.from_user.username}" if getattr(m.from_user, "username", None) else m.from_user.first_name
             txt = f"*⚠️ {escape_md(name)}, чтобы писать в чат, необходимо подписаться на канал(ы):* `{escape_md(', '.join(not_sub))}`"
             kb = build_sub_kb(not_sub)
             bot.send_message(m.chat.id, txt, reply_markup=kb)
@@ -418,7 +417,7 @@ def group_message_handler(m):
             bot.delete_message(m.chat.id, m.message_id)
         except:
             pass
-        name = f"@{m.from_user.username}" if getattr(m.from_user, "username", None) else escape_md(m.from_user.first_name)
+        name = f"@{m.from_user.username}" if getattr(m.from_user, "username", None) else m.from_user.first_name
         txt = f"*⚠️ {escape_md(name)}, чтобы писать в чат, необходимо подписаться на канал(ы):* `{escape_md(', '.join(not_sub))}`"
         kb = build_sub_kb(not_sub)
         bot.send_message(m.chat.id, txt, reply_markup=kb)
