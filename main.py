@@ -277,7 +277,7 @@ def cmd_setup(m):
         bot.reply_to(m, "*⛔️ Неверный формат канала. Пример:* `@example_channel`")
         return
     if not channel_exists(ch):
-        bot.reply_to(m, f"*⛔️ Канал {escape_md(ch)} не найден в Telegram.*")
+        bot.reply_to(m, f"*⛔️ Канал {escape_md(ch)} не найден в Telegram*")
         return
     if not bot_is_admin_in(ch):
         bot.reply_to(m, f"*⛔️ Бот не администратор в канале {escape_md(ch)}. Добавьте бота в админы канала.*")
