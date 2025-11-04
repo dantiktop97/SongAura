@@ -356,7 +356,8 @@ def cmd_status(m):
                 bot.delete_message(m.chat.id, m.message_id)
             except:
                 pass
-            name = f"@{m.from_user.username}" if getattr(m.from_user, "username", None) else m.from_user.first_name
+        name = f"@{m.from_user.username}" if getattr(m.from_user, "username", None) else m.from_user.first_name
+        if not_sub:
             txt = f"*⚠️ {escape_md(name)}, чтобы писать в чат, необходимо подписаться на канал(ы):* `{escape_md(', '.join(not_sub))}`"
             kb = build_sub_kb(not_sub)
             bot.send_message(m.chat.id, txt, reply_markup=kb)
