@@ -7,32 +7,17 @@ import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 TOKEN = os.getenv("PLAY")
-SUB_CHANNEL = "@vzref2"
-DB_PATH = "data.db"
+SUB_CHANNEL = os.getenv("SUB_CHANNEL", "@vzref2")
+DB_PATH = os.getenv("DB_PATH", "data.db")
+ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))         # admin for admin-menu (secret in render)
+REPORT_CHANNEL = int(os.getenv("CHANNEL", "0"))    # channel id for reports
 ADMIN_STATUSES = ("administrator", "creator")
-
-INSTRUCTION_TEXT = (
-    "📘 Инструкция по настройке:\n\n"
-    "1️⃣ Добавь меня в группу/чат и сделай админом.\n\n"
-    "2️⃣ В группе/чате используй:\n"
-    "`/setup @канал 24h` — добавить обязательную подписку.\n"
-    "⏱ Время можно указывать так: `30s`, `15m`, `12h`, `7d`.\n\n"
-    "3️⃣ `/unsetup @канал` — убрать подписку.\n\n"
-    "4️⃣ `/status` — список активных проверок.\n\n"
-    "ℹ️ Как это работает:\n"
-    "• Пользователь пишет сообщение в чат.\n"
-    "• Бот проверяет его подписку.\n"
-    "• Если подписка есть — сообщение остаётся.\n"
-    "• Если нет — сообщение удаляется, а пользователю отправляется кнопка 🔗 Подписаться.\n\n"
-    "———————————————\n\n"
-    "💡 Используя этого бота, вы подтверждаете согласие с нашей политикой конфиденциальности."
-)
-SUB_PROMPT_TEXT = "Чтобы пользоваться ботом, нужно подписаться на канал:"
 
 bot = telebot.TeleBot(TOKEN, parse_mode="Markdown")
 app = Flask(__name__)
 _last_private_message = {}  # chat_id -> message_id
 
+# --- DB utils
 def db_conn():
     return sqlite3.connect(DB_PATH, check_same_thread=False)
 
@@ -43,7 +28,22 @@ def init_db():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 chat_id INTEGER,
                 channel TEXT,
-                expires TEXT
+                expires TEXT,
+                created_at TEXT,
+                added_by INTEGER
+            )
+        """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS chat_meta (
+                chat_id INTEGER PRIMARY KEY,
+                title TEXT,
+                added_by INTEGER
+            )
+        """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                user_id INTEGER PRIMARY KEY,
+                last_active TEXT
             )
         """)
         c.commit()
@@ -57,6 +57,7 @@ def fmt_dt_iso(s):
     except:
         return s or "∞"
 
+# --- parsing / validation
 def parse_duration(spec):
     if not spec:
         return None
@@ -78,6 +79,7 @@ def normalize_channel(v):
     if not re.fullmatch(r"[A-Za-z0-9_]{5,32}", t): return None
     return "@" + t
 
+# --- telegram checks
 def channel_exists(channel):
     try:
         bot.get_chat(channel)
@@ -100,7 +102,55 @@ def user_subscribed(user_id, channel):
     except:
         return False
 
+# --- storage helpers
+def save_user(user_id):
+    with db_conn() as c:
+        c.execute("INSERT OR REPLACE INTO users(user_id, last_active) VALUES(?,?)", (user_id, now_iso()))
+        c.commit()
+
+def save_chat_meta(chat, user_id=None):
+    try:
+        with db_conn() as c:
+            c.execute("INSERT OR REPLACE INTO chat_meta(chat_id, title, added_by) VALUES(?,?,?)",
+                      (chat.id, chat.title or "", user_id))
+            c.commit()
+    except:
+        pass
+
+def add_required_sub(chat_id, channel, expires_iso, added_by):
+    created = now_iso()
+    with db_conn() as c:
+        c.execute("INSERT INTO required_subs(chat_id, channel, expires, created_at, added_by) VALUES(?,?,?,?,?)",
+                  (chat_id, channel, expires_iso, created, added_by))
+        c.commit()
+
+def remove_required_sub(chat_id, channel):
+    with db_conn() as c:
+        c.execute("DELETE FROM required_subs WHERE chat_id=? AND channel=?", (chat_id, channel))
+        c.commit()
+
+def get_required_subs_for_chat(chat_id):
+    with db_conn() as c:
+        rows = c.execute("SELECT channel, expires, created_at, added_by FROM required_subs WHERE chat_id=?", (chat_id,)).fetchall()
+    return [{"channel": r[0], "expires": r[1], "created_at": r[2], "added_by": r[3]} for r in rows]
+
+def cleanup_expired_for_chat(chat_id):
+    now = now_iso()
+    with db_conn() as c:
+        c.execute("DELETE FROM required_subs WHERE chat_id=? AND expires IS NOT NULL AND expires <= ?", (chat_id, now))
+        c.commit()
+
+# --- UI builders
+def build_sub_kb(channels):
+    kb = InlineKeyboardMarkup()
+    for ch in channels:
+        url = f"https://t.me/{ch.strip('@')}"
+        kb.add(InlineKeyboardButton("🔗 Подписаться", url=url))
+    kb.add(InlineKeyboardButton("✅ Проверить", callback_data="check_sub"))
+    return kb
+
 def send_private_replace(chat_id, text, reply_markup=None):
+    save_user(chat_id)
     old = _last_private_message.get(chat_id)
     if old:
         try:
@@ -111,24 +161,7 @@ def send_private_replace(chat_id, text, reply_markup=None):
     _last_private_message[chat_id] = m.message_id
     return m
 
-def build_sub_kb(channels):
-    kb = InlineKeyboardMarkup()
-    btns = []
-    for ch in channels:
-        url = f"https://t.me/{ch.strip('@')}"
-        btns.append(InlineKeyboardButton("🔗 Подписаться", url=url))
-    row = []
-    for i, b in enumerate(btns, 1):
-        row.append(b)
-        if i % 2 == 0 or i == len(btns):
-            try:
-                kb.row(*row)
-            except:
-                for x in row: kb.add(x)
-            row = []
-    kb.add(InlineKeyboardButton("✅ Проверить", callback_data="check_sub"))
-    return kb
-
+SUB_PROMPT_TEXT = "Чтобы пользоваться ботом, нужно подписаться на канал:"
 def send_subscribe_request(user_id, channels=None, reply_in_chat=None):
     chs = channels or [SUB_CHANNEL]
     kb = build_sub_kb(chs)
@@ -140,29 +173,40 @@ def send_subscribe_request(user_id, channels=None, reply_in_chat=None):
             pass
     return send_private_replace(user_id, SUB_PROMPT_TEXT, reply_markup=kb)
 
-def add_required_sub(chat_id, channel, expires_iso):
-    with db_conn() as c:
-        c.execute("INSERT INTO required_subs(chat_id, channel, expires) VALUES(?,?,?)", (chat_id, channel, expires_iso))
-        c.commit()
+INSTRUCTION_TEXT = (
+    "📘 Инструкция по настройке:\n\n"
+    "1️⃣ Добавь меня в группу/чат и сделай админом.\n\n"
+    "2️⃣ В группе/чате используй:\n"
+    "`/setup @канал 24h` — добавить обязательную подписку.\n"
+    "⏱ Время можно указывать так: `30s`, `15m`, `12h`, `7d`.\n\n"
+    "3️⃣ `/unsetup @канал` — убрать подписку.\n\n"
+    "4️⃣ `/status` — список активных проверок.\n\n"
+    "ℹ️ Как это работает:\n"
+    "• Пользователь пишет сообщение в чат.\n"
+    "• Бот проверяет его подписку.\n"
+    "• Если подписка есть — сообщение остаётся.\n"
+    "• Если нет — сообщение удаляется, а пользователю отправляется кнопка 🔗 Подписаться.\n\n"
+    "———————————————\n\n"
+    "💡 Используя этого бота, вы подтверждаете согласие с нашей политикой конфиденциальности."
+)
 
-def remove_required_sub(chat_id, channel):
-    with db_conn() as c:
-        c.execute("DELETE FROM required_subs WHERE chat_id=? AND channel=?", (chat_id, channel))
-        c.commit()
+# --- Admin menu utilities
+def send_admin_menu_button(chat_id):
+    kb = InlineKeyboardMarkup()
+    kb.add(InlineKeyboardButton("Меню админа", callback_data="admin_menu"))
+    bot.send_message(chat_id, " ", reply_markup=kb)
 
-def get_required_subs_for_chat(chat_id):
-    with db_conn() as c:
-        rows = c.execute("SELECT channel, expires FROM required_subs WHERE chat_id=?", (chat_id,)).fetchall()
-    return [{"channel": r[0], "expires": r[1]} for r in rows]
+def build_admin_menu():
+    kb = InlineKeyboardMarkup()
+    kb.add(InlineKeyboardButton("📢 Рассылка всем пользователям", callback_data="admin_broadcast"))
+    kb.add(InlineKeyboardButton("📊 Статистика", callback_data="admin_stats"))
+    kb.add(InlineKeyboardButton("🏆 Топ‑10 по ОП", callback_data="admin_top"))
+    return kb
 
-def cleanup_expired_for_chat(chat_id):
-    now = now_iso()
-    with db_conn() as c:
-        c.execute("DELETE FROM required_subs WHERE chat_id=? AND expires IS NOT NULL AND expires <= ?", (chat_id, now))
-        c.commit()
-
+# --- Handlers
 @bot.message_handler(commands=["start"])
 def cmd_start(m):
+    save_user(m.from_user.id)
     if m.chat.type in ("group", "supergroup"):
         bot.send_message(m.chat.id,
             "👋 Привет, я бот‑фильтр.\nЯ проверяю обязательные подписки и удаляю сообщения тех, кто не подписан.\n\n📌 Для настройки напиши мне в личку."
@@ -172,13 +216,29 @@ def cmd_start(m):
         send_private_replace(m.from_user.id, INSTRUCTION_TEXT)
     else:
         send_subscribe_request(m.from_user.id, [SUB_CHANNEL])
+    if ADMIN_ID and m.from_user.id == ADMIN_ID:
+        send_admin_menu_button(m.from_user.id)
 
 @bot.message_handler(func=lambda m: m.chat.type == "private")
 def private_any(m):
+    save_user(m.from_user.id)
     if user_subscribed(m.from_user.id, SUB_CHANNEL):
         send_private_replace(m.from_user.id, INSTRUCTION_TEXT)
     else:
         send_subscribe_request(m.from_user.id, [SUB_CHANNEL])
+    if ADMIN_ID and m.from_user.id == ADMIN_ID:
+        send_admin_menu_button(m.from_user.id)
+
+# --- explicit /admin command (added as requested)
+@bot.message_handler(commands=["admin"])
+def cmd_admin(m):
+    if m.chat.type != "private":
+        return
+    if m.from_user.id != ADMIN_ID:
+        bot.send_message(m.chat.id, "⛔️ Доступ запрещён.")
+        return
+    kb = build_admin_menu()
+    bot.send_message(m.chat.id, "**Меню админа:**", reply_markup=kb)
 
 @bot.callback_query_handler(func=lambda c: c.data == "check_sub")
 def cb_check(c):
@@ -197,7 +257,6 @@ def cb_check(c):
             return
         not_sub = [ch for ch in required if not user_subscribed(user_id, ch)]
         if not not_sub:
-            # delete bot's message with buttons
             try:
                 bot.delete_message(chat.id, c.message.message_id)
             except:
@@ -231,9 +290,148 @@ def cb_check(c):
     except:
         pass
 
+# --- Admin menu callbacks
+_broadcast_waiting = {}  # admin_id -> True
+
+@bot.callback_query_handler(func=lambda c: c.data == "admin_menu")
+def cb_admin_menu(c):
+    if c.from_user.id != ADMIN_ID:
+        try:
+            bot.answer_callback_query(c.id, "Доступ запрещён", show_alert=True)
+        except:
+            pass
+        return
+    kb = build_admin_menu()
+    bot.send_message(c.from_user.id, "**Меню админа:**", reply_markup=kb)
+    try:
+        bot.answer_callback_query(c.id)
+    except:
+        pass
+
+@bot.callback_query_handler(func=lambda c: c.data == "admin_broadcast")
+def cb_admin_broadcast(c):
+    if c.from_user.id != ADMIN_ID:
+        try:
+            bot.answer_callback_query(c.id, "Доступ запрещён", show_alert=True)
+        except:
+            pass
+        return
+    bot.send_message(c.from_user.id, "**✏️ Введите текст рассылки.**\nОн будет отправлен всем, кто когда‑либо писал боту в ЛС.")
+    _broadcast_waiting[c.from_user.id] = True
+    try:
+        bot.answer_callback_query(c.id)
+    except:
+        pass
+
+@bot.message_handler(func=lambda m: _broadcast_waiting.get(m.from_user.id, False) and m.chat.type == "private")
+def handle_broadcast_text(m):
+    if m.from_user.id != ADMIN_ID:
+        return
+    text = m.text
+    _broadcast_waiting.pop(m.from_user.id, None)
+    bot.send_message(m.from_user.id, "**Рассылка начата**. Отправляю сообщения...")
+    with db_conn() as c:
+        rows = c.execute("SELECT user_id FROM users").fetchall()
+    sent = 0
+    for (uid,) in rows:
+        try:
+            bot.send_message(uid, text, disable_web_page_preview=True)
+            sent += 1
+        except:
+            pass
+    bot.send_message(m.from_user.id, f"**Готово.** Отправлено: **{sent}** пользователей.")
+
+@bot.callback_query_handler(func=lambda c: c.data == "admin_stats")
+def cb_admin_stats(c):
+    if c.from_user.id != ADMIN_ID:
+        try:
+            bot.answer_callback_query(c.id, "Доступ запрещён", show_alert=True)
+        except:
+            pass
+        return
+    with db_conn() as conn:
+        chats_count = conn.execute("SELECT COUNT(DISTINCT chat_id) FROM required_subs").fetchone()[0]
+        total_ops = conn.execute("SELECT COUNT(*) FROM required_subs").fetchone()[0]
+        users_count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+        last_active = conn.execute("SELECT last_active FROM users ORDER BY last_active DESC LIMIT 1").fetchone()
+        last_active = last_active[0] if last_active else "—"
+    lines = [
+        f"**📊 Статистика:**",
+        f"• **Чатов с активными ОП:** **{chats_count}**",
+        f"• **Всего ОП:** **{total_ops}**",
+        f"• **Уникальных пользователей в ЛС:** **{users_count}**",
+        f"• **Последняя активность:** **{last_active}**"
+    ]
+    bot.send_message(c.from_user.id, "\n".join(lines), disable_web_page_preview=True)
+    try:
+        bot.answer_callback_query(c.id)
+    except:
+        pass
+
+@bot.callback_query_handler(func=lambda c: c.data == "admin_top")
+def cb_admin_top(c):
+    if c.from_user.id != ADMIN_ID:
+        try:
+            bot.answer_callback_query(c.id, "Доступ запрещён", show_alert=True)
+        except:
+            pass
+        return
+
+    with db_conn() as conn:
+        rows = conn.execute("""
+            SELECT rs.chat_id, rs.channel, rs.expires, rs.created_at, rs.added_by, cm.title
+            FROM required_subs rs
+            LEFT JOIN chat_meta cm ON rs.chat_id = cm.chat_id
+            ORDER BY rs.chat_id, rs.created_at ASC
+        """).fetchall()
+
+    if not rows:
+        bot.send_message(c.from_user.id, "**🏆 Пока нет активных ОП.**")
+        try:
+            bot.answer_callback_query(c.id)
+        except:
+            pass
+        return
+
+    from collections import defaultdict
+    grouped = defaultdict(list)
+    for r in rows:
+        grouped[r[0]].append(r)
+
+    items = sorted(grouped.items(), key=lambda x: -len(x[1]))[:10]
+
+    lines = ["**🏆 Топ‑10 чатов по количеству ОП:**"]
+    for i, (chat_id, subs) in enumerate(items, 1):
+        title = subs[0][5] or ""
+        added_by = subs[0][4]
+        chat_link = f"https://t.me/c/{str(chat_id)[4:]}" if str(chat_id).startswith("-100") else f"https://t.me/{chat_id}"
+        name = f"[{title}]({chat_link})" if title else f"`{chat_id}`"
+        lines.append(f"{i}. {name} — **{len(subs)}** ОП")
+        if added_by:
+            lines.append(f"  Добавил: [профиль](tg://user?id={added_by})")
+        for s in subs:
+            ch = s[1]
+            expires = s[2]
+            created = s[3]
+            try:
+                dt1 = datetime.fromisoformat(created)
+                dt2 = datetime.fromisoformat(expires)
+                delta = dt2 - dt1
+                hours = round(delta.total_seconds() / 3600)
+                lines.append(f"  • {ch} — **{hours}ч** до {dt2.strftime('%Y-%m-%d %H:%M')}")
+            except:
+                lines.append(f"  • {ch} — до {expires}")
+        lines.append("")
+    bot.send_message(c.from_user.id, "\n".join(lines), disable_web_page_preview=True)
+    try:
+        bot.answer_callback_query(c.id)
+    except:
+        pass
+
+# --- setup / unsetup / status handlers (unchanged logic, integrated)
 @bot.message_handler(commands=["setup"])
 def cmd_setup(m):
-    # enforce subscription for everyone in groups: block until subscribed
+    save_user(m.from_user.id)
     if m.chat.type in ("group", "supergroup"):
         cleanup_expired_for_chat(m.chat.id)
         subs = get_required_subs_for_chat(m.chat.id)
@@ -249,7 +447,6 @@ def cmd_setup(m):
             kb = build_sub_kb(not_sub)
             bot.send_message(m.chat.id, txt, reply_markup=kb)
             return
-        # now user is subscribed to required channels -> continue with admin checks
         try:
             member = bot.get_chat_member(m.chat.id, m.from_user.id)
         except:
@@ -259,7 +456,6 @@ def cmd_setup(m):
             bot.reply_to(m, "⛔️ Недостаточно прав. Только админы могут использовать эту команду.")
             return
     else:
-        # private: require subscription to proceed in PM
         if not user_subscribed(m.from_user.id, SUB_CHANNEL):
             return send_subscribe_request(m.chat.id, [SUB_CHANNEL])
         send_private_replace(m.from_user.id, INSTRUCTION_TEXT)
@@ -285,17 +481,41 @@ def cmd_setup(m):
         bot.reply_to(m, "⛔️ Неверный формат времени. Примеры: `30s`, `15m`, `12h`, `7d`")
         return
     expires = (datetime.utcnow() + delta).isoformat()
+
     with db_conn() as c:
         cur = c.execute("SELECT 1 FROM required_subs WHERE chat_id=? AND channel=?", (m.chat.id, ch))
         if cur.fetchone():
             bot.reply_to(m, f"⚠️ Канал {ch} уже добавлен в обязательные подписки.")
             return
-        c.execute("INSERT INTO required_subs(chat_id, channel, expires) VALUES(?,?,?)", (m.chat.id, ch, expires))
+        c.execute("INSERT INTO required_subs(chat_id, channel, expires, created_at, added_by) VALUES(?,?,?,?,?)",
+                  (m.chat.id, ch, expires, now_iso(), m.from_user.id))
         c.commit()
+
+    save_chat_meta(m.chat, m.from_user.id)
     bot.reply_to(m, f"✅ Добавлено обязательное условие: подписка на {ch} до {fmt_dt_iso(expires)}")
+
+    # report to REPORT_CHANNEL
+    try:
+        if REPORT_CHANNEL:
+            dt1 = datetime.utcnow()
+            dt2 = datetime.fromisoformat(expires)
+            hours = round((dt2 - dt1).total_seconds() / 3600)
+            chat_link = f"https://t.me/c/{str(m.chat.id)[4:]}" if str(m.chat.id).startswith("-100") else f"https://t.me/{m.chat.id}"
+            who = f"[{m.from_user.first_name}](tg://user?id={m.from_user.id})"
+            report = (
+                "📥 **Добавлена ОП**\n\n"
+                f"👤 {who}\n"
+                f"💬 [{m.chat.title}]({chat_link})\n"
+                f"📎 {ch}\n"
+                f"⏱ **{hours}ч** до {dt2.strftime('%Y-%m-%d %H:%M')}"
+            )
+            bot.send_message(REPORT_CHANNEL, report, disable_web_page_preview=True)
+    except:
+        pass
 
 @bot.message_handler(commands=["unsetup"])
 def cmd_unsetup(m):
+    save_user(m.from_user.id)
     if m.chat.type in ("group", "supergroup"):
         cleanup_expired_for_chat(m.chat.id)
         subs = get_required_subs_for_chat(m.chat.id)
@@ -344,6 +564,7 @@ def cmd_unsetup(m):
 
 @bot.message_handler(commands=["status"])
 def cmd_status(m):
+    save_user(m.from_user.id)
     if m.chat.type in ("group", "supergroup"):
         cleanup_expired_for_chat(m.chat.id)
         subs = get_required_subs_for_chat(m.chat.id)
@@ -377,7 +598,7 @@ def cmd_status(m):
     if not subs:
         bot.send_message(m.chat.id, "📋 Активных обязательных подписок нет.")
         return
-    lines = [f"📋 Активные проверки ({len(subs)}):"]
+    lines = [f"**📋 Активные проверки ({len(subs)}):**"]
     for i, s in enumerate(subs, 1):
         dt = fmt_dt_iso(s.get("expires"))
         lines.append(f"`{i}.` {s['channel']} — до {dt}")
@@ -387,6 +608,8 @@ def cmd_status(m):
 
 @bot.message_handler(func=lambda m: m.chat.type in ("group", "supergroup"))
 def group_message_handler(m):
+    save_user(m.from_user.id)
+    save_chat_meta(m.chat, m.from_user.id)
     cleanup_expired_for_chat(m.chat.id)
     subs = get_required_subs_for_chat(m.chat.id)
     if not subs:
@@ -422,6 +645,7 @@ def group_message_handler(m):
         return
     # пользователь подписан на все требуемые каналы — сообщение остаётся
 
+# --- webhook / run
 @app.route(f"/{TOKEN}", methods=["POST"])
 def webhook():
     json_str = request.get_data().decode("utf-8")
