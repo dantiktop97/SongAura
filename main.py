@@ -174,7 +174,7 @@ def send_subscribe_request(user_id, channels=None, reply_in_chat=None):
     return send_private_replace(user_id, SUB_PROMPT_TEXT, reply_markup=kb)
 
 INSTRUCTION_TEXT = (
-    "📘 Инструкция по настройке:\n\n"
+    "📘 **Инструкция по настройке:**\n\n"
     "1️⃣ Добавь меня в группу/чат и сделай админом.\n\n"
     "2️⃣ В группе/чате используй:\n"
     "`/setup @канал 24h` — добавить обязательную подписку.\n"
@@ -194,7 +194,8 @@ INSTRUCTION_TEXT = (
 def send_admin_menu_button(chat_id):
     kb = InlineKeyboardMarkup()
     kb.add(InlineKeyboardButton("Меню админа", callback_data="admin_menu"))
-    bot.send_message(chat_id, " ", reply_markup=kb)
+    # send non-empty bold title to avoid Telegram "text must be non-empty"
+    bot.send_message(chat_id, "**Меню админа:**", reply_markup=kb)
 
 def build_admin_menu():
     kb = InlineKeyboardMarkup()
@@ -216,6 +217,7 @@ def cmd_start(m):
         send_private_replace(m.from_user.id, INSTRUCTION_TEXT)
     else:
         send_subscribe_request(m.from_user.id, [SUB_CHANNEL])
+    # admin menu available only for ADMIN_ID and only after /start or any private message
     if ADMIN_ID and m.from_user.id == ADMIN_ID:
         send_admin_menu_button(m.from_user.id)
 
@@ -228,17 +230,6 @@ def private_any(m):
         send_subscribe_request(m.from_user.id, [SUB_CHANNEL])
     if ADMIN_ID and m.from_user.id == ADMIN_ID:
         send_admin_menu_button(m.from_user.id)
-
-# --- explicit /admin command (added as requested)
-@bot.message_handler(commands=["admin"])
-def cmd_admin(m):
-    if m.chat.type != "private":
-        return
-    if m.from_user.id != ADMIN_ID:
-        bot.send_message(m.chat.id, "⛔️ Доступ запрещён.")
-        return
-    kb = build_admin_menu()
-    bot.send_message(m.chat.id, "**Меню админа:**", reply_markup=kb)
 
 @bot.callback_query_handler(func=lambda c: c.data == "check_sub")
 def cb_check(c):
@@ -290,7 +281,7 @@ def cb_check(c):
     except:
         pass
 
-# --- Admin menu callbacks
+# --- Admin menu callbacks (accessible only via the admin button in private; /admin command intentionally removed)
 _broadcast_waiting = {}  # admin_id -> True
 
 @bot.callback_query_handler(func=lambda c: c.data == "admin_menu")
@@ -428,7 +419,7 @@ def cb_admin_top(c):
     except:
         pass
 
-# --- setup / unsetup / status handlers (unchanged logic, integrated)
+# --- setup / unsetup / status handlers
 @bot.message_handler(commands=["setup"])
 def cmd_setup(m):
     save_user(m.from_user.id)
