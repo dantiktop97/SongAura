@@ -11,6 +11,24 @@ SUB_CHANNEL = "@vzref2"
 DB_PATH = "data.db"
 ADMIN_STATUSES = ("administrator", "creator")
 
+INSTRUCTION_TEXT = (
+    "📘 Инструкция по настройке:\n\n"
+    "1️⃣ Добавь меня в группу/чат и сделай админом.\n\n"
+    "2️⃣ В группе/чате используй:\n"
+    "`/setup @канал 24h` — добавить обязательную подписку.\n"
+    "⏱ Время можно указывать так: `30s`, `15m`, `12h`, `7d`.\n\n"
+    "3️⃣ `/unsetup @канал` — убрать подписку.\n\n"
+    "4️⃣ `/status` — список активных проверок.\n\n"
+    "ℹ️ Как это работает:\n"
+    "• Пользователь пишет сообщение в чат.\n"
+    "• Бот проверяет его подписку.\n"
+    "• Если подписка есть — сообщение остаётся.\n"
+    "• Если нет — сообщение удаляется, а пользователю отправляется кнопка 🔗 Подписаться.\n\n"
+    "———————————————\n\n"
+    "💡 Используя этого бота, вы подтверждаете согласие с нашей политикой конфиденциальности."
+)
+SUB_PROMPT_TEXT = "Чтобы пользоваться ботом, нужно подписаться на канал:"
+
 bot = telebot.TeleBot(TOKEN, parse_mode="Markdown")
 app = Flask(__name__)
 _last_private_message = {}
@@ -20,7 +38,14 @@ def db_conn():
 
 def init_db():
     with db_conn() as c:
-        c.execute("CREATE TABLE IF NOT EXISTS required_subs (id INTEGER PRIMARY KEY AUTOINCREMENT, chat_id INTEGER, channel TEXT, expires TEXT)")
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS required_subs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id INTEGER,
+                channel TEXT,
+                expires TEXT
+            )
+        """)
         c.commit()
 
 def now_iso():
@@ -106,8 +131,7 @@ def build_sub_kb(channels):
 
 def send_subscribe_request(user_id, channels=None):
     chs = channels or [SUB_CHANNEL]
-    text = "Чтобы пользоваться ботом, нужно подписаться на канал:"
-    return send_private_replace(user_id, text, reply_markup=build_sub_kb(chs))
+    return send_private_replace(user_id, SUB_PROMPT_TEXT, reply_markup=build_sub_kb(chs))
 
 def add_required_sub(chat_id, channel, expires_iso):
     with db_conn() as c:
@@ -137,76 +161,36 @@ def cmd_start(m):
             "👋 Привет, я бот‑фильтр.\nЯ проверяю обязательные подписки и удаляю сообщения тех, кто не подписан.\n\n📌 Для настройки напиши мне в личку."
         )
         return
+    # private: behave as "first message" logic
     if user_subscribed(m.from_user.id, SUB_CHANNEL):
-        text = (
-            "📘 Инструкция по настройке:\n\n"
-            "1️⃣ Добавь меня в группу/чат и сделай админом.\n\n"
-            "2️⃣ В группе/чате используй:\n"
-            "`/setup @канал 24h` — добавить обязательную подписку.\n"
-            "⏱ Время можно указывать так: `30s`, `15m`, `12h`, `7d`.\n\n"
-            "3️⃣ `/unsetup @канал` — убрать подписку.\n\n"
-            "4️⃣ `/status` — список активных проверок.\n\n"
-            "ℹ️ Как это работает:\n"
-            "• Пользователь пишет сообщение в чат.\n"
-            "• Бот проверяет его подписку.\n"
-            "• Если подписка есть — сообщение остаётся.\n"
-            "• Если нет — сообщение удаляется, а пользователю отправляется кнопка 🔗 Подписаться.\n\n"
-            "———————————————\n\n"
-            "💡 Используя этого бота, вы подтверждаете согласие с нашей политикой конфиденциальности.\n"
-            f"📎 Наш канал: https://t.me/{SUB_CHANNEL.strip('@')}"
-        )
-        send_private_replace(m.from_user.id, text)
+        send_private_replace(m.from_user.id, INSTRUCTION_TEXT)
     else:
         send_subscribe_request(m.from_user.id, [SUB_CHANNEL])
 
 @bot.message_handler(func=lambda m: m.chat.type == "private")
 def private_any(m):
-    # first message: if not subscribed -> subscription prompt; if subscribed -> instruction
+    # Any private message: if subscribed -> instruction; else -> subscribe prompt
     if user_subscribed(m.from_user.id, SUB_CHANNEL):
-        text = (
-            "📘 Инструкция по настройке:\n\n"
-            "1️⃣ Добавь меня в группу/чат и сделай админом.\n\n"
-            "2️⃣ В группе/чате используй:\n"
-            "`/setup @канал 24h` — добавить обязательную подписку.\n"
-            "⏱ Время можно указывать так: `30s`, `15m`, `12h`, `7d`.\n\n"
-            "3️⃣ `/unsetup @канал` — убрать подписку.\n\n"
-            "4️⃣ `/status` — список активных проверок.\n\n"
-            "ℹ️ Как это работает:\n"
-            "• Пользователь пишет сообщение в чат.\n"
-            "• Бот проверяет его подписку.\n"
-            "• Если подписка есть — сообщение остаётся.\n"
-            "• Если нет — сообщение удаляется, а пользователю отправляется кнопка 🔗 Подписаться.\n\n"
-            "———————————————\n\n"
-            "💡 Используя этого бота, вы подтверждаете согласие с нашей политикой конфиденциальности.\n"
-            f"📎 Наш канал: https://t.me/{SUB_CHANNEL.strip('@')}"
-        )
-        send_private_replace(m.from_user.id, text)
+        send_private_replace(m.from_user.id, INSTRUCTION_TEXT)
     else:
         send_subscribe_request(m.from_user.id, [SUB_CHANNEL])
 
 @bot.callback_query_handler(func=lambda c: c.data == "check_sub")
 def cb_check(c):
-    if user_subscribed(c.from_user.id, SUB_CHANNEL):
-        text = (
-            "📘 Инструкция по настройке:\n\n"
-            "1️⃣ Добавь меня в группу/чат и сделай админом.\n\n"
-            "2️⃣ В группе/чате используй:\n"
-            "`/setup @канал 24h` — добавить обязательную подписку.\n"
-            "⏱ Время можно указывать так: `30s`, `15m`, `12h`, `7d`.\n\n"
-            "3️⃣ `/unsetup @канал` — убрать подписку.\n\n"
-            "4️⃣ `/status` — список активных проверок.\n\n"
-            "ℹ️ Как это работает:\n"
-            "• Пользователь пишет сообщение в чат.\n"
-            "• Бот проверяет его подписку.\n"
-            "• Если подписка есть — сообщение остаётся.\n"
-            "• Если нет — сообщение удаляется, а пользователю отправляется кнопка 🔗 Подписаться.\n\n"
-            "———————————————\n\n"
-            "💡 Используя этого бота, вы подтверждаете согласие с нашей политикой конфиденциальности.\n"
-            f"📎 Наш канал: https://t.me/{SUB_CHANNEL.strip('@')}"
-        )
-        send_private_replace(c.from_user.id, text)
+    chat = c.message.chat if c.message else None
+    # If pressed inside a group message, show alert and do not spam LС
+    if chat and chat.type in ("group", "supergroup"):
+        try:
+            bot.answer_callback_query(c.id, "Проверка доступна в личных сообщениях бота", show_alert=True)
+        except:
+            pass
+        return
+    # If pressed in private, perform real check and send instruction or subscribe prompt
+    user_id = c.from_user.id
+    if user_subscribed(user_id, SUB_CHANNEL):
+        send_private_replace(user_id, INSTRUCTION_TEXT)
     else:
-        send_subscribe_request(c.from_user.id, [SUB_CHANNEL])
+        send_subscribe_request(user_id, [SUB_CHANNEL])
     try:
         bot.answer_callback_query(c.id)
     except:
@@ -215,7 +199,9 @@ def cb_check(c):
 @bot.message_handler(commands=["setup"])
 def cmd_setup(m):
     if m.chat.type == "private":
-        return send_subscribe_request(m.chat.id, [SUB_CHANNEL])
+        if not user_subscribed(m.from_user.id, SUB_CHANNEL):
+            return send_subscribe_request(m.chat.id, [SUB_CHANNEL])
+        return send_private_replace(m.from_user.id, INSTRUCTION_TEXT)
     try:
         member = bot.get_chat_member(m.chat.id, m.from_user.id)
     except:
@@ -256,7 +242,9 @@ def cmd_setup(m):
 @bot.message_handler(commands=["unsetup"])
 def cmd_unsetup(m):
     if m.chat.type == "private":
-        return send_subscribe_request(m.chat.id, [SUB_CHANNEL])
+        if not user_subscribed(m.from_user.id, SUB_CHANNEL):
+            return send_subscribe_request(m.chat.id, [SUB_CHANNEL])
+        return send_private_replace(m.from_user.id, INSTRUCTION_TEXT)
     try:
         member = bot.get_chat_member(m.chat.id, m.from_user.id)
     except:
@@ -285,7 +273,9 @@ def cmd_unsetup(m):
 @bot.message_handler(commands=["status"])
 def cmd_status(m):
     if m.chat.type == "private":
-        return send_subscribe_request(m.chat.id, [SUB_CHANNEL])
+        if not user_subscribed(m.from_user.id, SUB_CHANNEL):
+            return send_subscribe_request(m.chat.id, [SUB_CHANNEL])
+        return send_private_replace(m.from_user.id, INSTRUCTION_TEXT)
     try:
         member = bot.get_chat_member(m.chat.id, m.from_user.id)
     except:
