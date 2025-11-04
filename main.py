@@ -396,7 +396,7 @@ def cmd_status(m):
     if not subs:
         safe_send(m.chat.id, escape_md("📋 Активных обязательных подписок нет."))
         return
-    lines = [f"*📋 Активные проверки* \`\({len(subs)}\\)`:"]
+    lines = [f"*📋 Активные проверки* ({len(subs)}):"]
     for i, s in enumerate(subs, 1):
         ch_raw = s['channel']
         ch = escape_md(ch_raw)
