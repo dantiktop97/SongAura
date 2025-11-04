@@ -29,7 +29,7 @@ INSTRUCTION_TEXT = (
 )
 SUB_PROMPT_TEXT = "Чтобы пользоваться ботом, нужно подписаться на канал:"
 
-bot = telebot.TeleBot(TOKEN, parse_mode="Markdown")
+bot = telebot.TeleBot(TOKEN, parse_mode="MarkdownV2")
 app = Flask(__name__)
 _last_private_message = {}  # chat_id -> message_id
 
@@ -107,7 +107,7 @@ def send_private_replace(chat_id, text, reply_markup=None):
             bot.delete_message(chat_id, old)
         except:
             pass
-    m = bot.send_message(chat_id, text, reply_markup=reply_markup, disable_web_page_preview=True)
+    m = safe_send(chat_id, text, reply_markup=reply_markup, disable_web_page_preview=True)
     _last_private_message[chat_id] = m.message_id
     return m
 
@@ -134,7 +134,7 @@ def send_subscribe_request(user_id, channels=None, reply_in_chat=None):
     kb = build_sub_kb(chs)
     if reply_in_chat:
         try:
-            m = bot.send_message(reply_in_chat, SUB_PROMPT_TEXT, reply_markup=kb, disable_web_page_preview=True)
+            m = safe_send(reply_in_chat, SUB_PROMPT_TEXT, reply_markup=kb, disable_web_page_preview=True)
             return m
         except:
             pass
@@ -161,11 +161,29 @@ def cleanup_expired_for_chat(chat_id):
         c.execute("DELETE FROM required_subs WHERE chat_id=? AND expires IS NOT NULL AND expires <= ?", (chat_id, now))
         c.commit()
 
+# MarkdownV2 escape helper
+def escape_md(text):
+    if text is None:
+        return ""
+    # escape all Telegram MarkdownV2 special chars
+    return re.sub(r'([_*\[\]()~`>#+=|{}.!\\-])', r'\\\1', str(text))
+
+# Safe send wrapper that forces MarkdownV2 and avoids bad-entity errors
+def safe_send(chat_id, text, **kwargs):
+    # many callers may pass already-escaped parts; ensure we don't double-escape non-variable static pieces
+    # We treat `text` as already assembled and expect caller to have escaped variables inserted via escape_md()
+    # but to be robust: if likely contains raw user/channel names without backslashes, keep as-is.
+    # Here we simply pass through, relying on callers below to call escape_md on variables.
+    return bot.send_message(chat_id, text, parse_mode="MarkdownV2", **kwargs)
+
+# Initialize DB
+init_db()
+
 @bot.message_handler(commands=["start"])
 def cmd_start(m):
     if m.chat.type in ("group", "supergroup"):
-        bot.send_message(m.chat.id,
-            "👋 Привет, я бот‑фильтр.\nЯ проверяю обязательные подписки и удаляю сообщения тех, кто не подписан.\n\n📌 Для настройки напиши мне в личку."
+        safe_send(m.chat.id,
+            escape_md("👋 Привет, я бот‑фильтр.\nЯ проверяю обязательные подписки и удаляю сообщения тех, кто не подписан.\n\n📌 Для настройки напиши мне в личку.")
         )
         return
     if user_subscribed(m.from_user.id, SUB_CHANNEL):
@@ -207,14 +225,14 @@ def cb_check(c):
             except:
                 pass
             return
-        name = f"@{c.from_user.username}" if getattr(c.from_user, "username", None) else c.from_user.first_name
-        txt = f"{name}, чтобы писать в чат, необходимо подписаться на канал(ы): {', '.join(not_sub)}"
+        name = f"@{c.from_user.username}" if getattr(c.from_user, "username", None) else escape_md(c.from_user.first_name)
+        txt = f"{escape_md(name)}, чтобы писать в чат, необходимо подписаться на канал(ы): {' '.join([escape_md(ch) for ch in not_sub])}"
         kb = build_sub_kb(not_sub)
         try:
             bot.delete_message(chat.id, c.message.message_id)
         except:
             pass
-        bot.send_message(chat.id, txt, reply_markup=kb)
+        safe_send(chat.id, txt, reply_markup=kb)
         try:
             bot.answer_callback_query(c.id)
         except:
@@ -244,19 +262,19 @@ def cmd_setup(m):
                 bot.delete_message(m.chat.id, m.message_id)
             except:
                 pass
-            name = f"@{m.from_user.username}" if getattr(m.from_user, "username", None) else m.from_user.first_name
-            txt = f"{name}, чтобы писать в чат, необходимо подписаться на канал(ы): {', '.join(not_sub)}"
+            name = f"@{m.from_user.username}" if getattr(m.from_user, "username", None) else escape_md(m.from_user.first_name)
+            txt = f"{escape_md(name)}, чтобы писать в чат, необходимо подписаться на канал(ы): {' '.join([escape_md(ch) for ch in not_sub])}"
             kb = build_sub_kb(not_sub)
-            bot.send_message(m.chat.id, txt, reply_markup=kb)
+            safe_send(m.chat.id, txt, reply_markup=kb)
             return
         # now user is subscribed to required channels -> continue with admin checks
         try:
             member = bot.get_chat_member(m.chat.id, m.from_user.id)
         except:
-            bot.reply_to(m, "⛔️ Недостаточно прав. Только админы могут использовать эту команду.")
+            safe_send(m.chat.id, escape_md("⛔️ Недостаточно прав. Только админы могут использовать эту команду."))
             return
         if getattr(member, "status", "") not in ADMIN_STATUSES:
-            bot.reply_to(m, "⛔️ Недостаточно прав. Только админы могут использовать эту команду.")
+            safe_send(m.chat.id, escape_md("⛔️ Недостаточно прав. Только админы могут использовать эту команду."))
             return
     else:
         # private: require subscription to proceed in PM
@@ -267,32 +285,32 @@ def cmd_setup(m):
 
     args = m.text.split(maxsplit=2)
     if len(args) < 3:
-        bot.reply_to(m, "Использование: `/setup @канал 24h`")
+        safe_send(m.chat.id, escape_md("Использование: `/setup @канал 24h`"))
         return
     raw_ch, dur = args[1], args[2]
     ch = normalize_channel(raw_ch)
     if not ch:
-        bot.reply_to(m, "⛔️ Неверный формат канала. Пример: `@example_channel`")
+        safe_send(m.chat.id, escape_md("⛔️ Неверный формат канала. Пример: `@example_channel`"))
         return
     if not channel_exists(ch):
-        bot.reply_to(m, f"⛔️ Канал {ch} не найден в Telegram.")
+        safe_send(m.chat.id, escape_md(f"⛔️ Канал {ch} не найден в Telegram."))
         return
     if not bot_is_admin_in(ch):
-        bot.reply_to(m, f"⛔️ Бот не администратор в канале {ch}. Добавьте бота в админы канала.")
+        safe_send(m.chat.id, escape_md(f"⛔️ Бот не администратор в канале {ch}. Добавьте бота в админы канала."))
         return
     delta = parse_duration(dur)
     if not delta:
-        bot.reply_to(m, "⛔️ Неверный формат времени. Примеры: `30s`, `15m`, `12h`, `7d`")
+        safe_send(m.chat.id, escape_md("⛔️ Неверный формат времени. Примеры: `30s`, `15m`, `12h`, `7d`"))
         return
     expires = (datetime.utcnow() + delta).isoformat()
     with db_conn() as c:
         cur = c.execute("SELECT 1 FROM required_subs WHERE chat_id=? AND channel=?", (m.chat.id, ch))
         if cur.fetchone():
-            bot.reply_to(m, f"⚠️ Канал {ch} уже добавлен в обязательные подписки.")
+            safe_send(m.chat.id, escape_md(f"⚠️ Канал {ch} уже добавлен в обязательные подписки."))
             return
         c.execute("INSERT INTO required_subs(chat_id, channel, expires) VALUES(?,?,?)", (m.chat.id, ch, expires))
         c.commit()
-    bot.reply_to(m, f"✅ Добавлено обязательное условие: подписка на {ch} до {fmt_dt_iso(expires)}")
+    safe_send(m.chat.id, escape_md(f"✅ Добавлено обязательное условие: подписка на {ch} до {fmt_dt_iso(expires)}"))
 
 @bot.message_handler(commands=["unsetup"])
 def cmd_unsetup(m):
@@ -306,18 +324,18 @@ def cmd_unsetup(m):
                 bot.delete_message(m.chat.id, m.message_id)
             except:
                 pass
-            name = f"@{m.from_user.username}" if getattr(m.from_user, "username", None) else m.from_user.first_name
-            txt = f"{name}, чтобы писать в чат, необходимо подписаться на канал(ы): {', '.join(not_sub)}"
+            name = f"@{m.from_user.username}" if getattr(m.from_user, "username", None) else escape_md(m.from_user.first_name)
+            txt = f"{escape_md(name)}, чтобы писать в чат, необходимо подписаться на канал(ы): {' '.join([escape_md(ch) for ch in not_sub])}"
             kb = build_sub_kb(not_sub)
-            bot.send_message(m.chat.id, txt, reply_markup=kb)
+            safe_send(m.chat.id, txt, reply_markup=kb)
             return
         try:
             member = bot.get_chat_member(m.chat.id, m.from_user.id)
         except:
-            bot.reply_to(m, "⛔️ Недостаточно прав. Только админы могут использовать эту команду.")
+            safe_send(m.chat.id, escape_md("⛔️ Недостаточно прав. Только админы могут использовать эту команду."))
             return
         if getattr(member, "status", "") not in ADMIN_STATUSES:
-            bot.reply_to(m, "⛔️ Недостаточно прав. Только админы могут использовать эту команду.")
+            safe_send(m.chat.id, escape_md("⛔️ Недостаточно прав. Только админы могут использовать эту команду."))
             return
     else:
         if not user_subscribed(m.from_user.id, SUB_CHANNEL):
@@ -327,20 +345,20 @@ def cmd_unsetup(m):
 
     args = m.text.split(maxsplit=1)
     if len(args) < 2:
-        bot.reply_to(m, "Использование: `/unsetup @канал`")
+        safe_send(m.chat.id, escape_md("Использование: `/unsetup @канал`"))
         return
     ch = normalize_channel(args[1])
     if not ch:
-        bot.reply_to(m, "⛔️ Неверный формат канала. Пример: `@example_channel`")
+        safe_send(m.chat.id, escape_md("⛔️ Неверный формат канала. Пример: `@example_channel`"))
         return
     with db_conn() as c:
         cur = c.execute("SELECT 1 FROM required_subs WHERE chat_id=? AND channel=?", (m.chat.id, ch))
         if not cur.fetchone():
-            bot.reply_to(m, f"⛔️ Канал {ch} не добавлен в обязательные подписки для этого чата.")
+            safe_send(m.chat.id, escape_md(f"⛔️ Канал {ch} не добавлен в обязательные подписки для этого чата."))
             return
         c.execute("DELETE FROM required_subs WHERE chat_id=? AND channel=?", (m.chat.id, ch))
         c.commit()
-    bot.reply_to(m, f"✅ Удалена проверка: {ch}")
+    safe_send(m.chat.id, escape_md(f"✅ Удалена проверка: {ch}"))
 
 @bot.message_handler(commands=["status"])
 def cmd_status(m):
@@ -354,36 +372,39 @@ def cmd_status(m):
                 bot.delete_message(m.chat.id, m.message_id)
             except:
                 pass
-            name = f"@{m.from_user.username}" if getattr(m.from_user, "username", None) else m.from_user.first_name
-            txt = f"{name}, чтобы писать в чат, необходимо подписаться на канал(ы): {', '.join(not_sub)}"
+            name = f"@{m.from_user.username}" if getattr(m.from_user, "username", None) else escape_md(m.from_user.first_name)
+            txt = f"{escape_md(name)}, чтобы писать в чат, необходимо подписаться на канал(ы): {' '.join([escape_md(ch) for ch in not_sub])}"
             kb = build_sub_kb(not_sub)
-            bot.send_message(m.chat.id, txt, reply_markup=kb)
+            safe_send(m.chat.id, txt, reply_markup=kb)
             return
         try:
             member = bot.get_chat_member(m.chat.id, m.from_user.id)
         except:
-            bot.reply_to(m, "⛔️ Недостаточно прав. Только админы могут использовать эту команду.")
+            safe_send(m.chat.id, escape_md("⛔️ Недостаточно прав. Только админы могут использовать эту команду."))
             return
         if getattr(member, "status", "") not in ADMIN_STATUSES:
-            bot.reply_to(m, "⛔️ Недостаточно прав. Только админы могут использовать эту команду.")
+            safe_send(m.chat.id, escape_md("⛔️ Недостаточно прав. Только админы могут использовать эту команду."))
             return
     else:
         if not user_subscribed(m.from_user.id, SUB_CHANNEL):
             return send_subscribe_request(m.chat.id, [SUB_CHANNEL])
-        return send_private_replace(m.from_user.id, INSTRUCTION_TEXT)
+        send_private_replace(m.from_user.id, INSTRUCTION_TEXT)
+        return
 
     cleanup_expired_for_chat(m.chat.id)
     subs = get_required_subs_for_chat(m.chat.id)
     if not subs:
-        bot.send_message(m.chat.id, "📋 Активных обязательных подписок нет.")
+        safe_send(m.chat.id, escape_md("📋 Активных обязательных подписок нет."))
         return
-    lines = [f"📋 Активные проверки ({len(subs)}):"]
+    lines = [f"*📋 Активные проверки* \`\({len(subs)}\\)`:"]
     for i, s in enumerate(subs, 1):
-        dt = fmt_dt_iso(s.get("expires"))
-        lines.append(f"`{i}.` {s['channel']} — до {dt}")
-        lines.append(f"`/unsetup {s['channel']}` — Убрать ОП")
+        ch_raw = s['channel']
+        ch = escape_md(ch_raw)
+        dt = escape_md(fmt_dt_iso(s.get("expires")))
+        lines.append(f"`{i}.` *{ch}* — до *{dt}*")
+        lines.append(f"`/unsetup {ch}` — Убрать ОП")
         lines.append("———————————————")
-    bot.send_message(m.chat.id, "\n".join(lines))
+    safe_send(m.chat.id, "\n".join(lines))
 
 @bot.message_handler(func=lambda m: m.chat.type in ("group", "supergroup"))
 def group_message_handler(m):
@@ -396,13 +417,13 @@ def group_message_handler(m):
         ch = s["channel"]
         if not channel_exists(ch):
             try:
-                bot.send_message(m.chat.id, f"⛔️ Канал {ch} не найден. Уберите или исправьте ОП через `/unsetup {ch}`")
+                safe_send(m.chat.id, escape_md(f"⛔️ Канал {ch} не найден. Уберите или исправьте ОП через `/unsetup {ch}`"))
             except:
                 pass
             continue
         if not bot_is_admin_in(ch):
             try:
-                bot.send_message(m.chat.id, f"⛔️ Бот не администратор в канале {ch}. Добавьте бота в админы канала.")
+                safe_send(m.chat.id, escape_md(f"⛔️ Бот не администратор в канале {ch}. Добавьте бота в админы канала."))
             except:
                 pass
             continue
@@ -415,10 +436,10 @@ def group_message_handler(m):
             bot.delete_message(m.chat.id, m.message_id)
         except:
             pass
-        name = f"@{m.from_user.username}" if getattr(m.from_user, "username", None) else m.from_user.first_name
-        txt = f"{name}, чтобы писать в чат, необходимо подписаться на канал(ы): {', '.join(not_sub)}"
+        name = f"@{m.from_user.username}" if getattr(m.from_user, "username", None) else escape_md(m.from_user.first_name)
+        txt = f"{escape_md(name)}, чтобы писать в чат, необходимо подписаться на канал(ы): {' '.join([escape_md(ch) for ch in not_sub])}"
         kb = build_sub_kb(not_sub)
-        bot.send_message(m.chat.id, txt, reply_markup=kb)
+        safe_send(m.chat.id, txt, reply_markup=kb)
         return
     # пользователь подписан на все требуемые каналы — сообщение остаётся
 
@@ -433,17 +454,11 @@ def webhook():
 def index():
     return "ok", 200
 
-def run_poll():
-    bot.remove_webhook()
-    bot.polling(none_stop=True)
-
 if __name__ == "__main__":
-    init_db()
-    mode = os.getenv("MODE", "poll")
-    if mode == "webhook":
-        WEBHOOK_HOST = os.getenv("WEBHOOK_HOST", "")
-        WEBHOOK_PORT = int(os.getenv("PORT", "8000"))
+    # only webhook mode
+    WEBHOOK_HOST = os.getenv("WEBHOOK_HOST", "")
+    WEBHOOK_PORT = int(os.getenv("PORT", "8000"))
+    bot.remove_webhook()
+    if WEBHOOK_HOST:
         bot.set_webhook(url=f"{WEBHOOK_HOST.rstrip('/')}/{TOKEN}")
-        app.run(host="0.0.0.0", port=WEBHOOK_PORT)
-    else:
-        run_poll()
+    app.run(host="0.0.0.0", port=WEBHOOK_PORT)
