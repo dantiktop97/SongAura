@@ -9,7 +9,7 @@ from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 TOKEN = os.getenv("PLAY")
 SUB_CHANNEL = os.getenv("SUB_CHANNEL", "@vzref2")
 DB_PATH = os.getenv("DB_PATH", "data.db")
-ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))         # admin for admin-menu (secret in render)
+ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))         # admin for admin-menu
 REPORT_CHANNEL = int(os.getenv("CHANNEL", "0"))    # channel id for reports
 ADMIN_STATUSES = ("administrator", "creator")
 
@@ -162,6 +162,7 @@ def send_private_replace(chat_id, text, reply_markup=None):
     return m
 
 SUB_PROMPT_TEXT = "Чтобы пользоваться ботом, нужно подписаться на канал:"
+
 def send_subscribe_request(user_id, channels=None, reply_in_chat=None):
     chs = channels or [SUB_CHANNEL]
     kb = build_sub_kb(chs)
@@ -173,6 +174,7 @@ def send_subscribe_request(user_id, channels=None, reply_in_chat=None):
             pass
     return send_private_replace(user_id, SUB_PROMPT_TEXT, reply_markup=kb)
 
+# --- text templates (с жирным текстом в ключевых местах)
 INSTRUCTION_TEXT = (
     "📘 **Инструкция по настройке:**\n\n"
     "1️⃣ Добавь меня в группу/чат и сделай админом.\n\n"
@@ -181,20 +183,19 @@ INSTRUCTION_TEXT = (
     "⏱ Время можно указывать так: `30s`, `15m`, `12h`, `7d`.\n\n"
     "3️⃣ `/unsetup @канал` — убрать подписку.\n\n"
     "4️⃣ `/status` — список активных проверок.\n\n"
-    "ℹ️ Как это работает:\n"
+    "**ℹ️ Как это работает:**\n"
     "• Пользователь пишет сообщение в чат.\n"
     "• Бот проверяет его подписку.\n"
     "• Если подписка есть — сообщение остаётся.\n"
     "• Если нет — сообщение удаляется, а пользователю отправляется кнопка 🔗 Подписаться.\n\n"
     "———————————————\n\n"
-    "💡 Используя этого бота, вы подтверждаете согласие с нашей политикой конфиденциальности."
+    "💡 **Используя этого бота, вы подтверждаете согласие с нашей политикой конфиденциальности.**"
 )
 
 # --- Admin menu utilities
 def send_admin_menu_button(chat_id):
     kb = InlineKeyboardMarkup()
     kb.add(InlineKeyboardButton("Меню админа", callback_data="admin_menu"))
-    # send non-empty bold title to avoid Telegram "text must be non-empty"
     bot.send_message(chat_id, "**Меню админа:**", reply_markup=kb)
 
 def build_admin_menu():
@@ -213,30 +214,27 @@ def cmd_start(m):
             "👋 Привет, я бот‑фильтр.\nЯ проверяю обязательные подписки и удаляю сообщения тех, кто не подписан.\n\n📌 Для настройки напиши мне в личку."
         )
         return
+    # only /start in private shows instruction and subscribe prompt
     if user_subscribed(m.from_user.id, SUB_CHANNEL):
         send_private_replace(m.from_user.id, INSTRUCTION_TEXT)
     else:
         send_subscribe_request(m.from_user.id, [SUB_CHANNEL])
-    # admin menu available only for ADMIN_ID and only after /start or any private message
     if ADMIN_ID and m.from_user.id == ADMIN_ID:
         send_admin_menu_button(m.from_user.id)
 
 @bot.message_handler(func=lambda m: m.chat.type == "private")
 def private_any(m):
+    # keep only saving user and admin button; do not show instruction on arbitrary messages
     save_user(m.from_user.id)
-    if user_subscribed(m.from_user.id, SUB_CHANNEL):
-        send_private_replace(m.from_user.id, INSTRUCTION_TEXT)
-    else:
-        send_subscribe_request(m.from_user.id, [SUB_CHANNEL])
     if ADMIN_ID and m.from_user.id == ADMIN_ID:
         send_admin_menu_button(m.from_user.id)
+    # do not send INSTRUCTION_TEXT or subscribe prompts here
 
 @bot.callback_query_handler(func=lambda c: c.data == "check_sub")
 def cb_check(c):
     user_id = c.from_user.id
     chat = c.message.chat if c.message else None
 
-    # pressed in a group/supergroup -> perform real group check and act in chat
     if chat and chat.type in ("group", "supergroup"):
         subs = get_required_subs_for_chat(chat.id)
         required = [s["channel"] for s in subs if channel_exists(s["channel"]) and bot_is_admin_in(s["channel"])]
@@ -271,7 +269,7 @@ def cb_check(c):
             pass
         return
 
-    # pressed in private -> behave as personal check
+    # private pressed: act as personal check (unchanged)
     if user_subscribed(user_id, SUB_CHANNEL):
         send_private_replace(user_id, INSTRUCTION_TEXT)
     else:
@@ -281,7 +279,7 @@ def cb_check(c):
     except:
         pass
 
-# --- Admin menu callbacks (accessible only via the admin button in private; /admin command intentionally removed)
+# --- Admin menu callbacks (accessible only via the admin button in private; /admin command removed)
 _broadcast_waiting = {}  # admin_id -> True
 
 @bot.callback_query_handler(func=lambda c: c.data == "admin_menu")
@@ -424,7 +422,7 @@ def cb_admin_top(c):
     except:
         pass
 
-# --- setup / unsetup / status handlers
+# --- setup / unsetup / status handlers (unchanged logic)
 @bot.message_handler(commands=["setup"])
 def cmd_setup(m):
     save_user(m.from_user.id)
