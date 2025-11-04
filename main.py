@@ -255,10 +255,10 @@ def cmd_setup(m):
         try:
             member = bot.get_chat_member(m.chat.id, m.from_user.id)
         except:
-            bot.reply_to(m, "*⛔️ Недостаточно прав. Только админы могут использовать эту команду.*")
+            bot.reply_to(m, "*⛔️ Недостаточно прав. Только админы могут использовать эту команду\\.*")
             return
         if getattr(member, "status", "") not in ADMIN_STATUSES:
-            bot.reply_to(m, "*⛔️ Недостаточно прав. Только админы могут использовать эту команду.*")
+            bot.reply_to(m, "*⛔️ Недостаточно прав. Только админы могут использовать эту команду\\.*")
             return
     else:
         if not user_subscribed(m.from_user.id, SUB_CHANNEL):
@@ -280,7 +280,7 @@ def cmd_setup(m):
         bot.reply_to(m, f"*⛔️ Канал {escape_md(ch)} не найден в Telegram*")
         return
     if not bot_is_admin_in(ch):
-        bot.reply_to(m, f"*⛔️ Бот не администратор в канале {escape_md(ch)}. Добавьте бота в админы канала.*")
+        bot.reply_to(m, f"*⛔️ Бот не администратор в канале {escape_md(ch)}. Добавьте бота в админы канала\\.*")
         return
     delta = parse_duration(dur)
     if not delta:
@@ -290,7 +290,7 @@ def cmd_setup(m):
     with db_conn() as c:
         cur = c.execute("SELECT 1 FROM required_subs WHERE chat_id=? AND channel=?", (m.chat.id, ch))
         if cur.fetchone():
-            bot.reply_to(m, f"*⚠️ Канал {escape_md(ch)} уже добавлен в обязательные подписки.*")
+            bot.reply_to(m, f"*⚠️ Канал {escape_md(ch)} уже добавлен в обязательные подписки\\.*")
             return
         c.execute("INSERT INTO required_subs(chat_id, channel, expires) VALUES(?,?,?)", (m.chat.id, ch, expires))
         c.commit()
@@ -316,10 +316,10 @@ def cmd_unsetup(m):
         try:
             member = bot.get_chat_member(m.chat.id, m.from_user.id)
         except:
-            bot.reply_to(m, "*⛔️ Недостаточно прав. Только админы могут использовать эту команду.*")
+            bot.reply_to(m, "*⛔️ Недостаточно прав. Только админы могут использовать эту команду\\.*")
             return
         if getattr(member, "status", "") not in ADMIN_STATUSES:
-            bot.reply_to(m, "*⛔️ Недостаточно прав. Только админы могут использовать эту команду.*")
+            bot.reply_to(m, "*⛔️ Недостаточно прав. Только админы могут использовать эту команду\\.*")
             return
     else:
         if not user_subscribed(m.from_user.id, SUB_CHANNEL):
@@ -338,7 +338,7 @@ def cmd_unsetup(m):
     with db_conn() as c:
         cur = c.execute("SELECT 1 FROM required_subs WHERE chat_id=? AND channel=?", (m.chat.id, ch))
         if not cur.fetchone():
-            bot.reply_to(m, f"*⛔️ Канал {escape_md(ch)} не добавлен в обязательные подписки для этого чата.*")
+            bot.reply_to(m, f"*⛔️ Канал {escape_md(ch)} не добавлен в обязательные подписки для этого чата\\.*")
             return
         c.execute("DELETE FROM required_subs WHERE chat_id=? AND channel=?", (m.chat.id, ch))
         c.commit()
@@ -365,10 +365,10 @@ def cmd_status(m):
         try:
             member = bot.get_chat_member(m.chat.id, m.from_user.id)
         except:
-            bot.reply_to(m, "*⛔️ Недостаточно прав. Только админы могут использовать эту команду.*")
+            bot.reply_to(m, "*⛔️ Недостаточно прав. Только админы могут использовать эту команду\\.*")
             return
         if getattr(member, "status", "") not in ADMIN_STATUSES:
-            bot.reply_to(m, "*⛔️ Недостаточно прав. Только админы могут использовать эту команду.*")
+            bot.reply_to(m, "*⛔️ Недостаточно прав. Только админы могут использовать эту команду\\.*")
             return
     else:
         if not user_subscribed(m.from_user.id, SUB_CHANNEL):
@@ -405,7 +405,7 @@ def group_message_handler(m):
             continue
         if not bot_is_admin_in(ch):
             try:
-                bot.send_message(m.chat.id, f"*⛔️ Бот не администратор в канале {escape_md(ch)}. Добавьте бота в админы канала.*")
+                bot.send_message(m.chat.id, f"*⛔️ Бот не администратор в канале {escape_md(ch)}. Добавьте бота в админы канала\\.*")
             except:
                 pass
             continue
