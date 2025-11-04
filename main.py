@@ -172,7 +172,7 @@ INSTRUCTION_TEXT = (
 def cmd_start(m):
     if m.chat.type in ("group", "supergroup"):
         bot.send_message(m.chat.id,
-            "*📌 Привет, я бот‑фильтр.*\n\n`/start` — команда выполнена", disable_web_page_preview=True
+            "*📌 Привет, я бот‑фильтр\\.*\n\n`/start` — команда выполнена", disable_web_page_preview=True
         )
         return
     if user_subscribed(m.from_user.id, SUB_CHANNEL):
