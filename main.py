@@ -1,31 +1,26 @@
-import os
-import re
-import json
-import threading
-import time
-import sqlite3
+import os, re, json, threading, time, sqlite3
 from datetime import datetime, timedelta
 from flask import Flask, request
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+from collections import defaultdict
 
-# -------- config --------
-TOKEN = os.getenv("PLAY", "")  # keep empty in repo
+TOKEN = os.getenv("PLAY", "")
 SUB_CHANNEL = os.getenv("SUB_CHANNEL", "@vzref2")
 DB_PATH = os.getenv("DB_PATH", "data.db")
 USERS_PATH = os.getenv("USERS_PATH", "users.json")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0") or 0)
 REPORT_CHANNEL = int(os.getenv("CHANNEL", "0") or 0)
 ADMIN_STATUSES = ("administrator", "creator")
+WEBHOOK_HOST = "https://songaura.onrender.com"
+PORT = int(os.getenv("PORT", "8000") or 8000)
 
 bot = telebot.TeleBot(TOKEN, parse_mode="Markdown")
 app = Flask(__name__)
 
-# runtime state
 _last_private_message = {}
 _broadcast_waiting = {}
 
-# -------- sqlite helpers (required_subs, chat_meta) --------
 def db_conn():
     return sqlite3.connect(DB_PATH, check_same_thread=False)
 
@@ -59,13 +54,12 @@ def fmt_dt_iso(s):
     except:
         return s or "∞"
 
-# -------- users.json helpers --------
 def load_users():
     try:
         with open(USERS_PATH, "r", encoding="utf-8") as f:
             data = json.load(f)
             return set(int(x) for x in data)
-    except Exception:
+    except:
         return set()
 
 def save_users(users_set):
@@ -81,9 +75,7 @@ def save_user_json(user_id):
     if uid not in users:
         users.add(uid)
         save_users(users)
-        print(f"✅ Добавлен пользователь: {uid}")
 
-# -------- validation / utils --------
 def parse_duration(spec):
     if not spec:
         return None
@@ -109,7 +101,7 @@ def channel_exists(channel):
     try:
         bot.get_chat(channel)
         return True
-    except Exception:
+    except:
         return False
 
 def bot_is_admin_in(channel):
@@ -117,17 +109,16 @@ def bot_is_admin_in(channel):
         me = bot.get_me()
         m = bot.get_chat_member(channel, me.id)
         return getattr(m, "status", "") in ADMIN_STATUSES
-    except Exception:
+    except:
         return False
 
 def user_subscribed(user_id, channel):
     try:
         m = bot.get_chat_member(channel, user_id)
         return getattr(m, "status", "") not in ("left", "kicked")
-    except Exception:
+    except:
         return False
 
-# -------- sqlite storage helpers --------
 def save_chat_meta(chat, user_id=None):
     try:
         with db_conn() as c:
@@ -160,7 +151,6 @@ def cleanup_expired_for_chat(chat_id):
         c.execute("DELETE FROM required_subs WHERE chat_id=? AND expires IS NOT NULL AND expires <= ?", (chat_id, now))
         c.commit()
 
-# -------- keyboards / UI --------
 def build_sub_kb(channels):
     kb = InlineKeyboardMarkup()
     for ch in channels:
@@ -189,7 +179,6 @@ def send_private_replace(chat_id, text, reply_markup=None):
     _last_private_message[chat_id] = m.message_id
     return m
 
-# -------- texts --------
 INSTRUCTION_TEXT = (
     "📘 *Инструкция по настройке:*\n\n"
     "1️⃣ *Добавь меня в группу/чат и сделай админом.*\n\n"
@@ -209,7 +198,6 @@ INSTRUCTION_TEXT = (
 
 SUB_PROMPT_TEXT = "*Чтобы пользоваться ботом, нужно подписаться на канал:*"
 
-# -------- handlers --------
 @bot.message_handler(commands=["start"])
 def cmd_start(m):
     save_user_json(m.from_user.id)
@@ -217,12 +205,10 @@ def cmd_start(m):
         bot.send_message(m.chat.id,
             "👋 Привет, я бот‑фильтр.\nЯ проверяю обязательные подписки и удаляю сообщения тех, кто не подписан.\n\n📌 Для настройки напиши мне в личку.")
         return
-
     if user_subscribed(m.from_user.id, SUB_CHANNEL):
         send_private_replace(m.from_user.id, INSTRUCTION_TEXT)
     else:
         send_private_replace(m.from_user.id, SUB_PROMPT_TEXT, reply_markup=build_sub_kb([SUB_CHANNEL]))
-
     if ADMIN_ID and m.from_user.id == ADMIN_ID:
         kb = InlineKeyboardMarkup()
         kb.add(InlineKeyboardButton("Меню админа", callback_data="admin_menu"))
@@ -244,7 +230,6 @@ def private_any(m):
 def cb_check(c):
     user_id = c.from_user.id
     chat = c.message.chat if c.message else None
-
     if chat and chat.type in ("group", "supergroup"):
         subs = get_required_subs_for_chat(chat.id)
         required = [s["channel"] for s in subs if channel_exists(s["channel"]) and bot_is_admin_in(s["channel"])]
@@ -268,7 +253,6 @@ def cb_check(c):
         try: bot.answer_callback_query(c.id)
         except: pass
         return
-
     if user_subscribed(user_id, SUB_CHANNEL):
         send_private_replace(user_id, INSTRUCTION_TEXT)
     else:
@@ -278,7 +262,6 @@ def cb_check(c):
     except:
         pass
 
-# -------- admin callbacks & broadcast --------
 @bot.callback_query_handler(func=lambda c: c.data == "admin_menu")
 def cb_admin_menu(c):
     if c.from_user.id != ADMIN_ID:
@@ -318,12 +301,10 @@ def cb_admin_users(c):
         try: bot.answer_callback_query(c.id, "Доступ запрещён", show_alert=True)
         except: pass
         return
-
     users = load_users()
     total = len(users)
     active = []
     inactive = []
-
     for uid in sorted(users):
         try:
             bot.get_chat(uid)
@@ -341,7 +322,6 @@ def cb_admin_users(c):
                 inactive.append(uid)
         except:
             inactive.append(uid)
-
     lines = [f"👥 Всего в базе: {total}", f"✅ Активных (получат рассылку): {len(active)}", f"🚫 Недоступных: {len(inactive)}", ""]
     if active:
         lines.append("*Активные:*")
@@ -356,7 +336,6 @@ def cb_admin_users(c):
     try: bot.answer_callback_query(c.id)
     except: pass
 
-# -------- debug/admin helpers --------
 @bot.message_handler(commands=["dump_users"])
 def dump_users(m):
     if m.from_user.id != ADMIN_ID:
@@ -379,20 +358,16 @@ def force_add(m):
     else:
         bot.send_message(m.chat.id, "Использование: /force_add 123456789")
 
-# -------- mass send (background) --------
 def mass_send(text):
     users = load_users()
     with db_conn() as c:
         chats = [row[0] for row in c.execute("SELECT chat_id FROM chat_meta").fetchall()]
-
     total = len(users)
     sent = 0
     deleted = 0
     sent_chats = 0
     failed_chats = 0
-
     print(f"📤 mass_send started: {total} users, {len(chats)} chats")
-
     for uid in list(users):
         try:
             bot.send_message(uid, text, parse_mode="Markdown", disable_web_page_preview=True)
@@ -414,7 +389,6 @@ def mass_send(text):
                 print(f"⚠️ Ошибка при отправке {uid}: {e}")
         except Exception as e:
             print(f"⚠️ Неизвестная ошибка при отправке {uid}: {e}")
-
     for cid in chats:
         try:
             bot.send_message(cid, text, parse_mode="Markdown", disable_web_page_preview=True)
@@ -423,7 +397,6 @@ def mass_send(text):
         except Exception as e:
             failed_chats += 1
             print(f"⚠️ Ошибка при отправке в чат {cid}: {e}")
-
     report_text = (
         f"✅ Рассылка завершена\n"
         f"📬 Отправлено ЛС: {sent}\n"
@@ -438,10 +411,9 @@ def mass_send(text):
             bot.send_message(ADMIN_ID, report_text)
         else:
             print(report_text)
-    except Exception:
+    except:
         print("Failed to send broadcast report to admin.")
 
-# -------- admin stats / top callbacks --------
 @bot.callback_query_handler(func=lambda c: c.data == "admin_stats")
 def cb_admin_stats(c):
     if c.from_user.id != ADMIN_ID:
@@ -480,7 +452,6 @@ def cb_admin_top(c):
         try: bot.answer_callback_query(c.id)
         except: pass
         return
-    from collections import defaultdict
     grouped = defaultdict(list)
     for r in rows:
         grouped[r[0]].append(r)
@@ -508,7 +479,6 @@ def cb_admin_top(c):
     try: bot.answer_callback_query(c.id)
     except: pass
 
-# -------- setup / unsetup / status / group handler --------
 @bot.message_handler(commands=["setup"])
 def cmd_setup(m):
     save_user_json(m.from_user.id)
@@ -647,7 +617,6 @@ def group_message_handler(m):
         bot.send_message(m.chat.id, txt, reply_markup=kb)
         return
 
-# -------- webhook / run --------
 @app.route(f"/{TOKEN}", methods=["POST"])
 def webhook():
     json_str = request.get_data().decode("utf-8")
@@ -667,8 +636,8 @@ if __name__ == "__main__":
     init_db()
     mode = os.getenv("MODE", "poll")
     if mode == "webhook":
-        WEBHOOK_HOST = os.getenv("WEBHOOK_HOST", "")
-        WEBHOOK_PORT = int(os.getenv("PORT", "8000"))
+        WEBHOOK_HOST = os.getenv("WEBHOOK_HOST", WEBHOOK_HOST)
+        WEBHOOK_PORT = int(os.getenv("PORT", str(PORT)))
         if WEBHOOK_HOST:
             bot.set_webhook(url=f"{WEBHOOK_HOST.rstrip('/')}/{TOKEN}")
         app.run(host="0.0.0.0", port=WEBHOOK_PORT)
