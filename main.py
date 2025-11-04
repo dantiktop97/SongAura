@@ -1,5 +1,6 @@
 import os
 import re
+import json
 import sqlite3
 import threading
 import time
@@ -9,11 +10,12 @@ import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 # -------- config --------
-TOKEN = os.getenv("PLAY")
+TOKEN = os.getenv("PLAY")  # keep empty in repo / CI
 SUB_CHANNEL = os.getenv("SUB_CHANNEL", "@vzref2")
-DB_PATH = os.getenv("DB_PATH", "data.db")
-ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
-REPORT_CHANNEL = int(os.getenv("CHANNEL", "0"))
+DB_PATH = os.getenv("DB_PATH", "data.db")      # sqlite for required_subs and chat_meta
+USERS_PATH = os.getenv("USERS_PATH", "users.json")  # JSON file for user list
+ADMIN_ID = int(os.getenv("ADMIN_ID", "0") or 0)
+REPORT_CHANNEL = int(os.getenv("CHANNEL", "0") or 0)
 ADMIN_STATUSES = ("administrator", "creator")
 
 bot = telebot.TeleBot(TOKEN, parse_mode="Markdown")
@@ -23,7 +25,7 @@ app = Flask(__name__)
 _last_private_message = {}   # chat_id -> message_id
 _broadcast_waiting = {}      # admin_id -> True
 
-# -------- db helpers --------
+# -------- db (sqlite) helpers --------
 def db_conn():
     return sqlite3.connect(DB_PATH, check_same_thread=False)
 
@@ -46,12 +48,6 @@ def init_db():
                 added_by INTEGER
             )
         """)
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                user_id INTEGER PRIMARY KEY,
-                last_active TEXT
-            )
-        """)
         c.commit()
 
 def now_iso():
@@ -62,6 +58,28 @@ def fmt_dt_iso(s):
         return datetime.fromisoformat(s).strftime("%Y-%m-%d %H:%M")
     except:
         return s or "∞"
+
+# -------- users.json helpers --------
+def load_users():
+    try:
+        with open(USERS_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return set(int(x) for x in data)
+    except Exception:
+        return set()
+
+def save_users(users_set):
+    try:
+        with open(USERS_PATH, "w", encoding="utf-8") as f:
+            json.dump(sorted(list(users_set)), f)
+    except Exception as e:
+        print("Failed to save users.json:", e)
+
+def save_user_json(user_id):
+    users = load_users()
+    if int(user_id) not in users:
+        users.add(int(user_id))
+        save_users(users)
 
 # -------- validation / utils --------
 def parse_duration(spec):
@@ -89,7 +107,7 @@ def channel_exists(channel):
     try:
         bot.get_chat(channel)
         return True
-    except:
+    except Exception:
         return False
 
 def bot_is_admin_in(channel):
@@ -97,22 +115,17 @@ def bot_is_admin_in(channel):
         me = bot.get_me()
         m = bot.get_chat_member(channel, me.id)
         return getattr(m, "status", "") in ADMIN_STATUSES
-    except:
+    except Exception:
         return False
 
 def user_subscribed(user_id, channel):
     try:
         m = bot.get_chat_member(channel, user_id)
         return getattr(m, "status", "") not in ("left", "kicked")
-    except:
+    except Exception:
         return False
 
-# -------- storage helpers --------
-def save_user(user_id):
-    with db_conn() as c:
-        c.execute("INSERT OR REPLACE INTO users(user_id, last_active) VALUES(?,?)", (user_id, now_iso()))
-        c.commit()
-
+# -------- storage helpers (sqlite) --------
 def save_chat_meta(chat, user_id=None):
     try:
         with db_conn() as c:
@@ -162,7 +175,7 @@ def build_admin_menu():
     return kb
 
 def send_private_replace(chat_id, text, reply_markup=None):
-    save_user(chat_id)
+    save_user_json(chat_id)
     old = _last_private_message.get(chat_id)
     if old:
         try:
@@ -173,30 +186,30 @@ def send_private_replace(chat_id, text, reply_markup=None):
     _last_private_message[chat_id] = m.message_id
     return m
 
-# -------- texts (bold emphasis where useful) --------
+# -------- texts --------
 INSTRUCTION_TEXT = (
-    "📘 **Инструкция по настройке:**\n\n"
-    "1️⃣ **Добавь меня в группу/чат и сделай админом.**\n\n"
+    "📘 *Инструкция по настройке:*\n\n"
+    "1️⃣ *Добавь меня в группу/чат и сделай админом.*\n\n"
     "2️⃣ В группе/чате используй:\n"
     "`/setup @канал 24h` — добавить обязательную подписку.\n"
-    "⏱ **Время:** `30s`, `15m`, `12h`, `7d`.\n\n"
-    "3️⃣ **`/unsetup @канал`** — убрать подписку.\n\n"
-    "4️⃣ **`/status`** — список активных проверок.\n\n"
-    "**ℹ️ Как это работает:**\n"
+    "⏱ *Время:* `30s`, `15m`, `12h`, `7d`.\n\n"
+    "3️⃣ */unsetup @канал* — убрать подписку.\n\n"
+    "4️⃣ */status* — список активных проверок.\n\n"
+    "ℹ️ *Как это работает:*\n"
     "• Пользователь пишет сообщение в чат.\n"
     "• Бот проверяет его подписку.\n"
     "• Если подписка есть — сообщение остаётся.\n"
     "• Если нет — сообщение удаляется, а пользователю отправляется кнопка 🔗 Подписаться.\n\n"
     "———————————————\n\n"
-    "💡 **Используя бота, вы подтверждаете согласие с политикой конфиденциальности.**"
+    "💡 *Используя бота, вы подтверждаете согласие с политикой конфиденциальности.*"
 )
 
-SUB_PROMPT_TEXT = "**Чтобы пользоваться ботом, нужно подписаться на канал:**"
+SUB_PROMPT_TEXT = "*Чтобы пользоваться ботом, нужно подписаться на канал:*"
 
 # -------- handlers --------
 @bot.message_handler(commands=["start"])
 def cmd_start(m):
-    save_user(m.from_user.id)
+    save_user_json(m.from_user.id)
     if m.chat.type in ("group", "supergroup"):
         bot.send_message(m.chat.id,
             "👋 Привет, я бот‑фильтр.\nЯ проверяю обязательные подписки и удаляю сообщения тех, кто не подписан.\n\n📌 Для настройки напиши мне в личку.")
@@ -223,7 +236,7 @@ def cmd_admin(m):
 
 @bot.message_handler(func=lambda m: m.chat.type == "private")
 def private_any(m):
-    save_user(m.from_user.id)
+    save_user_json(m.from_user.id)
     return
 
 @bot.callback_query_handler(func=lambda c: c.data == "check_sub")
@@ -231,7 +244,7 @@ def cb_check(c):
     user_id = c.from_user.id
     chat = c.message.chat if c.message else None
 
-    # callback pressed from group message -> group-level subscription check
+    # group-level check
     if chat and chat.type in ("group", "supergroup"):
         subs = get_required_subs_for_chat(chat.id)
         required = [s["channel"] for s in subs if channel_exists(s["channel"]) and bot_is_admin_in(s["channel"])]
@@ -266,7 +279,7 @@ def cb_check(c):
             pass
         return
 
-    # pressed in private: personal check
+    # private check
     if user_subscribed(user_id, SUB_CHANNEL):
         send_private_replace(user_id, INSTRUCTION_TEXT)
     else:
@@ -322,13 +335,19 @@ def handle_broadcast_text(m):
 
 # -------- mass send (background) --------
 def mass_send(text):
+    users = load_users()
     with db_conn() as c:
-        users = set(uid for (uid,) in c.execute("SELECT user_id FROM users").fetchall())
+        chats = [row[0] for row in c.execute("SELECT chat_id FROM chat_meta").fetchall()]
 
     total = len(users)
     sent = 0
     deleted = 0
+    sent_chats = 0
+    failed_chats = 0
 
+    print(f"📤 mass_send started: {total} users, {len(chats)} chats")
+
+    # send to users (personal chats)
     for uid in list(users):
         try:
             bot.send_message(uid, text, parse_mode="Markdown", disable_web_page_preview=True)
@@ -342,23 +361,40 @@ def mass_send(text):
                 "chat not found",
                 "Forbidden"
             ]):
-                with db_conn() as c:
-                    c.execute("DELETE FROM users WHERE user_id=?", (uid,))
-                    c.commit()
+                users.remove(uid)
+                save_users(users)
                 deleted += 1
             else:
                 print(f"⚠️ Ошибка при отправке {uid}: {e}")
         except Exception as e:
             print(f"⚠️ Неизвестная ошибка при отправке {uid}: {e}")
 
+    # send to chats (groups/supergroups)
+    for cid in chats:
+        try:
+            bot.send_message(cid, text, parse_mode="Markdown", disable_web_page_preview=True)
+            sent_chats += 1
+            time.sleep(0.05)
+        except Exception as e:
+            failed_chats += 1
+            print(f"⚠️ Ошибка при отправке в чат {cid}: {e}")
+
     report_text = (
         f"✅ Рассылка завершена\n"
-        f"📬 Отправлено: {sent}\n"
-        f"🗑 Удалено неактивных: {deleted}\n"
-        f"👥 Было всего: {total}\n"
-        f"📉 Сейчас в базе: {total - deleted}"
+        f"📬 Отправлено ЛС: {sent}\n"
+        f"🗑 Удалено неактивных из ЛС: {deleted}\n"
+        f"👥 Было всего в users.json: {total}\n"
+        f"📉 Сейчас в users.json: {len(users)}\n"
+        f"📨 Отправлено в чаты: {sent_chats}\n"
+        f"❗️Не доставлено в чаты: {failed_chats}"
     )
-    bot.send_message(ADMIN_ID, report_text)
+    try:
+        if ADMIN_ID:
+            bot.send_message(ADMIN_ID, report_text)
+        else:
+            print(report_text)
+    except Exception:
+        print("Failed to send broadcast report to admin.")
 
 # -------- admin stats / top callbacks --------
 @bot.callback_query_handler(func=lambda c: c.data == "admin_stats")
@@ -372,14 +408,14 @@ def cb_admin_stats(c):
     with db_conn() as conn:
         chats_count = conn.execute("SELECT COUNT(DISTINCT chat_id) FROM required_subs").fetchone()[0]
         total_ops = conn.execute("SELECT COUNT(*) FROM required_subs").fetchone()[0]
-        users_count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
-        last_active = conn.execute("SELECT last_active FROM users ORDER BY last_active DESC LIMIT 1").fetchone()
-        last_active = last_active[0] if last_active else "—"
+        users_count = len(load_users())
+        last_active = conn.execute("SELECT last_active FROM users ORDER BY last_active DESC LIMIT 1").fetchone() if False else None
+        last_active = "—"
     lines = [
         f"📊 Статистика:",
         f"• Чатов с активными ОП: {chats_count}",
         f"• Всего ОП: {total_ops}",
-        f"• Уникальных пользователей в ЛС: {users_count}",
+        f"• Уникальных пользователей в users.json: {users_count}",
         f"• Последняя активность: {last_active}"
     ]
     bot.send_message(c.from_user.id, "\n".join(lines), disable_web_page_preview=True)
@@ -450,7 +486,7 @@ def cb_admin_top(c):
 # -------- setup / unsetup / status / group handler --------
 @bot.message_handler(commands=["setup"])
 def cmd_setup(m):
-    save_user(m.from_user.id)
+    save_user_json(m.from_user.id)
     if m.chat.type not in ("group", "supergroup"):
         return
     cleanup_expired_for_chat(m.chat.id)
@@ -503,11 +539,11 @@ def cmd_setup(m):
             chat_link = f"https://t.me/c/{str(m.chat.id)[4:]}" if str(m.chat.id).startswith("-100") else f"https://t.me/{m.chat.id}"
             who = f"[{m.from_user.first_name}](tg://user?id={m.from_user.id})"
             report = (
-                "📥 **Добавлена ОП**\n\n"
+                "📥 *Добавлена ОП*\n\n"
                 f"👤 {who}\n"
                 f"💬 [{m.chat.title}]({chat_link})\n"
                 f"📎 {ch}\n"
-                f"⏱ **{hours}ч** до {dt2.strftime('%Y-%m-%d %H:%M')}"
+                f"⏱ *{hours}ч* до {dt2.strftime('%Y-%m-%d %H:%M')}"
             )
             bot.send_message(REPORT_CHANNEL, report, disable_web_page_preview=True)
     except:
@@ -515,7 +551,7 @@ def cmd_setup(m):
 
 @bot.message_handler(commands=["unsetup"])
 def cmd_unsetup(m):
-    save_user(m.from_user.id)
+    save_user_json(m.from_user.id)
     if m.chat.type not in ("group", "supergroup"):
         return
     try:
@@ -546,7 +582,7 @@ def cmd_unsetup(m):
 
 @bot.message_handler(commands=["status"])
 def cmd_status(m):
-    save_user(m.from_user.id)
+    save_user_json(m.from_user.id)
     if m.chat.type not in ("group", "supergroup"):
         return
     cleanup_expired_for_chat(m.chat.id)
@@ -564,7 +600,7 @@ def cmd_status(m):
 
 @bot.message_handler(func=lambda m: m.chat.type in ("group", "supergroup"))
 def group_message_handler(m):
-    save_user(m.from_user.id)
+    save_user_json(m.from_user.id)
     save_chat_meta(m.chat, m.from_user.id)
     cleanup_expired_for_chat(m.chat.id)
     subs = get_required_subs_for_chat(m.chat.id)
