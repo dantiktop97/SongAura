@@ -1,19 +1,19 @@
 import os
 import re
 import json
-import sqlite3
 import threading
 import time
+import sqlite3
 from datetime import datetime, timedelta
 from flask import Flask, request
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 # -------- config --------
-TOKEN = os.getenv("PLAY")  # keep empty in repo / CI
+TOKEN = os.getenv("PLAY", "")  # keep empty in repo
 SUB_CHANNEL = os.getenv("SUB_CHANNEL", "@vzref2")
-DB_PATH = os.getenv("DB_PATH", "data.db")      # sqlite for required_subs and chat_meta
-USERS_PATH = os.getenv("USERS_PATH", "users.json")  # JSON file for user list
+DB_PATH = os.getenv("DB_PATH", "data.db")
+USERS_PATH = os.getenv("USERS_PATH", "users.json")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0") or 0)
 REPORT_CHANNEL = int(os.getenv("CHANNEL", "0") or 0)
 ADMIN_STATUSES = ("administrator", "creator")
@@ -22,10 +22,10 @@ bot = telebot.TeleBot(TOKEN, parse_mode="Markdown")
 app = Flask(__name__)
 
 # runtime state
-_last_private_message = {}   # chat_id -> message_id
-_broadcast_waiting = {}      # admin_id -> True
+_last_private_message = {}
+_broadcast_waiting = {}
 
-# -------- db (sqlite) helpers --------
+# -------- sqlite helpers (required_subs, chat_meta) --------
 def db_conn():
     return sqlite3.connect(DB_PATH, check_same_thread=False)
 
@@ -76,10 +76,12 @@ def save_users(users_set):
         print("Failed to save users.json:", e)
 
 def save_user_json(user_id):
+    uid = int(user_id)
     users = load_users()
-    if int(user_id) not in users:
-        users.add(int(user_id))
+    if uid not in users:
+        users.add(uid)
         save_users(users)
+        print(f"✅ Добавлен пользователь: {uid}")
 
 # -------- validation / utils --------
 def parse_duration(spec):
@@ -125,7 +127,7 @@ def user_subscribed(user_id, channel):
     except Exception:
         return False
 
-# -------- storage helpers (sqlite) --------
+# -------- sqlite storage helpers --------
 def save_chat_meta(chat, user_id=None):
     try:
         with db_conn() as c:
@@ -172,6 +174,7 @@ def build_admin_menu():
     kb.add(InlineKeyboardButton("📢 Рассылка всем пользователям", callback_data="admin_broadcast"))
     kb.add(InlineKeyboardButton("📊 Статистика", callback_data="admin_stats"))
     kb.add(InlineKeyboardButton("🏆 Топ‑10 по ОП", callback_data="admin_top"))
+    kb.add(InlineKeyboardButton("👥 Список пользователей", callback_data="admin_users"))
     return kb
 
 def send_private_replace(chat_id, text, reply_markup=None):
@@ -227,10 +230,8 @@ def cmd_start(m):
 
 @bot.message_handler(commands=["admin"])
 def cmd_admin(m):
-    if m.chat.type != "private":
-        return
-    if m.from_user.id != ADMIN_ID:
-        return
+    if m.chat.type != "private": return
+    if m.from_user.id != ADMIN_ID: return
     kb = build_admin_menu()
     bot.send_message(m.chat.id, "Меню админа:", reply_markup=kb)
 
@@ -244,42 +245,30 @@ def cb_check(c):
     user_id = c.from_user.id
     chat = c.message.chat if c.message else None
 
-    # group-level check
     if chat and chat.type in ("group", "supergroup"):
         subs = get_required_subs_for_chat(chat.id)
         required = [s["channel"] for s in subs if channel_exists(s["channel"]) and bot_is_admin_in(s["channel"])]
         if not required:
-            try:
-                bot.answer_callback_query(c.id, "Нет настроенных проверок", show_alert=True)
-            except:
-                pass
+            try: bot.answer_callback_query(c.id, "Нет настроенных проверок", show_alert=True)
+            except: pass
             return
         not_sub = [ch for ch in required if not user_subscribed(user_id, ch)]
         if not not_sub:
-            try:
-                bot.delete_message(chat.id, c.message.message_id)
-            except:
-                pass
-            try:
-                bot.answer_callback_query(c.id, "✅ Подписка проверена", show_alert=False)
-            except:
-                pass
+            try: bot.delete_message(chat.id, c.message.message_id)
+            except: pass
+            try: bot.answer_callback_query(c.id, "✅ Подписка проверена", show_alert=False)
+            except: pass
             return
         name = f"@{c.from_user.username}" if getattr(c.from_user, "username", None) else c.from_user.first_name
         txt = f"{name}, чтобы писать в чат, необходимо подписаться на канал(ы): {', '.join(not_sub)}"
         kb = build_sub_kb(not_sub)
-        try:
-            bot.delete_message(chat.id, c.message.message_id)
-        except:
-            pass
+        try: bot.delete_message(chat.id, c.message.message_id)
+        except: pass
         bot.send_message(chat.id, txt, reply_markup=kb)
-        try:
-            bot.answer_callback_query(c.id)
-        except:
-            pass
+        try: bot.answer_callback_query(c.id)
+        except: pass
         return
 
-    # private check
     if user_subscribed(user_id, SUB_CHANNEL):
         send_private_replace(user_id, INSTRUCTION_TEXT)
     else:
@@ -293,45 +282,102 @@ def cb_check(c):
 @bot.callback_query_handler(func=lambda c: c.data == "admin_menu")
 def cb_admin_menu(c):
     if c.from_user.id != ADMIN_ID:
-        try:
-            bot.answer_callback_query(c.id, "Доступ запрещён", show_alert=True)
-        except:
-            pass
+        try: bot.answer_callback_query(c.id, "Доступ запрещён", show_alert=True)
+        except: pass
         return
     kb = build_admin_menu()
     bot.send_message(c.from_user.id, "Меню админа:", reply_markup=kb)
-    try:
-        bot.answer_callback_query(c.id)
-    except:
-        pass
+    try: bot.answer_callback_query(c.id)
+    except: pass
 
 @bot.callback_query_handler(func=lambda c: c.data == "admin_broadcast")
 def cb_admin_broadcast(c):
     if c.from_user.id != ADMIN_ID:
-        try:
-            bot.answer_callback_query(c.id, "Доступ запрещён", show_alert=True)
-        except:
-            pass
+        try: bot.answer_callback_query(c.id, "Доступ запрещён", show_alert=True)
+        except: pass
         return
     bot.send_message(c.from_user.id, "✏️ Введите текст рассылки.\nТекст будет отправлен всем пользователям и всем группам из базы.")
     _broadcast_waiting[c.from_user.id] = True
-    try:
-        bot.answer_callback_query(c.id)
-    except:
-        pass
+    try: bot.answer_callback_query(c.id)
+    except: pass
 
 @bot.message_handler(func=lambda m: _broadcast_waiting.get(m.from_user.id, False) and m.chat.type == "private")
 def handle_broadcast_text(m):
-    if m.from_user.id != ADMIN_ID:
-        return
+    if m.from_user.id != ADMIN_ID: return
     text = (m.text or "").strip()
     _broadcast_waiting.pop(m.from_user.id, None)
     if not text:
         bot.send_message(m.chat.id, "⛔️ Текст пустой. Рассылка отменена.")
         return
-
     threading.Thread(target=mass_send, args=(text,), daemon=True).start()
     bot.send_message(m.chat.id, "📤 Рассылка запущена.")
+
+@bot.callback_query_handler(func=lambda c: c.data == "admin_users")
+def cb_admin_users(c):
+    if c.from_user.id != ADMIN_ID:
+        try: bot.answer_callback_query(c.id, "Доступ запрещён", show_alert=True)
+        except: pass
+        return
+
+    users = load_users()
+    total = len(users)
+    active = []
+    inactive = []
+
+    for uid in sorted(users):
+        try:
+            bot.get_chat(uid)
+            active.append(uid)
+        except telebot.apihelper.ApiTelegramException as e:
+            err = str(e)
+            if any(x in err for x in [
+                "bot was blocked by the user",
+                "user is deactivated",
+                "chat not found",
+                "Forbidden"
+            ]):
+                inactive.append(uid)
+            else:
+                inactive.append(uid)
+        except:
+            inactive.append(uid)
+
+    lines = [f"👥 Всего в базе: {total}", f"✅ Активных (получат рассылку): {len(active)}", f"🚫 Недоступных: {len(inactive)}", ""]
+    if active:
+        lines.append("*Активные:*")
+        for uid in active:
+            lines.append(f"• `{uid}`")
+    if inactive:
+        lines.append("")
+        lines.append("*Недоступные (рекомендовано удалить):*")
+        for uid in inactive:
+            lines.append(f"• `{uid}`")
+    bot.send_message(c.from_user.id, "\n".join(lines), parse_mode="Markdown")
+    try: bot.answer_callback_query(c.id)
+    except: pass
+
+# -------- debug/admin helpers --------
+@bot.message_handler(commands=["dump_users"])
+def dump_users(m):
+    if m.from_user.id != ADMIN_ID:
+        return
+    users = load_users()
+    txt = f"👥 В базе {len(users)} пользователей:\n" + "\n".join([str(u) for u in sorted(users)])
+    bot.send_message(m.chat.id, txt)
+
+@bot.message_handler(commands=["force_add"])
+def force_add(m):
+    if m.from_user.id != ADMIN_ID:
+        return
+    args = m.text.split()
+    if len(args) == 2 and args[1].isdigit():
+        uid = int(args[1])
+        users = load_users()
+        users.add(uid)
+        save_users(users)
+        bot.send_message(m.chat.id, f"✅ Добавлен вручную: {uid}")
+    else:
+        bot.send_message(m.chat.id, "Использование: /force_add 123456789")
 
 # -------- mass send (background) --------
 def mass_send(text):
@@ -347,7 +393,6 @@ def mass_send(text):
 
     print(f"📤 mass_send started: {total} users, {len(chats)} chats")
 
-    # send to users (personal chats)
     for uid in list(users):
         try:
             bot.send_message(uid, text, parse_mode="Markdown", disable_web_page_preview=True)
@@ -364,12 +409,12 @@ def mass_send(text):
                 users.remove(uid)
                 save_users(users)
                 deleted += 1
+                print(f"Removed unreachable user {uid}: {err}")
             else:
                 print(f"⚠️ Ошибка при отправке {uid}: {e}")
         except Exception as e:
             print(f"⚠️ Неизвестная ошибка при отправке {uid}: {e}")
 
-    # send to chats (groups/supergroups)
     for cid in chats:
         try:
             bot.send_message(cid, text, parse_mode="Markdown", disable_web_page_preview=True)
@@ -400,37 +445,28 @@ def mass_send(text):
 @bot.callback_query_handler(func=lambda c: c.data == "admin_stats")
 def cb_admin_stats(c):
     if c.from_user.id != ADMIN_ID:
-        try:
-            bot.answer_callback_query(c.id, "Доступ запрещён", show_alert=True)
-        except:
-            pass
+        try: bot.answer_callback_query(c.id, "Доступ запрещён", show_alert=True)
+        except: pass
         return
     with db_conn() as conn:
         chats_count = conn.execute("SELECT COUNT(DISTINCT chat_id) FROM required_subs").fetchone()[0]
         total_ops = conn.execute("SELECT COUNT(*) FROM required_subs").fetchone()[0]
         users_count = len(load_users())
-        last_active = conn.execute("SELECT last_active FROM users ORDER BY last_active DESC LIMIT 1").fetchone() if False else None
-        last_active = "—"
     lines = [
         f"📊 Статистика:",
         f"• Чатов с активными ОП: {chats_count}",
         f"• Всего ОП: {total_ops}",
-        f"• Уникальных пользователей в users.json: {users_count}",
-        f"• Последняя активность: {last_active}"
+        f"• Уникальных пользователей в users.json: {users_count}"
     ]
     bot.send_message(c.from_user.id, "\n".join(lines), disable_web_page_preview=True)
-    try:
-        bot.answer_callback_query(c.id)
-    except:
-        pass
+    try: bot.answer_callback_query(c.id)
+    except: pass
 
 @bot.callback_query_handler(func=lambda c: c.data == "admin_top")
 def cb_admin_top(c):
     if c.from_user.id != ADMIN_ID:
-        try:
-            bot.answer_callback_query(c.id, "Доступ запрещён", show_alert=True)
-        except:
-            pass
+        try: bot.answer_callback_query(c.id, "Доступ запрещён", show_alert=True)
+        except: pass
         return
     with db_conn() as conn:
         rows = conn.execute("""
@@ -439,22 +475,16 @@ def cb_admin_top(c):
             LEFT JOIN chat_meta cm ON rs.chat_id = cm.chat_id
             ORDER BY rs.chat_id, rs.created_at ASC
         """).fetchall()
-
     if not rows:
         bot.send_message(c.from_user.id, "🏆 Пока нет активных ОП.")
-        try:
-            bot.answer_callback_query(c.id)
-        except:
-            pass
+        try: bot.answer_callback_query(c.id)
+        except: pass
         return
-
     from collections import defaultdict
     grouped = defaultdict(list)
     for r in rows:
         grouped[r[0]].append(r)
-
     items = sorted(grouped.items(), key=lambda x: -len(x[1]))[:10]
-
     lines = ["🏆 Топ‑10 чатов по количеству ОП:"]
     for i, (chat_id, subs) in enumerate(items, 1):
         title = subs[0][5] or ""
@@ -465,30 +495,24 @@ def cb_admin_top(c):
         if added_by:
             lines.append(f"  Добавил: [профиль](tg://user?id={added_by})")
         for s in subs:
-            ch = s[1]
-            expires = s[2]
-            created = s[3]
+            ch = s[1]; expires = s[2]; created = s[3]
             try:
                 dt1 = datetime.fromisoformat(created)
                 dt2 = datetime.fromisoformat(expires)
-                delta = dt2 - dt1
-                hours = round(delta.total_seconds() / 3600)
+                hours = round((dt2 - dt1).total_seconds() / 3600)
                 lines.append(f"  • {ch} — {hours}ч до {dt2.strftime('%Y-%m-%d %H:%M')}")
             except:
                 lines.append(f"  • {ch} — до {expires}")
         lines.append("")
     bot.send_message(c.from_user.id, "\n".join(lines), disable_web_page_preview=True)
-    try:
-        bot.answer_callback_query(c.id)
-    except:
-        pass
+    try: bot.answer_callback_query(c.id)
+    except: pass
 
 # -------- setup / unsetup / status / group handler --------
 @bot.message_handler(commands=["setup"])
 def cmd_setup(m):
     save_user_json(m.from_user.id)
-    if m.chat.type not in ("group", "supergroup"):
-        return
+    if m.chat.type not in ("group", "supergroup"): return
     cleanup_expired_for_chat(m.chat.id)
     try:
         member = bot.get_chat_member(m.chat.id, m.from_user.id)
@@ -498,7 +522,6 @@ def cmd_setup(m):
     if getattr(member, "status", "") not in ADMIN_STATUSES:
         bot.reply_to(m, "⛔️ Недостаточно прав. Только админы могут использовать эту команду.")
         return
-
     args = m.text.split(maxsplit=2)
     if len(args) < 3:
         bot.reply_to(m, "Использование: /setup @канал 24h")
@@ -519,7 +542,6 @@ def cmd_setup(m):
         bot.reply_to(m, "⛔️ Неверный формат времени. Примеры: 30s, 15m, 12h, 7d")
         return
     expires = (datetime.utcnow() + delta).isoformat()
-
     with db_conn() as c:
         cur = c.execute("SELECT 1 FROM required_subs WHERE chat_id=? AND channel=?", (m.chat.id, ch))
         if cur.fetchone():
@@ -528,10 +550,8 @@ def cmd_setup(m):
         c.execute("INSERT INTO required_subs(chat_id, channel, expires, created_at, added_by) VALUES(?,?,?,?,?)",
                   (m.chat.id, ch, expires, now_iso(), m.from_user.id))
         c.commit()
-
     save_chat_meta(m.chat, m.from_user.id)
     bot.reply_to(m, f"✅ Добавлено обязательное условие: подписка на {ch} до {fmt_dt_iso(expires)}")
-
     try:
         if REPORT_CHANNEL:
             dt2 = datetime.fromisoformat(expires)
@@ -552,8 +572,7 @@ def cmd_setup(m):
 @bot.message_handler(commands=["unsetup"])
 def cmd_unsetup(m):
     save_user_json(m.from_user.id)
-    if m.chat.type not in ("group", "supergroup"):
-        return
+    if m.chat.type not in ("group", "supergroup"): return
     try:
         member = bot.get_chat_member(m.chat.id, m.from_user.id)
     except:
@@ -562,7 +581,6 @@ def cmd_unsetup(m):
     if getattr(member, "status", "") not in ADMIN_STATUSES:
         bot.reply_to(m, "⛔️ Недостаточно прав. Только админы могут использовать эту команду.")
         return
-
     args = m.text.split(maxsplit=1)
     if len(args) < 2:
         bot.reply_to(m, "Использование: /unsetup @канал")
@@ -583,8 +601,7 @@ def cmd_unsetup(m):
 @bot.message_handler(commands=["status"])
 def cmd_status(m):
     save_user_json(m.from_user.id)
-    if m.chat.type not in ("group", "supergroup"):
-        return
+    if m.chat.type not in ("group", "supergroup"): return
     cleanup_expired_for_chat(m.chat.id)
     subs = get_required_subs_for_chat(m.chat.id)
     if not subs:
@@ -610,26 +627,20 @@ def group_message_handler(m):
     for s in subs:
         ch = s["channel"]
         if not channel_exists(ch):
-            try:
-                bot.send_message(m.chat.id, f"⛔️ Канал {ch} не найден. Уберите или исправьте ОП через /unsetup {ch}")
-            except:
-                pass
+            try: bot.send_message(m.chat.id, f"⛔️ Канал {ch} не найден. Уберите или исправьте ОП через /unsetup {ch}")
+            except: pass
             continue
         if not bot_is_admin_in(ch):
-            try:
-                bot.send_message(m.chat.id, f"⛔️ Бот не администратор в канале {ch}. Добавьте бота в админы канала.")
-            except:
-                pass
+            try: bot.send_message(m.chat.id, f"⛔️ Бот не администратор в канале {ch}. Добавьте бота в админы канала.")
+            except: pass
             continue
         required.append(ch)
     if not required:
         return
     not_sub = [ch for ch in required if not user_subscribed(m.from_user.id, ch)]
     if not_sub:
-        try:
-            bot.delete_message(m.chat.id, m.message_id)
-        except:
-            pass
+        try: bot.delete_message(m.chat.id, m.message_id)
+        except: pass
         name = f"@{m.from_user.username}" if getattr(m.from_user, "username", None) else m.from_user.first_name
         txt = f"{name}, чтобы писать в чат, необходимо подписаться на канал(ы): {', '.join(not_sub)}"
         kb = build_sub_kb(not_sub)
@@ -658,7 +669,8 @@ if __name__ == "__main__":
     if mode == "webhook":
         WEBHOOK_HOST = os.getenv("WEBHOOK_HOST", "")
         WEBHOOK_PORT = int(os.getenv("PORT", "8000"))
-        bot.set_webhook(url=f"{WEBHOOK_HOST.rstrip('/')}/{TOKEN}")
+        if WEBHOOK_HOST:
+            bot.set_webhook(url=f"{WEBHOOK_HOST.rstrip('/')}/{TOKEN}")
         app.run(host="0.0.0.0", port=WEBHOOK_PORT)
     else:
         run_poll()
