@@ -318,11 +318,16 @@ def cb_admin_broadcast(c):
 def handle_broadcast_text(m):
     if m.from_user.id != ADMIN_ID:
         return
-    text = m.text
+    text = (m.text or "").strip()
     _broadcast_waiting.pop(m.from_user.id, None)
-    bot.send_message(m.from_user.id, "**Рассылка начата**. Отправляю сообщения...")
+    if not text:
+        bot.send_message(m.chat.id, "⛔️ Текст пустой. Рассылка отменена.")
+        return
     with db_conn() as c:
         rows = c.execute("SELECT user_id FROM users").fetchall()
+    if not rows:
+        bot.send_message(m.chat.id, "⚠️ Никто не получил сообщение. В базе нет активных пользователей.")
+        return
     sent = 0
     for (uid,) in rows:
         try:
@@ -330,7 +335,7 @@ def handle_broadcast_text(m):
             sent += 1
         except:
             pass
-    bot.send_message(m.from_user.id, f"**Готово.** Отправлено: **{sent}** пользователей.")
+    bot.send_message(m.chat.id, f"✅ Рассылка завершена. Отправлено: **{sent}** пользователей.")
 
 @bot.callback_query_handler(func=lambda c: c.data == "admin_stats")
 def cb_admin_stats(c):
