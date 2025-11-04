@@ -9,13 +9,14 @@ from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 TOKEN = os.getenv("PLAY")
 SUB_CHANNEL = os.getenv("SUB_CHANNEL", "@vzref2")
 DB_PATH = os.getenv("DB_PATH", "data.db")
-ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))         # admin for admin-menu
-REPORT_CHANNEL = int(os.getenv("CHANNEL", "0"))    # channel id for reports
+ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
+REPORT_CHANNEL = int(os.getenv("CHANNEL", "0"))
 ADMIN_STATUSES = ("administrator", "creator")
 
 bot = telebot.TeleBot(TOKEN, parse_mode="Markdown")
 app = Flask(__name__)
 _last_private_message = {}  # chat_id -> message_id
+_broadcast_waiting = {}     # admin_id -> True
 
 # --- DB utils
 def db_conn():
@@ -161,36 +162,25 @@ def send_private_replace(chat_id, text, reply_markup=None):
     _last_private_message[chat_id] = m.message_id
     return m
 
-SUB_PROMPT_TEXT = "Чтобы пользоваться ботом, нужно подписаться на канал:"
-
-def send_subscribe_request(user_id, channels=None, reply_in_chat=None):
-    chs = channels or [SUB_CHANNEL]
-    kb = build_sub_kb(chs)
-    if reply_in_chat:
-        try:
-            m = bot.send_message(reply_in_chat, SUB_PROMPT_TEXT, reply_markup=kb, disable_web_page_preview=True)
-            return m
-        except:
-            pass
-    return send_private_replace(user_id, SUB_PROMPT_TEXT, reply_markup=kb)
-
-# --- text templates (с жирным текстом в ключевых местах)
+# --- texts (more bold where useful)
 INSTRUCTION_TEXT = (
     "📘 **Инструкция по настройке:**\n\n"
-    "1️⃣ Добавь меня в группу/чат и сделай админом.\n\n"
+    "1️⃣ **Добавь меня в группу/чат и сделай админом.**\n\n"
     "2️⃣ В группе/чате используй:\n"
     "`/setup @канал 24h` — добавить обязательную подписку.\n"
-    "⏱ Время можно указывать так: `30s`, `15m`, `12h`, `7d`.\n\n"
-    "3️⃣ `/unsetup @канал` — убрать подписку.\n\n"
-    "4️⃣ `/status` — список активных проверок.\n\n"
+    "⏱ Время: `30s`, `15m`, `12h`, `7d`.\n\n"
+    "3️⃣ **`/unsetup @канал`** — убрать подписку.\n\n"
+    "4️⃣ **`/status`** — список активных проверок.\n\n"
     "**ℹ️ Как это работает:**\n"
     "• Пользователь пишет сообщение в чат.\n"
     "• Бот проверяет его подписку.\n"
     "• Если подписка есть — сообщение остаётся.\n"
     "• Если нет — сообщение удаляется, а пользователю отправляется кнопка 🔗 Подписаться.\n\n"
     "———————————————\n\n"
-    "💡 **Используя этого бота, вы подтверждаете согласие с нашей политикой конфиденциальности.**"
+    "💡 **Используя бота, вы подтверждаете согласие с политикой конфиденциальности.**"
 )
+
+SUB_PROMPT_TEXT = "**Чтобы пользоваться ботом, нужно подписаться на канал:**"
 
 # --- Admin menu utilities
 def send_admin_menu_button(chat_id):
@@ -218,17 +208,19 @@ def cmd_start(m):
     if user_subscribed(m.from_user.id, SUB_CHANNEL):
         send_private_replace(m.from_user.id, INSTRUCTION_TEXT)
     else:
-        send_subscribe_request(m.from_user.id, [SUB_CHANNEL])
+        send_private_replace(m.from_user.id, SUB_PROMPT_TEXT, reply_markup=build_sub_kb([SUB_CHANNEL]))
     if ADMIN_ID and m.from_user.id == ADMIN_ID:
         send_admin_menu_button(m.from_user.id)
 
 @bot.message_handler(func=lambda m: m.chat.type == "private")
 def private_any(m):
-    # keep only saving user and admin button; do not show instruction on arbitrary messages
+    # do not react to arbitrary private messages
     save_user(m.from_user.id)
+    # if admin waiting to send broadcast, handle in broadcast handler (separate)
     if ADMIN_ID and m.from_user.id == ADMIN_ID:
+        # always show admin button in private for admin (no other replies)
         send_admin_menu_button(m.from_user.id)
-    # do not send INSTRUCTION_TEXT or subscribe prompts here
+    # otherwise remain silent
 
 @bot.callback_query_handler(func=lambda c: c.data == "check_sub")
 def cb_check(c):
@@ -269,19 +261,17 @@ def cb_check(c):
             pass
         return
 
-    # private pressed: act as personal check (unchanged)
+    # private pressed: personal check
     if user_subscribed(user_id, SUB_CHANNEL):
         send_private_replace(user_id, INSTRUCTION_TEXT)
     else:
-        send_subscribe_request(user_id, [SUB_CHANNEL])
+        send_private_replace(user_id, SUB_PROMPT_TEXT, reply_markup=build_sub_kb([SUB_CHANNEL]))
     try:
         bot.answer_callback_query(c.id)
     except:
         pass
 
-# --- Admin menu callbacks (accessible only via the admin button in private; /admin command removed)
-_broadcast_waiting = {}  # admin_id -> True
-
+# --- Admin menu callbacks (accessible only via admin button in private)
 @bot.callback_query_handler(func=lambda c: c.data == "admin_menu")
 def cb_admin_menu(c):
     if c.from_user.id != ADMIN_ID:
@@ -319,21 +309,21 @@ def handle_broadcast_text(m):
     text = (m.text or "").strip()
     _broadcast_waiting.pop(m.from_user.id, None)
     if not text:
-        bot.send_message(m.chat.id, "⛔️ Текст пустой. Рассылка отменена.")
+        bot.send_message(m.chat.id, "⛔️ **Текст пустой.** Рассылка отменена.")
         return
     with db_conn() as c:
         rows = c.execute("SELECT user_id FROM users").fetchall()
-    if not rows:
-        bot.send_message(m.chat.id, "⚠️ Никто не получил сообщение. В базе нет активных пользователей.")
-        return
     sent = 0
     for (uid,) in rows:
         try:
-            bot.send_message(uid, text, disable_web_page_preview=True)
+            bot.send_message(uid, text, parse_mode="Markdown", disable_web_page_preview=True)
             sent += 1
         except:
             pass
-    bot.send_message(m.chat.id, f"✅ Рассылка завершена. Отправлено: **{sent}** пользователей.")
+    if sent > 0:
+        bot.send_message(m.chat.id, f"✅ **Рассылка завершена.** Отправлено: **{sent}** пользователей.")
+    else:
+        bot.send_message(m.chat.id, "⚠️ **Никто не получил сообщение.** В базе нет активных пользователей.")
 
 @bot.callback_query_handler(func=lambda c: c.data == "admin_stats")
 def cb_admin_stats(c):
@@ -422,7 +412,7 @@ def cb_admin_top(c):
     except:
         pass
 
-# --- setup / unsetup / status handlers (unchanged logic)
+# --- setup / unsetup / status handlers
 @bot.message_handler(commands=["setup"])
 def cmd_setup(m):
     save_user(m.from_user.id)
@@ -451,7 +441,7 @@ def cmd_setup(m):
             return
     else:
         if not user_subscribed(m.from_user.id, SUB_CHANNEL):
-            return send_subscribe_request(m.chat.id, [SUB_CHANNEL])
+            return send_private_replace(m.from_user.id, SUB_PROMPT_TEXT, reply_markup=build_sub_kb([SUB_CHANNEL]))
         send_private_replace(m.from_user.id, INSTRUCTION_TEXT)
         return
 
@@ -486,7 +476,7 @@ def cmd_setup(m):
         c.commit()
 
     save_chat_meta(m.chat, m.from_user.id)
-    bot.reply_to(m, f"✅ Добавлено обязательное условие: подписка на {ch} до {fmt_dt_iso(expires)}")
+    bot.reply_to(m, f"✅ **Добавлено обязательное условие:** подписка на {ch} до {fmt_dt_iso(expires)}")
 
     # report to REPORT_CHANNEL
     try:
@@ -535,7 +525,7 @@ def cmd_unsetup(m):
             return
     else:
         if not user_subscribed(m.from_user.id, SUB_CHANNEL):
-            return send_subscribe_request(m.chat.id, [SUB_CHANNEL])
+            return send_private_replace(m.from_user.id, SUB_PROMPT_TEXT, reply_markup=build_sub_kb([SUB_CHANNEL]))
         send_private_replace(m.from_user.id, INSTRUCTION_TEXT)
         return
 
@@ -554,7 +544,7 @@ def cmd_unsetup(m):
             return
         c.execute("DELETE FROM required_subs WHERE chat_id=? AND channel=?", (m.chat.id, ch))
         c.commit()
-    bot.reply_to(m, f"✅ Удалена проверка: {ch}")
+    bot.reply_to(m, f"✅ **Удалена проверка:** {ch}")
 
 @bot.message_handler(commands=["status"])
 def cmd_status(m):
@@ -584,13 +574,13 @@ def cmd_status(m):
             return
     else:
         if not user_subscribed(m.from_user.id, SUB_CHANNEL):
-            return send_subscribe_request(m.chat.id, [SUB_CHANNEL])
+            return send_private_replace(m.from_user.id, SUB_PROMPT_TEXT, reply_markup=build_sub_kb([SUB_CHANNEL]))
         return send_private_replace(m.from_user.id, INSTRUCTION_TEXT)
 
     cleanup_expired_for_chat(m.chat.id)
     subs = get_required_subs_for_chat(m.chat.id)
     if not subs:
-        bot.send_message(m.chat.id, "📋 Активных обязательных подписок нет.")
+        bot.send_message(m.chat.id, "📋 **Активных обязательных подписок нет.**")
         return
     lines = [f"**📋 Активные проверки ({len(subs)}):**"]
     for i, s in enumerate(subs, 1):
