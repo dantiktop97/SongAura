@@ -10,7 +10,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
 API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
-SESSION_PATH = "/etc/secrets/user_session"  # Render secret file
+SESSION_PATH = "/etc/secrets/user_session.session"  # Render secret file
 DATA_FILE = "data.json"
 
 # ========== Инициализация ==========
