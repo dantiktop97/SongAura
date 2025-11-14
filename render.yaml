@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: telegram-bot
+    env: python
+    build:
+      pythonVersion: 3.10
+    plan: free
+    autoDeploy: true
+    startCommand: python app.py
