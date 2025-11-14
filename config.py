@@ -1,4 +1,1 @@
-API_ID = 27258770
-API_HASH = "8eda3f168522804bead42bfe705bdaeb"
-ADMIN_ID = 7549204023
-BOT_TOKEN = "Song"  # твой токен
+
