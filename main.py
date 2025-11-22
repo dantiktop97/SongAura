@@ -4,32 +4,25 @@ import sqlite3
 import threading
 import time
 from datetime import datetime, timedelta
-import json
 from flask import Flask, request
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, Update, ChatPermissions
 
-# --- КОНФИГУРАЦИЯ ---
 TOKEN = os.getenv("PLAY") or "YOUR_TOKEN_HERE"
-SUB_CHANNEL = os.getenv("SUB_CHANNEL", "@vzref2") 
-DB_PATH = os.getenv("DB_PATH", "data.db")
-ADMIN_ID = int(os.getenv("ADMIN_ID", "7549204023")) 
-LOG_CHANNEL = 4902536707  # ID для уведомлений о новых пользователях (канал или приватный чат)
 WEBHOOK_HOST = os.getenv("WEBHOOK_HOST", "https://songaura.onrender.com")
 PORT = int(os.getenv("PORT", "8000"))
+ADMIN_ID = int(os.getenv("ADMIN_ID", "7549204023")) 
+LOG_CHANNEL = 4902536707  
+DB_PATH = os.getenv("DB_PATH", "data.db")
 ADMIN_STATUSES = ("administrator", "creator")
 MAX_LOG_ENTRIES = 10
 
 bot = telebot.TeleBot(TOKEN, parse_mode="HTML")
 app = Flask(__name__)
 
-# Локальное хранилище для пошаговых действий администратора (state machine)
 _local_memory = {} 
-# Кэш для юзернейма бота
 BOT_USERNAME = None 
 
-# --- ЛОКАЛИЗАЦИЯ (ЯЗЫКОВОЙ СЛОВАРЬ) ---
-# Ключ - код языка ('ru', 'en', 'uk'), Значение - словарь строк
 STRINGS = {
     'ru': {
         "welcome_private": "👋 <b>Приветствую, {user_name}!</b>\n\nЯ — автоматизированная система модерации чатов.\nИспользуйте меню ниже для управления ботом:",
@@ -81,11 +74,6 @@ STRINGS = {
         "sub_verified": "✅ Доступ разрешен! Можете писать в чат.",
         "sub_not_all": "❌ Вы подписались не на все каналы! Повторите проверку после подписки.",
         "settings_info": "⚙️ <b>Настройки группы</b>\n\nЗдесь в будущем будут настройки фильтров, приветствий и прочего. Для управления подписками используйте /setup в нужном чате.",
-        # Новые строки для ОП
-        "op_public_text": "✅ Функция проверки подписки на публичные каналы/чаты 🛡️\n\n▸ Шаг 1: Добавьте меня в ваш чат как администратора. Используйте эту ссылку для удобства! 🔗\n▸ Шаг 2: Добавьте меня в администраторы канала/чата для проверки. Поделитесь ссылкой с админом. 📩\n▸ Шаг 3: В вашем чате введите: <code>/setup @channel</code> 🚀\n\n⛔️ Для отключения:\n▸ <code>/unsetup @channel</code> ❌\n\n➕ Макс. 5 проверок одновременно!\n❌ Для отключения всех: <code>/unsetup</code>\n\n💡 Команда <code>/status</code> покажет активные проверки и таймеры. ⏰\n\nВопросы? Пишите в поддержку @support_chat. 📞",
-        "op_private_text": "📢 Проверка подписки для приватных каналов/чатов 🔒\n\nШаг 1: Узнайте ID приватного канала (например, -1001234567890). 🆔\nШаг 2: В вашем чате введите: <code>/setup -1001234567890</code> 🚀\n\nЧтобы отключить: <code>/unsetup -1001234567890</code> ❌\n\n💡 Используйте <code>/status</code> для меню просмотра и редактирования проверок. 📋",
-        "op_invite_text": "🔗 Проверка подписки на пригласительные ссылки 📩\n\nШаг 1: Узнайте ID приватного канала. 🆔\nШаг 2: В чате: <code>/setup -1001234567890 https://t.me/+invite_link</code> 🚀\n\nОтключить: <code>/unsetup -1001234567890</code> ❌\n\nМожно задать цель подписок: <code>/setup -1001234567890 https://t.me/+invite_link 100</code> 🎯\n\n🕒 Таймер: <code>/setup -1001234567890 https://t.me/+invite_link 1d</code> ⏰ (s/m/h/d)\n\n💡 <code>/status</code> для управления. 📋",
-        "no_active_subs": "📋 Нет активных проверок на подписку. 🚫"
     },
     'en': {
         "welcome_private": "👋 <b>Hello, {user_name}!</b>\n\nI am an automated chat moderation system.\nUse the menu below to manage the bot:",
@@ -137,11 +125,6 @@ STRINGS = {
         "sub_verified": "✅ Access granted! You can now write in the chat.",
         "sub_not_all": "❌ You haven't subscribed to all channels! Recheck after subscribing.",
         "settings_info": "⚙️ <b>Group Settings</b>\n\nFuture settings for filters, greetings, and more will be here. Use /setup in the desired chat to manage subscriptions.",
-        # Новые строки для ОП (английская версия)
-        "op_public_text": "✅ Subscription Check Function for Public Channels/Chats 🛡️\n\n▸ Step 1: Add me to your chat as an administrator. Use this link for convenience! 🔗\n▸ Step 2: Add me as an admin to the channel/chat for checking. Share the link with the admin. 📩\n▸ Step 3: In your chat, enter: <code>/setup @channel</code> 🚀\n\n⛔️ To disable:\n▸ <code>/unsetup @channel</code> ❌\n\n➕ Max. 5 checks simultaneously!\n❌ To disable all: <code>/unsetup</code>\n\n💡 Command <code>/status</code> will show active checks and timers. ⏰\n\nQuestions? Contact support @support_chat. 📞",
-        "op_private_text": "📢 Subscription Check for Private Channels/Chats 🔒\n\nStep 1: Find the ID of the private channel (e.g., -1001234567890). 🆔\nStep 2: In your chat, enter: <code>/setup -1001234567890</code> 🚀\n\nTo disable: <code>/unsetup -1001234567890</code> ❌\n\n💡 Use <code>/status</code> for viewing and editing checks menu. 📋",
-        "op_invite_text": "🔗 Subscription Check for Invite Links 📩\n\nStep 1: Find the ID of the private channel. 🆔\nStep 2: In chat: <code>/setup -1001234567890 https://t.me/+invite_link</code> 🚀\n\nDisable: <code>/unsetup -1001234567890</code> ❌\n\nSet subscription goal: <code>/setup -1001234567890 https://t.me/+invite_link 100</code> 🎯\n\n🕒 Timer: <code>/setup -1001234567890 https://t.me/+invite_link 1d</code> ⏰ (s/m/h/d)\n\n💡 <code>/status</code> for management. 📋",
-        "no_active_subs": "📋 No active subscription checks. 🚫"
     },
     'uk': {
         "welcome_private": "👋 <b>Вітаю, {user_name}!</b>\n\nЯ — автоматизована система модерації чатів.\nВикористовуйте меню нижче для керування ботом:",
@@ -193,32 +176,22 @@ STRINGS = {
         "sub_verified": "✅ Доступ дозволено! Можете писати в чат.",
         "sub_not_all": "❌ Ви підписалися не на всі канали! Повторіть перевірку після підписки.",
         "settings_info": "⚙️ <b>Налаштування групи</b>\n\nТут будуть майбутні налаштування фільтрів, привітань тощо. Використовуйте /setup у потрібному чаті для керування підписками.",
-        # Новые строки для ОП (украинская версия)
-        "op_public_text": "✅ Функція перевірки підписки на публічні канали/чати 🛡️\n\n▸ Крок 1: Додайте мене до вашого чату як адміністратора. Використовуйте це посилання для зручності! 🔗\n▸ Крок 2: Додайте мене як адміна до каналу/чату для перевірки. Поділіться посиланням з адміном. 📩\n▸ Крок 3: У вашому чаті введіть: <code>/setup @channel</code> 🚀\n\n⛔️ Для вимкнення:\n▸ <code>/unsetup @channel</code> ❌\n\n➕ Макс. 5 перевірок одночасно!\n❌ Для вимкнення всіх: <code>/unsetup</code>\n\n💡 Команда <code>/status</code> покаже активні перевірки та таймери. ⏰\n\nПитання? Пишіть у підтримку @support_chat. 📞",
-        "op_private_text": "📢 Перевірка підписки для приватних каналів/чатів 🔒\n\nКрок 1: Дізнайтеся ID приватного каналу (наприклад, -1001234567890). 🆔\nКрок 2: У вашому чаті введіть: <code>/setup -1001234567890</code> 🚀\n\nЩоб вимкнути: <code>/unsetup -1001234567890</code> ❌\n\n💡 Використовуйте <code>/status</code> для меню перегляду та редагування перевірок. 📋",
-        "op_invite_text": "🔗 Перевірка підписки на запрошувальні посилання 📩\n\nКрок 1: Дізнайтеся ID приватного каналу. 🆔\nКрок 2: У чаті: <code>/setup -1001234567890 https://t.me/+invite_link</code> 🚀\n\nВимкнути: <code>/unsetup -1001234567890</code> ❌\n\nМожна задати ціль підписок: <code>/setup -1001234567890 https://t.me/+invite_link 100</code> 🎯\n\n🕒 Таймер: <code>/setup -1001234567890 https://t.me/+invite_link 1d</code> ⏰ (s/m/h/d)\n\n💡 <code>/status</code> для керування. 📋",
-        "no_active_subs": "📋 Немає активних перевірок на підписку. 🚫"
     },
 }
-DEFAULT_LANG = 'ru' # Язык по умолчанию
-LANGUAGES = {'ru': 'Русский', 'en': 'English', 'uk': 'Українська'} # Отображаемые названия
+DEFAULT_LANG = 'ru'
+LANGUAGES = {'ru': 'Русский', 'en': 'English', 'uk': 'Українська'} 
 
 def get_string(user_id, key):
-    """Получает строку локализации для пользователя."""
     lang_code = get_user_language(user_id)
     return STRINGS.get(lang_code, STRINGS[DEFAULT_LANG]).get(key, STRINGS[DEFAULT_LANG].get(key, f"MISSING STRING: {key}"))
 
-# --- БАЗА ДАННЫХ ---
 def get_db_connection():
-    """Получает соединение с базой данных."""
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     return conn
 
 def initialize_database():
-    """Инициализирует все необходимые таблицы."""
     with get_db_connection() as conn:
-        # Таблица для обязательных подписок
         conn.execute("""
             CREATE TABLE IF NOT EXISTS required_subs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -229,7 +202,6 @@ def initialize_database():
                 created_at TEXT
             )
         """)
-        # Таблица для отслеживания активности участников
         conn.execute("""
             CREATE TABLE IF NOT EXISTS members (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -243,7 +215,6 @@ def initialize_database():
                 UNIQUE(user_id, chat_id)
             )
         """)
-        # Таблица для предупреждений (варнов)
         conn.execute("""
             CREATE TABLE IF NOT EXISTS warns (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -254,7 +225,6 @@ def initialize_database():
                 created_at TEXT
             )
         """)
-        # Таблица для отслеживания мьютов
         conn.execute("""
             CREATE TABLE IF NOT EXISTS mutes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -264,7 +234,6 @@ def initialize_database():
                 UNIQUE(chat_id, user_id)
             )
         """)
-        # Таблица для системных логов
         conn.execute("""
             CREATE TABLE IF NOT EXISTS system_logs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -275,7 +244,6 @@ def initialize_database():
                 created_at TEXT
             )
         """)
-        # НОВАЯ ТАБЛИЦА: для хранения языка пользователя
         conn.execute("""
             CREATE TABLE IF NOT EXISTS user_language (
                 user_id INTEGER PRIMARY KEY NOT NULL,
@@ -285,14 +253,12 @@ def initialize_database():
         conn.commit()
 
 def get_user_language(user_id):
-    """Получает код языка для пользователя."""
     with get_db_connection() as conn:
         cursor = conn.execute("SELECT lang_code FROM user_language WHERE user_id = ?", (user_id,))
         row = cursor.fetchone()
         return row['lang_code'] if row and row['lang_code'] in STRINGS else DEFAULT_LANG
 
 def set_user_language(user_id, lang_code):
-    """Устанавливает код языка для пользователя."""
     if lang_code not in STRINGS:
         lang_code = DEFAULT_LANG
     with get_db_connection() as conn:
@@ -300,36 +266,29 @@ def set_user_language(user_id, lang_code):
         conn.commit()
     return lang_code
 
-# --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
 def get_iso_now():
-    """Возвращает текущее время в UTC ISO формате."""
     return datetime.utcnow().isoformat()
 
 def parse_iso_datetime(iso_str):
-    """Преобразует ISO строку в datetime объект."""
     try:
         return datetime.fromisoformat(iso_str)
     except (ValueError, TypeError):
         return None
 
 def format_readable_date(iso_str):
-    """Форматирует ISO строку в читаемую дату."""
     dt = parse_iso_datetime(iso_str)
-    return dt.strftime("%Y-%m-%d %H:%M") if dt else "навсегда"
+    return dt.strftime("%d.%m.%Y %H:%M UTC") if dt else "Бессрочно"
 
 def sanitize_text(text):
-    """Экранирует специальные символы HTML."""
     if not text: return ""
     return str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 def get_full_user_name(user):
-    """Получает полное имя пользователя."""
     if user.last_name:
         return f"{user.first_name} {user.last_name}"
     return user.first_name
 
 def check_admin_rights(chat_id, user_id):
-    """Проверяет права администратора в чате или совпадение с ADMIN_ID."""
     if user_id == ADMIN_ID: return True
     try:
         member = bot.get_chat_member(chat_id, user_id)
@@ -338,7 +297,6 @@ def check_admin_rights(chat_id, user_id):
         return False
 
 def log_system_action(chat_id, user_id, action, details=""):
-    """Записывает системное действие в лог."""
     try:
         with get_db_connection() as conn:
             conn.execute(
@@ -350,7 +308,6 @@ def log_system_action(chat_id, user_id, action, details=""):
         print(f"Logging Error: {e}")
 
 def update_user_activity(user, chat_id):
-    """Обновляет активность пользователя в базе данных."""
     try:
         with get_db_connection() as conn:
             cursor = conn.execute("SELECT id FROM members WHERE user_id = ? AND chat_id = ?", (user.id, chat_id))
@@ -376,7 +333,6 @@ def update_user_activity(user, chat_id):
         print(f"Activity Update Error: {e}")
 
 def parse_time_string(time_str):
-    """Парсит строку времени (e.g., '30m', '1d') в timedelta."""
     regex = re.match(r"(\d+)([smhd])", time_str.lower())
     if not regex: return None
     value, unit = int(regex.group(1)), regex.group(2)
@@ -388,7 +344,6 @@ def parse_time_string(time_str):
     return None
 
 def background_unmute_worker():
-    """Фоновая задача для автоматического размута пользователей."""
     while True:
         try:
             with get_db_connection() as conn:
@@ -410,13 +365,14 @@ def background_unmute_worker():
                                 )
                             )
                             user_lang = get_user_language(mute['user_id'])
-                            unmute_msg = get_string(mute['user_id'], "unmute_success").format(user_name=str(mute['user_id']))
+                            unmute_msg = get_string(user_lang, "unmute_success").replace("Мут снят", "Время истекло").replace("unmute_success", "Mute Expired") 
+                            
                             bot.send_message(
                                 mute['chat_id'], 
-                                f"🔊 {unmute_msg} (авто-размут).",
+                                f"🔊 <b>{unmute_msg}</b> Пользователь <a href='tg://user?id={mute['user_id']}'>{mute['user_id']}</a> размучен.",
                                 disable_notification=True
                             )
-                            log_system_action(mute['chat_id'], mute['user_id'], "UNMUTE_AUTO", f"Авто-размут после {format_readable_date(mute['expires_at'])}")
+                            log_system_action(mute['chat_id'], mute['user_id'], "UNMUTE_AUTO", f"Автоматический размут. Истекло в {format_readable_date(mute['expires_at'])}")
                         except Exception as e:
                             print(f"Failed to unmute {mute['user_id']}: {e}")
                         finally:
@@ -426,7 +382,6 @@ def background_unmute_worker():
             print(f"Worker Error: {e}")
         time.sleep(20)
 
-# --- ГЕНЕРАТОРЫ КЛАВИАТУР ---
 def get_bot_username():
     global BOT_USERNAME
     if BOT_USERNAME is None:
@@ -453,11 +408,13 @@ def generate_start_keyboard(user_id):
     return markup
 
 def generate_settings_keyboard(user_id):
+    user_lang = get_user_language(user_id)
     markup = InlineKeyboardMarkup()
     markup.add(InlineKeyboardButton(get_string(user_id, "lang_back"), callback_data="main_menu"))
     return markup
 
 def generate_languages_keyboard(user_id):
+    user_lang = get_user_language(user_id)
     markup = InlineKeyboardMarkup()
     markup.row(
         InlineKeyboardButton(get_string(user_id, "lang_title_ru"), callback_data="lang_select:ru"),
@@ -470,6 +427,7 @@ def generate_languages_keyboard(user_id):
     return markup
 
 def generate_main_admin_keyboard(user_id):
+    user_lang = get_user_language(user_id)
     markup = InlineKeyboardMarkup()
     markup.row(
         InlineKeyboardButton("📊 Статистика", callback_data="adm_stats"),
@@ -479,36 +437,12 @@ def generate_main_admin_keyboard(user_id):
         InlineKeyboardButton("📋 Логи системы", callback_data="adm_logs"),
         InlineKeyboardButton("🛡 Управление подписками", callback_data="adm_manage_subs")
     )
-    markup.row(
-        InlineKeyboardButton("👤 Проверка пользователей", callback_data="adm_user_check")
-    )
-    markup.row(
-        InlineKeyboardButton("🛡️ ОП (Проверка подписки)", callback_data="adm_op_check")
-    )
     markup.add(InlineKeyboardButton("❌ Закрыть", callback_data="close_panel"))
-    markup.add(InlineKeyboardButton(get_string(user_id, "lang_back"), callback_data="main_menu"))
-    return markup
-
-def generate_op_menu(user_id):
-    markup = InlineKeyboardMarkup()
-    markup.row(
-        InlineKeyboardButton("📢 Публичные чаты/группы", callback_data="public_op")
-    )
-    markup.row(
-        InlineKeyboardButton("🔒 Приватные чаты/группы", callback_data="private_op")
-    )
-    markup.row(
-        InlineKeyboardButton("🔗 ОП (Пригласительная ссылка)", callback_data="invite_op")
-    )
-    markup.add(InlineKeyboardButton(get_string(user_id, "lang_back"), callback_data="adm_main_menu"))
-    return markup
-
-def generate_back_button(user_id, callback_data="adm_main_menu"):
-    markup = InlineKeyboardMarkup()
-    markup.add(InlineKeyboardButton(get_string(user_id, "lang_back"), callback_data=callback_data))
+    markup.add(InlineKeyboardButton(get_string(user_id, "lang_back").replace("Назад", "В главное меню"), callback_data="main_menu"))
     return markup
 
 def generate_management_keyboard(user_id):
+    user_lang = get_user_language(user_id)
     markup = InlineKeyboardMarkup()
     markup.add(InlineKeyboardButton("📋 Показать все подписки", callback_data="mng_show_subs"))
     markup.add(InlineKeyboardButton("➕ Добавить подписку (через /setup в чате)", callback_data="mng_info_add"))
@@ -516,7 +450,14 @@ def generate_management_keyboard(user_id):
     markup.add(InlineKeyboardButton(get_string(user_id, "lang_back"), callback_data="adm_main_menu"))
     return markup
 
+def generate_back_button(user_id, callback_data="adm_main_menu"):
+    user_lang = get_user_language(user_id)
+    markup = InlineKeyboardMarkup()
+    markup.add(InlineKeyboardButton(get_string(user_id, "lang_back").replace("Назад", "Вернуться назад"), callback_data=callback_data))
+    return markup
+
 def generate_subscription_keyboard(user_id, missing_channels):
+    user_lang = get_user_language(user_id)
     markup = InlineKeyboardMarkup()
     for channel in missing_channels:
         clean_name = channel.replace("@", "")
@@ -525,6 +466,7 @@ def generate_subscription_keyboard(user_id, missing_channels):
     return markup
 
 def generate_delete_subscription_keyboard(user_id, subs):
+    user_lang = get_user_language(user_id)
     markup = InlineKeyboardMarkup()
     for sub in subs:
         chat_name = f"Chat_{sub['chat_id']}"
@@ -540,18 +482,12 @@ def generate_delete_subscription_keyboard(user_id, subs):
     markup.add(InlineKeyboardButton(get_string(user_id, "lang_back"), callback_data="adm_manage_subs"))
     return markup
 
-# --- ЛОГИКА ПРОВЕРКИ ПОДПИСОК ---
-def get_required_subs_for_chat(chat_id):
-    """Получает список активных обязательных каналов с expires для чата."""
+def get_required_channels_for_chat(chat_id):
     with get_db_connection() as conn:
         current_time = get_iso_now()
         conn.execute("DELETE FROM required_subs WHERE chat_id = ? AND expires IS NOT NULL AND expires <= ?", (chat_id, current_time))
         conn.commit()
-        rows = conn.execute("SELECT channel, expires FROM required_subs WHERE chat_id = ?", (chat_id,)).fetchall()
-    return rows
-
-def get_required_channels_for_chat(chat_id):
-    rows = get_required_subs_for_chat(chat_id)
+        rows = conn.execute("SELECT channel FROM required_subs WHERE chat_id = ?", (chat_id,)).fetchall()
     return [row['channel'] for row in rows]
 
 def check_subscription_status(user_id, channel):
@@ -562,7 +498,6 @@ def check_subscription_status(user_id, channel):
         print(f"Error checking sub for {user_id} on {channel}: {e}")
         return False 
 
-# --- ОБРАБОТЧИК CALLBACK (КНОПОК) ---
 @bot.callback_query_handler(func=lambda call: True)
 def callback_query_handler(call: CallbackQuery):
     user_id = call.from_user.id
@@ -601,8 +536,11 @@ def callback_query_handler(call: CallbackQuery):
     
     if data.startswith("lang_select:"):
         new_lang_code = data.split(":")[1]
+        
         set_user_language(user_id, new_lang_code)
+        
         lang_name = LANGUAGES.get(new_lang_code, 'Unknown')
+        
         bot.edit_message_text(
             chat_id=chat_id,
             message_id=msg_id,
@@ -621,7 +559,10 @@ def callback_query_handler(call: CallbackQuery):
 
     if data == "verify_subscription":
         required_channels = get_required_channels_for_chat(call.message.chat.id)
-        still_missing = [channel for channel in required_channels if not check_subscription_status(user_id, channel)]
+        still_missing = []
+        for channel in required_channels:
+            if not check_subscription_status(user_id, channel):
+                still_missing.append(channel)
         
         if not still_missing:
             try:
@@ -778,6 +719,7 @@ def callback_query_handler(call: CallbackQuery):
 
     elif data == "adm_broadcast":
         _local_memory.pop(user_id, None)
+        
         bot.edit_message_text(
             chat_id=chat_id,
             message_id=msg_id,
@@ -786,41 +728,6 @@ def callback_query_handler(call: CallbackQuery):
         )
         _local_memory[user_id] = "waiting_broadcast"
 
-    elif data == "adm_user_check":
-        bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=msg_id,
-            text="<b>👤 Проверка пользователя</b>\n\nОтправьте ID пользователя для просмотра статистики.",
-            reply_markup=generate_back_button(user_id)
-        )
-        _local_memory[user_id] = "waiting_user_id"
-
-    elif data == "adm_op_check":
-        bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=msg_id,
-            text="<b>🛡️ ОП (Проверка подписки)</b>\n\nВыберите тип:",
-            reply_markup=generate_op_menu(user_id)
-        )
-
-    elif data in ["public_op", "private_op", "invite_op"]:
-        if data == "public_op":
-            text = get_string(user_id, "op_public_text")
-            back_data = "adm_op_check"
-        elif data == "private_op":
-            text = get_string(user_id, "op_private_text")
-            back_data = "adm_op_check"
-        elif data == "invite_op":
-            text = get_string(user_id, "op_invite_text")
-            back_data = "adm_op_check"
-        bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=msg_id,
-            text=text,
-            reply_markup=generate_back_button(user_id, back_data)
-        )
-
-# --- ОБРАБОТЧИКИ СООБЩЕНИЙ ---
 @bot.message_handler(func=lambda m: m.chat.type == 'private' and _local_memory.get(m.from_user.id) == "waiting_broadcast", content_types=['text', 'photo', 'video', 'animation', 'sticker', 'document'])
 def process_broadcast(message):
     user_id = message.from_user.id
@@ -842,71 +749,14 @@ def process_broadcast(message):
         try:
             bot.copy_message(target_id, message.chat.id, message.message_id)
             success_count += 1
-            time.sleep(0.05)
+            time.sleep(0.04)
         except Exception:
             fail_count += 1
     
-    result_message = f"✅ <b>Рассылка завершена!</b>\n\nУспешно: {success_count}\nОшибок: {fail_count}"
+    result_message = f"✅ <b>Рассылка завершена!</b>\n\nУспешно: {success_count}\nОшибок (заблокировали/удалили): {fail_count}"
     bot.send_message(user_id, result_message)
-    log_system_action(user_id, user_id, "BROADCAST_END", f"Успешно: {success_count}, Ошибок: {fail_count}")
+    log_system_action(user_id, user_id, "BROADCAST_END", f"Рассылка завершена. Успешно: {success_count}, Ошибок: {fail_count}")
 
-@bot.message_handler(func=lambda m: m.chat.type == 'private' and _local_memory.get(m.from_user.id) == "waiting_user_id", content_types=['text'])
-def process_user_check(message):
-    user_id = message.from_user.id
-    if user_id != ADMIN_ID: return
-    _local_memory.pop(user_id, None)
-    
-    try:
-        target_id = int(message.text.strip())
-    except ValueError:
-        bot.reply_to(message, "❌ Некорректный ID. Попробуйте снова.")
-        return
-    
-    with get_db_connection() as conn:
-        member_rows = conn.execute("SELECT chat_id, messages_count, last_seen FROM members WHERE user_id = ?", (target_id,)).fetchall()
-    
-    if not member_rows:
-        bot.reply_to(message, f"❌ Пользователь {target_id} не найден в базе.")
-        return
-    
-    try:
-        user_info = bot.get_user(target_id)
-        name = get_full_user_name(user_info)
-        username = user_info.username or "нет"
-    except Exception:
-        name = "Неизвестно"
-        username = "нет"
-    
-    text = f"👤 Пользователь: {name} @{username} ID: {target_id}\n\n"
-    
-    for row in member_rows:
-        try:
-            chat_info = bot.get_chat(row['chat_id'])
-            chat_name = chat_info.title or "Приватный чат"
-            member = bot.get_chat_member(row['chat_id'], target_id)
-            status = member.status  # member, administrator, creator etc.
-        except Exception:
-            chat_name = "Неизвестный чат"
-            status = "неизвестно"
-        
-        warns_count = conn.execute("SELECT COUNT(*) FROM warns WHERE chat_id = ? AND user_id = ?", (row['chat_id'], target_id)).fetchone()[0]
-        mute = conn.execute("SELECT expires_at FROM mutes WHERE chat_id = ? AND user_id = ?", (row['chat_id'], target_id)).fetchone()
-        mute_str = f"Мут до {format_readable_date(mute['expires_at'])}" if mute else "Нет мьюта"
-        
-        required_channels = get_required_channels_for_chat(row['chat_id'])
-        subs_status = "\n".join([f"{ch}: {'✅' if check_subscription_status(target_id, ch) else '❌'}" for ch in required_channels]) or "Нет обязательных подписок"
-        
-        text += f"💬 Чат: {chat_name} (ID: {row['chat_id']})\n"
-        text += f"Статус: {status}\n"
-        text += f"Сообщений: {row['messages_count']}\n"
-        text += f"Последняя активность: {format_readable_date(row['last_seen'])}\n"
-        text += f"Варны: {warns_count}\n"
-        text += f"Мут: {mute_str}\n"
-        text += f"Подписки:\n{subs_status}\n\n"
-    
-    bot.reply_to(message, text)
-
-# --- КОМАНДЫ ---
 @bot.message_handler(commands=['start'])
 def command_start_handler(message):
     user_id = message.from_user.id
@@ -937,13 +787,6 @@ def command_start_handler(message):
             welcome_msg, 
             reply_markup=generate_start_keyboard(user_id)
         )
-        # Уведомление о новом пользователе
-        name = get_full_user_name(message.from_user)
-        username = message.from_user.username or "нет"
-        try:
-            bot.send_message(LOG_CHANNEL, f"Новый пользователь: {name} @{username} ID: {user_id}")
-        except Exception as e:
-            print(f"Error sending to log channel: {e}")
 
 @bot.message_handler(commands=['setup'])
 def command_setup(message):
@@ -1013,12 +856,12 @@ def command_unsetup(message):
         
     args = message.text.split()
     if len(args) < 2:
-        required_rows = get_required_subs_for_chat(message.chat.id)
-        if not required_rows:
+        required_channels = get_required_channels_for_chat(message.chat.id)
+        if not required_channels:
             bot.reply_to(message, get_string(user_id, "unsetup_usage"))
             return
         
-        list_text = "\n".join([row['channel'] for row in required_rows])
+        list_text = "\n".join(required_channels)
         bot.reply_to(message, get_string(user_id, "unsetup_list").format(channels=list_text))
         return
         
@@ -1032,28 +875,6 @@ def command_unsetup(message):
         log_system_action(message.chat.id, user_id, "SETUP_DEL", f"Удален канал: {channel}")
     else:
         bot.reply_to(message, get_string(user_id, "unsetup_not_found").format(channel=channel))
-
-@bot.message_handler(commands=['status'])
-def command_status(message):
-    if message.chat.type not in ['group', 'supergroup']:
-        return
-    
-    user_id = message.from_user.id
-    if not check_admin_rights(message.chat.id, user_id):
-        return
-    
-    required_rows = get_required_subs_for_chat(message.chat.id)
-    if not required_rows:
-        bot.reply_to(message, get_string(user_id, "no_active_subs"))
-        return
-    
-    text = f"📋 Активные проверки ({len(required_rows)}):\n"
-    for i, row in enumerate(required_rows, 1):
-        exp_str = f"— до {format_readable_date(row['expires'])}" if row['expires'] else "— навсегда"
-        ch = row['channel'].lstrip('@')
-        text += f"{i}. {row['channel']} {exp_str}\n/unsetup {ch} — Убрать ОП\n———————————————\n"
-    
-    bot.reply_to(message, text)
 
 @bot.message_handler(commands=['ban'])
 def command_ban(message):
@@ -1133,17 +954,14 @@ def command_mute(message):
     until = datetime.utcnow() + delta
     
     try:
-        # 1. Ограничение прав в Telegram
         bot.restrict_chat_member(message.chat.id, target.id, until_date=until.timestamp(), 
             permissions=ChatPermissions(can_send_messages=False))
         
-        # 2. Сохранение мьюта в БД
         with get_db_connection() as conn:
             conn.execute("INSERT OR REPLACE INTO mutes (chat_id, user_id, expires_at) VALUES (?, ?, ?)", 
                 (message.chat.id, target.id, until.isoformat()))
             conn.commit()
             
-        # 3. Удаление исходного сообщения
         try:
             bot.delete_message(message.chat.id, message.reply_to_message.message_id)
         except Exception:
@@ -1170,11 +988,9 @@ def command_unmute(message):
     target = message.reply_to_message.from_user
     
     try:
-        # 1. Снятие ограничений в Telegram
         bot.restrict_chat_member(message.chat.id, target.id, 
             permissions=ChatPermissions(can_send_messages=True, can_send_media_messages=True, can_send_other_messages=True, can_add_web_page_previews=True))
         
-        # 2. Удаление из БД
         with get_db_connection() as conn:
             conn.execute("DELETE FROM mutes WHERE chat_id = ? AND user_id = ?", (message.chat.id, target.id))
             conn.commit()
@@ -1199,17 +1015,14 @@ def command_warn(message):
     target = message.reply_to_message.from_user
     reason_default = get_string(user_id, "warn_reason")
     reason = " ".join(message.text.split()[1:]) or reason_default
-    limit = 3 # Лимит варнов перед баном
+    limit = 3 
 
     with get_db_connection() as conn:
-        # 1. Добавление варна
         conn.execute("INSERT INTO warns (chat_id, user_id, admin_id, reason, created_at) VALUES (?, ?, ?, ?, ?)",
             (message.chat.id, target.id, user_id, reason, get_iso_now()))
         conn.commit()
-        # 2. Получение текущего количества варнов
         count = conn.execute("SELECT COUNT(*) FROM warns WHERE chat_id = ? AND user_id = ?", (message.chat.id, target.id)).fetchone()[0]
     
-    # 3. Удаление исходного сообщения
     try:
         bot.delete_message(message.chat.id, message.reply_to_message.message_id)
     except Exception:
@@ -1217,11 +1030,9 @@ def command_warn(message):
 
     user_name = sanitize_text(get_full_user_name(target))
     if count >= limit:
-        # Если превышен лимит - бан
         try:
             bot.ban_chat_member(message.chat.id, target.id)
             bot.reply_to(message, get_string(user_id, "warn_limit_ban").format(count=count, limit=limit, user_name=user_name, reason=reason))
-            # Очистка варнов после бана
             with get_db_connection() as conn:
                 conn.execute("DELETE FROM warns WHERE chat_id = ? AND user_id = ?", (message.chat.id, target.id))
                 conn.commit()
@@ -1246,14 +1057,11 @@ def command_kick(message):
     target = message.reply_to_message.from_user
     
     try:
-        # Кик - это временный бан, после которого сразу следует разбан.
         bot.ban_chat_member(message.chat.id, target.id)
-        # Удаление исходного сообщения
         try:
             bot.delete_message(message.chat.id, message.reply_to_message.message_id)
         except Exception:
             pass
-        # Разбан, чтобы пользователь мог вернуться по ссылке
         bot.unban_chat_member(message.chat.id, target.id, only_if_banned=True) 
         
         user_name = sanitize_text(get_full_user_name(target))
@@ -1262,7 +1070,6 @@ def command_kick(message):
     except Exception as e:
         bot.reply_to(message, get_string(user_id, "kick_error").format(error=e))
 
-# --- ОБЩИЙ ОБРАБОТЧИК СООБЩЕНИЙ В ГРУППЕ ---
 @bot.message_handler(func=lambda m: m.chat.type in ['group', 'supergroup'])
 def group_message_processor(message):
     user_id = message.from_user.id
@@ -1277,7 +1084,10 @@ def group_message_processor(message):
     if not required_channels:
         return
 
-    missing_channels = [channel for channel in required_channels if not check_subscription_status(user_id, channel)]
+    missing_channels = []
+    for channel in required_channels:
+        if not check_subscription_status(user_id, channel):
+            missing_channels.append(channel)
     
     if missing_channels:
         try:
@@ -1297,7 +1107,6 @@ def group_message_processor(message):
         except Exception:
             pass
 
-# --- ЗАПУСК ---
 @app.route(f"/{TOKEN}", methods=["POST"])
 def webhook_receiver():
     try:
