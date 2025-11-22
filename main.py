@@ -7,20 +7,17 @@ from datetime import datetime, timedelta
 import json
 from flask import Flask, request
 import telebot
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, Update
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, Update, ChatPermissions
 
 # --- КОНФИГУРАЦИЯ ---
-# ВАЖНО: Замените "YOUR_TOKEN_HERE" на ваш реальный токен
 TOKEN = os.getenv("PLAY") or "YOUR_TOKEN_HERE"
-# Это основной, глобальный канал (используется для примера, но лучше управлять через /setup в чатах)
 SUB_CHANNEL = os.getenv("SUB_CHANNEL", "@vzref2") 
 DB_PATH = os.getenv("DB_PATH", "data.db")
-# ВАЖНО: Убедитесь, что тут ваш цифровой ID
 ADMIN_ID = int(os.getenv("ADMIN_ID", "7549204023")) 
 WEBHOOK_HOST = os.getenv("WEBHOOK_HOST", "https://songaura.onrender.com")
 PORT = int(os.getenv("PORT", "8000"))
 ADMIN_STATUSES = ("administrator", "creator")
-MAX_LOG_ENTRIES = 10 # Количество логов для отображения
+MAX_LOG_ENTRIES = 10
 
 bot = telebot.TeleBot(TOKEN, parse_mode="HTML")
 app = Flask(__name__)
@@ -29,6 +26,171 @@ app = Flask(__name__)
 _local_memory = {} 
 # Кэш для юзернейма бота
 BOT_USERNAME = None 
+
+# --- ЛОКАЛИЗАЦИЯ (ЯЗЫКОВОЙ СЛОВАРЬ) ---
+# Ключ - код языка ('ru', 'en', 'uk'), Значение - словарь строк
+STRINGS = {
+    'ru': {
+        "welcome_private": "👋 <b>Приветствую, {user_name}!</b>\n\nЯ — автоматизированная система модерации чатов.\nИспользуйте меню ниже для управления ботом:",
+        "menu_add_group": "➕ Добавить в группу",
+        "menu_settings": "⚙️ Настройки группы",
+        "menu_languages": "🌐 Язык",
+        "menu_admin": "🔒 Админ меню",
+        "lang_changed": "✅ Язык изменен на **{lang}**.",
+        "lang_choose": "🌐 <b>Выберите язык / Choose Language / Оберіть мову:</b>",
+        "lang_back": "⬅️ Назад",
+        "lang_title_ru": "🇷🇺 Русский",
+        "lang_title_en": "🇬🇧 English",
+        "lang_title_uk": "🇺🇦 Українська",
+        "admin_panel_title": "<b>🎛 Панель Администратора</b>\nГлавное меню управления ботом.",
+        "no_rights": "⛔ У вас нет прав доступа к этому меню. Вы не владелец бота.",
+        "group_welcome": "👋 Привет! Я — <b>{bot_name}</b>.\n\nЯ помогаю управлять группой и подписками. Чтобы настроить меня, перейдите в ЛС.",
+        "group_go_private": "🤖 Перейти в ЛС для настройки",
+        "setup_info": "ℹ️ <b>Использование:</b>\n<code>/setup @channel [время]</code>\n\nПример: <code>/setup @MyChannel 1d</code>",
+        "setup_error_time": "⚠️ <b>Ошибка:</b> Неверный формат времени. Используйте: <code>30m</code>, <code>1h</code>, <code>5d</code> и т.д.",
+        "setup_error_not_channel": "⚠️ <b>Ошибка:</b> Это не канал или супергруппа.",
+        "setup_error_unknown_channel": "⚠️ <b>Ошибка:</b> Я не вижу этот канал. Убедитесь, что он существует и его юзернейм корректен.",
+        "setup_success": "✅ <b>Канал добавлен!</b>\nТеперь подписка на <b>{channel}</b> обязательна {info}.",
+        "setup_info_forever": "<b>навсегда</b>",
+        "setup_info_until": "до <b>{date}</b>",
+        "unsetup_usage": "ℹ️ <b>Использование:</b> <code>/unsetup @channel</code>\n\n<i>В этом чате нет активных требований подписки.</i>",
+        "unsetup_list": "ℹ️ <b>Текущие обязательные подписки:</b>\n{channels}\n\nВведите команду с юзернеймом для удаления.",
+        "unsetup_deleted": "🗑 <b>Требование подписки на {channel} удалено.</b>",
+        "unsetup_not_found": "❌ <b>Ошибка:</b> Подписка на {channel} не найдена в списке обязательных для этого чата.",
+        "cmd_no_reply": "↩️ Ответьте на сообщение пользователя.",
+        "cmd_no_id_reply": "ℹ️ ID или реплай.",
+        "no_admin_rights": "⛔ Только администраторы могут использовать эту команду.",
+        "ban_success": "⛔ <b>Забанен:</b> {user_name}",
+        "ban_error": "❌ Ошибка бана: {error}",
+        "unban_success": "🕊 <b>Разбанен:</b> <code>{user_id}</code>",
+        "unban_error": "❌ Ошибка разбана: {error}",
+        "mute_error_time": "⚠️ Неверный формат времени. Используйте: <code>30m</code>, <code>1h</code>, <code>5d</code>.",
+        "mute_success": "🔇 <b>Мут на {duration}:</b> {user_name}\nАвтоматический размут: {date}",
+        "mute_error": "❌ Ошибка мьюта: {error}",
+        "unmute_success": "🔊 <b>Мут снят</b> с {user_name}.",
+        "unmute_error": "❌ Ошибка размута: {error}",
+        "warn_reason": "Нарушение правил чата",
+        "warn_limit_ban": "⛔ <b>Бан за варны ({count}/{limit}):</b> {user_name}\nПричина: {reason}",
+        "warn_added": "⚠️ <b>Варн ({count}/{limit}):</b> {user_name}\nПричина: {reason}",
+        "kick_success": "👢 <b>Кикнут:</b> {user_name}.",
+        "kick_error": "❌ Ошибка кика: {error}",
+        "sub_access_denied": "🚫 <b>Доступ ограничен, {user_name}!</b>\n\nДля того чтобы писать в этот чат, необходимо подписаться на следующие каналы.",
+        "sub_button_text": "👉 Подписаться на {channel}",
+        "sub_button_verify": "✅ Я подписался",
+        "sub_verified": "✅ Доступ разрешен! Можете писать в чат.",
+        "sub_not_all": "❌ Вы подписались не на все каналы! Повторите проверку после подписки.",
+        "settings_info": "⚙️ <b>Настройки группы</b>\n\nЗдесь в будущем будут настройки фильтров, приветствий и прочего. Для управления подписками используйте /setup в нужном чате.",
+    },
+    'en': {
+        "welcome_private": "👋 <b>Hello, {user_name}!</b>\n\nI am an automated chat moderation system.\nUse the menu below to manage the bot:",
+        "menu_add_group": "➕ Add to Group",
+        "menu_settings": "⚙️ Group Settings",
+        "menu_languages": "🌐 Language",
+        "menu_admin": "🔒 Admin Menu",
+        "lang_changed": "✅ Language changed to **{lang}**.",
+        "lang_choose": "🌐 <b>Select Language / Виберіть мову:</b>",
+        "lang_back": "⬅️ Back",
+        "lang_title_ru": "🇷🇺 Russian",
+        "lang_title_en": "🇬🇧 English",
+        "lang_title_uk": "🇺🇦 Українська",
+        "admin_panel_title": "<b>🎛 Administrator Panel</b>\nMain bot management menu.",
+        "no_rights": "⛔ You do not have access rights to this menu. You are not the bot owner.",
+        "group_welcome": "👋 Hi! I'm <b>{bot_name}</b>.\n\nI help manage the group and subscriptions. To configure me, go to my private chat.",
+        "group_go_private": "🤖 Go to Private Chat for setup",
+        "setup_info": "ℹ️ <b>Usage:</b>\n<code>/setup @channel [time]</code>\n\nExample: <code>/setup @MyChannel 1d</code>",
+        "setup_error_time": "⚠️ <b>Error:</b> Invalid time format. Use: <code>30m</code>, <code>1h</code>, <code>5d</code>, etc.",
+        "setup_error_not_channel": "⚠️ <b>Error:</b> This is not a channel or supergroup.",
+        "setup_error_unknown_channel": "⚠️ <b>Error:</b> I cannot see this channel. Make sure it exists and the username is correct.",
+        "setup_success": "✅ <b>Channel added!</b>\nSubscription to <b>{channel}</b> is now mandatory {info}.",
+        "setup_info_forever": "<b>forever</b>",
+        "setup_info_until": "until <b>{date}</b>",
+        "unsetup_usage": "ℹ️ <b>Usage:</b> <code>/unsetup @channel</code>\n\n<i>There are no active subscription requirements in this chat.</i>",
+        "unsetup_list": "ℹ️ <b>Current mandatory subscriptions:</b>\n{channels}\n\nEnter the command with the username to remove.",
+        "unsetup_deleted": "🗑 <b>Subscription requirement for {channel} removed.</b>",
+        "unsetup_not_found": "❌ <b>Error:</b> Subscription to {channel} not found in the mandatory list for this chat.",
+        "cmd_no_reply": "↩️ Reply to the user's message.",
+        "cmd_no_id_reply": "ℹ️ ID or Reply.",
+        "no_admin_rights": "⛔ Only administrators can use this command.",
+        "ban_success": "⛔ <b>Banned:</b> {user_name}",
+        "ban_error": "❌ Ban error: {error}",
+        "unban_success": "🕊 <b>Unbanned:</b> <code>{user_id}</code>",
+        "unban_error": "❌ Unban error: {error}",
+        "mute_error_time": "⚠️ Invalid time format. Use: <code>30m</code>, <code>1h</code>, <code>5d</code>.",
+        "mute_success": "🔇 <b>Mute for {duration}:</b> {user_name}\nAutomatic unmute: {date}",
+        "mute_error": "❌ Mute error: {error}",
+        "unmute_success": "🔊 <b>Mute removed</b> from {user_name}.",
+        "unmute_error": "❌ Unmute error: {error}",
+        "warn_reason": "Chat rules violation",
+        "warn_limit_ban": "⛔ <b>Ban for warns ({count}/{limit}):</b> {user_name}\nReason: {reason}",
+        "warn_added": "⚠️ <b>Warn ({count}/{limit}):</b> {user_name}\nReason: {reason}",
+        "kick_success": "👢 <b>Kicked:</b> {user_name}.",
+        "kick_error": "❌ Kick error: {error}",
+        "sub_access_denied": "🚫 <b>Access denied, {user_name}!</b>\n\nTo be able to write in this chat, you must subscribe to the following channels.",
+        "sub_button_text": "👉 Subscribe to {channel}",
+        "sub_button_verify": "✅ I have subscribed",
+        "sub_verified": "✅ Access granted! You can now write in the chat.",
+        "sub_not_all": "❌ You haven't subscribed to all channels! Recheck after subscribing.",
+        "settings_info": "⚙️ <b>Group Settings</b>\n\nFuture settings for filters, greetings, and more will be here. Use /setup in the desired chat to manage subscriptions.",
+    },
+    'uk': {
+        "welcome_private": "👋 <b>Вітаю, {user_name}!</b>\n\nЯ — автоматизована система модерації чатів.\nВикористовуйте меню нижче для керування ботом:",
+        "menu_add_group": "➕ Додати до групи",
+        "menu_settings": "⚙️ Налаштування групи",
+        "menu_languages": "🌐 Мова",
+        "menu_admin": "🔒 Адмін меню",
+        "lang_changed": "✅ Мову змінено на **{lang}**.",
+        "lang_choose": "🌐 <b>Оберіть мову / Choose Language / Выберите язык:</b>",
+        "lang_back": "⬅️ Назад",
+        "lang_title_ru": "🇷🇺 Російська",
+        "lang_title_en": "🇬🇧 Англійська",
+        "lang_title_uk": "🇺🇦 Українська",
+        "admin_panel_title": "<b>🎛 Панель Адміністратора</b>\nГоловне меню керування ботом.",
+        "no_rights": "⛔ Ви не маєте прав доступу до цього меню. Ви не власник бота.",
+        "group_welcome": "👋 Привіт! Я — <b>{bot_name}</b>.\n\nЯ допомагаю керувати групою та підписками. Щоб налаштувати мене, перейдіть до ЛС.",
+        "group_go_private": "🤖 Перейти до ЛС для налаштування",
+        "setup_info": "ℹ️ <b>Використання:</b>\n<code>/setup @channel [час]</code>\n\nПриклад: <code>/setup @MyChannel 1d</code>",
+        "setup_error_time": "⚠️ <b>Помилка:</b> Невірний формат часу. Використовуйте: <code>30m</code>, <code>1h</code>, <code>5d</code> тощо.",
+        "setup_error_not_channel": "⚠️ <b>Помилка:</b> Це не канал або супергрупа.",
+        "setup_error_unknown_channel": "⚠️ <b>Помилка:</b> Я не бачу цей канал. Переконайтеся, що він існує і його юзернейм коректний.",
+        "setup_success": "✅ <b>Канал додано!</b>\nТепер підписка на <b>{channel}</b> обов'язкова {info}.",
+        "setup_info_forever": "<b>назавжди</b>",
+        "setup_info_until": "до <b>{date}</b>",
+        "unsetup_usage": "ℹ️ <b>Використання:</b> <code>/unsetup @channel</code>\n\n<i>У цьому чаті немає активних вимог підписки.</i>",
+        "unsetup_list": "ℹ️ <b>Поточні обов'язкові підписки:</b>\n{channels}\n\nВведіть команду з юзернеймом для видалення.",
+        "unsetup_deleted": "🗑 <b>Вимога підписки на {channel} видалено.</b>",
+        "unsetup_not_found": "❌ <b>Помилка:</b> Підписку на {channel} не знайдено у списку обов'язкових для цього чату.",
+        "cmd_no_reply": "↩️ Відповіжте на повідомлення користувача.",
+        "cmd_no_id_reply": "ℹ️ ID або відповідь.",
+        "no_admin_rights": "⛔ Тільки адміністратори можуть використовувати цю команду.",
+        "ban_success": "⛔ <b>Забанено:</b> {user_name}",
+        "ban_error": "❌ Помилка бану: {error}",
+        "unban_success": "🕊 <b>Розбанено:</b> <code>{user_id}</code>",
+        "unban_error": "❌ Помилка розбану: {error}",
+        "mute_error_time": "⚠️ Невірний формат часу. Використовуйте: <code>30m</code>, <code>1h</code>, <code>5d</code>.",
+        "mute_success": "🔇 <b>Мут на {duration}:</b> {user_name}\nАвтоматичний розмут: {date}",
+        "mute_error": "❌ Помилка муту: {error}",
+        "unmute_success": "🔊 <b>Мут знято</b> з {user_name}.",
+        "unmute_error": "❌ Помилка розмуту: {error}",
+        "warn_reason": "Порушення правил чату",
+        "warn_limit_ban": "⛔ <b>Бан за варни ({count}/{limit}):</b> {user_name}\nПричина: {reason}",
+        "warn_added": "⚠️ <b>Варн ({count}/{limit}):</b> {user_name}\nПричина: {reason}",
+        "kick_success": "👢 <b>Кікнуто:</b> {user_name}.",
+        "kick_error": "❌ Помилка кіку: {error}",
+        "sub_access_denied": "🚫 <b>Доступ обмежено, {user_name}!</b>\n\nЩоб мати можливість писати в цей чат, необхідно підписатися на наступні канали.",
+        "sub_button_text": "👉 Підписатися на {channel}",
+        "sub_button_verify": "✅ Я підписався",
+        "sub_verified": "✅ Доступ дозволено! Можете писати в чат.",
+        "sub_not_all": "❌ Ви підписалися не на всі канали! Повторіть перевірку після підписки.",
+        "settings_info": "⚙️ <b>Налаштування групи</b>\n\nТут будуть майбутні налаштування фільтрів, привітань тощо. Використовуйте /setup у потрібному чаті для керування підписками.",
+    },
+}
+DEFAULT_LANG = 'ru' # Язык по умолчанию
+LANGUAGES = {'ru': 'Русский', 'en': 'English', 'uk': 'Українська'} # Отображаемые названия
+
+def get_string(user_id, key):
+    """Получает строку локализации для пользователя."""
+    lang_code = get_user_language(user_id)
+    return STRINGS.get(lang_code, STRINGS[DEFAULT_LANG]).get(key, STRINGS[DEFAULT_LANG].get(key, f"MISSING STRING: {key}"))
 
 # --- БАЗА ДАННЫХ ---
 def get_db_connection():
@@ -40,7 +202,7 @@ def get_db_connection():
 def initialize_database():
     """Инициализирует все необходимые таблицы."""
     with get_db_connection() as conn:
-        # Таблица для обязательных подписок (привязана к конкретному чату)
+        # Таблица для обязательных подписок
         conn.execute("""
             CREATE TABLE IF NOT EXISTS required_subs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -97,9 +259,34 @@ def initialize_database():
                 created_at TEXT
             )
         """)
+        # НОВАЯ ТАБЛИЦА: для хранения языка пользователя
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS user_language (
+                user_id INTEGER PRIMARY KEY NOT NULL,
+                lang_code TEXT DEFAULT 'ru'
+            )
+        """)
         conn.commit()
 
-# --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
+def get_user_language(user_id):
+    """Получает код языка для пользователя."""
+    with get_db_connection() as conn:
+        cursor = conn.execute("SELECT lang_code FROM user_language WHERE user_id = ?", (user_id,))
+        row = cursor.fetchone()
+        return row['lang_code'] if row and row['lang_code'] in STRINGS else DEFAULT_LANG
+
+def set_user_language(user_id, lang_code):
+    """Устанавливает код языка для пользователя."""
+    if lang_code not in STRINGS:
+        lang_code = DEFAULT_LANG
+    with get_db_connection() as conn:
+        conn.execute("INSERT OR REPLACE INTO user_language (user_id, lang_code) VALUES (?, ?)", (user_id, lang_code))
+        conn.commit()
+    return lang_code
+
+# --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ (без изменений) ---
+# ... (Остальные вспомогательные функции: get_iso_now, parse_iso_datetime, format_readable_date, sanitize_text, get_full_user_name, check_admin_rights, log_system_action, update_user_activity, parse_time_string, background_unmute_worker)
+
 def get_iso_now():
     """Возвращает текущее время в UTC ISO формате."""
     return datetime.utcnow().isoformat()
@@ -208,15 +395,20 @@ def background_unmute_worker():
                             bot.restrict_chat_member(
                                 mute['chat_id'], 
                                 mute['user_id'], 
-                                can_send_messages=True,
-                                can_send_media_messages=True,
-                                can_send_other_messages=True,
-                                can_add_web_page_previews=True
+                                permissions=ChatPermissions(
+                                    can_send_messages=True,
+                                    can_send_media_messages=True,
+                                    can_send_other_messages=True,
+                                    can_add_web_page_previews=True
+                                )
                             )
                             # Отправляем уведомление
+                            user_lang = get_user_language(mute['user_id'])
+                            unmute_msg = get_string(user_lang, "unmute_success").replace("Мут снят", "Время истекло").replace("unmute_success", "Mute Expired") # Специальная строка, так как нет отдельной в локали
+                            
                             bot.send_message(
                                 mute['chat_id'], 
-                                f"🔊 <b>Время истекло.</b> Пользователь <a href='tg://user?id={mute['user_id']}'>{mute['user_id']}</a> размучен.",
+                                f"🔊 <b>{unmute_msg}</b> Пользователь <a href='tg://user?id={mute['user_id']}'>{mute['user_id']}</a> размучен.",
                                 disable_notification=True
                             )
                             log_system_action(mute['chat_id'], mute['user_id'], "UNMUTE_AUTO", f"Автоматический размут. Истекло в {format_readable_date(mute['expires_at'])}")
@@ -231,7 +423,7 @@ def background_unmute_worker():
             print(f"Worker Error: {e}")
         time.sleep(20)
 
-# --- ГЕНЕРАТОРЫ КЛАВИАТУР ---
+# --- ГЕНЕРАТОРЫ КЛАВИАТУР (ОБНОВЛЕНО) ---
 
 def get_bot_username():
     """Получает и кэширует юзернейм бота."""
@@ -245,41 +437,48 @@ def get_bot_username():
 
 def generate_start_keyboard(user_id):
     """Главное меню при команде /start в ЛС."""
+    user_lang = get_user_language(user_id)
     username = get_bot_username()
     markup = InlineKeyboardMarkup()
     
-    # URL для добавления бота в группу с правами
     add_url = f"https://t.me/{username}?startgroup=true&admin=change_info+delete_messages+restrict_members+invite_users+pin_messages+manage_chat+promote_members"
-    markup.add(InlineKeyboardButton("➕ Добавить в группу", url=add_url))
+    markup.add(InlineKeyboardButton(get_string(user_id, "menu_add_group"), url=add_url))
     
-    markup.add(InlineKeyboardButton("⚙️ Настройки группы (демо)", callback_data="settings_menu"))
-    markup.add(InlineKeyboardButton("🌐 Languages (демо)", callback_data="languages_menu"))
+    # Теперь Settings не демо
+    markup.add(InlineKeyboardButton(get_string(user_id, "menu_settings"), callback_data="settings_menu"))
+    # Languages теперь не демо
+    markup.add(InlineKeyboardButton(get_string(user_id, "menu_languages"), callback_data="languages_menu"))
     
-    # Админ меню (только для владельца)
     if user_id == ADMIN_ID:
-        markup.add(InlineKeyboardButton("🔒 Админ меню", callback_data="adm_main_menu"))
+        markup.add(InlineKeyboardButton(get_string(user_id, "menu_admin"), callback_data="adm_main_menu"))
         
     return markup
 
-def generate_settings_keyboard():
-    """Клавиатура настроек (демо)."""
+def generate_settings_keyboard(user_id):
+    """Клавиатура настроек (не демо)."""
+    user_lang = get_user_language(user_id)
     markup = InlineKeyboardMarkup()
     # Здесь могут быть другие настройки
-    markup.add(InlineKeyboardButton("⬅️ Назад", callback_data="main_menu"))
+    markup.add(InlineKeyboardButton(get_string(user_id, "lang_back"), callback_data="main_menu"))
     return markup
 
-def generate_languages_keyboard():
-    """Клавиатура выбора языка (демо)."""
+def generate_languages_keyboard(user_id):
+    """Клавиатура выбора языка (рабочая)."""
+    user_lang = get_user_language(user_id)
     markup = InlineKeyboardMarkup()
     markup.row(
-        InlineKeyboardButton("🇷🇺 Русский", callback_data="lang_ru"),
-        InlineKeyboardButton("🇬🇧 English", callback_data="lang_en")
+        InlineKeyboardButton(get_string(user_id, "lang_title_ru"), callback_data="lang_select:ru"),
+        InlineKeyboardButton(get_string(user_id, "lang_title_en"), callback_data="lang_select:en")
     )
-    markup.add(InlineKeyboardButton("⬅️ Назад", callback_data="main_menu"))
+    markup.row(
+        InlineKeyboardButton(get_string(user_id, "lang_title_uk"), callback_data="lang_select:uk")
+    )
+    markup.add(InlineKeyboardButton(get_string(user_id, "lang_back"), callback_data="main_menu"))
     return markup
-
-def generate_main_admin_keyboard():
+# ... (Остальные генераторы клавиатур - без изменений, кроме использования локализации)
+def generate_main_admin_keyboard(user_id):
     """Главное меню администратора."""
+    user_lang = get_user_language(user_id)
     markup = InlineKeyboardMarkup()
     markup.row(
         InlineKeyboardButton("📊 Статистика", callback_data="adm_stats"),
@@ -290,53 +489,56 @@ def generate_main_admin_keyboard():
         InlineKeyboardButton("🛡 Управление подписками", callback_data="adm_manage_subs")
     )
     markup.add(InlineKeyboardButton("❌ Закрыть", callback_data="close_panel"))
-    markup.add(InlineKeyboardButton("⬅️ В главное меню", callback_data="main_menu"))
+    markup.add(InlineKeyboardButton(get_string(user_id, "lang_back").replace("Назад", "В главное меню"), callback_data="main_menu"))
     return markup
 
-def generate_management_keyboard():
+def generate_management_keyboard(user_id):
     """Меню управления подписками (глобальное)."""
+    user_lang = get_user_language(user_id)
     markup = InlineKeyboardMarkup()
     markup.add(InlineKeyboardButton("📋 Показать все подписки", callback_data="mng_show_subs"))
     markup.add(InlineKeyboardButton("➕ Добавить подписку (через /setup в чате)", callback_data="mng_info_add"))
     markup.add(InlineKeyboardButton("➖ Удалить подписку (по ID)", callback_data="mng_del_sub_start"))
-    markup.add(InlineKeyboardButton("⬅️ Назад", callback_data="adm_main_menu"))
+    markup.add(InlineKeyboardButton(get_string(user_id, "lang_back"), callback_data="adm_main_menu"))
     return markup
 
-def generate_back_button(callback_data="adm_main_menu"):
+def generate_back_button(user_id, callback_data="adm_main_menu"):
     """Генерирует кнопку "Назад"."""
+    user_lang = get_user_language(user_id)
     markup = InlineKeyboardMarkup()
-    markup.add(InlineKeyboardButton("⬅️ Вернуться назад", callback_data=callback_data))
+    markup.add(InlineKeyboardButton(get_string(user_id, "lang_back").replace("Назад", "Вернуться назад"), callback_data=callback_data))
     return markup
 
-def generate_subscription_keyboard(missing_channels):
+def generate_subscription_keyboard(user_id, missing_channels):
     """Клавиатура для проверки подписки в чате."""
+    user_lang = get_user_language(user_id)
     markup = InlineKeyboardMarkup()
     for channel in missing_channels:
-        # Убеждаемся, что в URL нет символа '@'
         clean_name = channel.replace("@", "")
-        markup.add(InlineKeyboardButton(f"👉 Подписаться на {channel}", url=f"https://t.me/{clean_name}"))
-    markup.add(InlineKeyboardButton("✅ Я подписался", callback_data="verify_subscription"))
+        markup.add(InlineKeyboardButton(get_string(user_id, "sub_button_text").format(channel=channel), url=f"https://t.me/{clean_name}"))
+    markup.add(InlineKeyboardButton(get_string(user_id, "sub_button_verify"), callback_data="verify_subscription"))
     return markup
 
-def generate_delete_subscription_keyboard(subs):
+def generate_delete_subscription_keyboard(user_id, subs):
     """Клавиатура для выбора подписки на удаление."""
+    user_lang = get_user_language(user_id)
     markup = InlineKeyboardMarkup()
     for sub in subs:
         chat_name = f"Chat_{sub['chat_id']}"
         try:
-            # Пытаемся получить имя чата
             chat_info = bot.get_chat(sub['chat_id'])
             chat_name = sanitize_text(chat_info.title)
         except Exception:
-            pass # Если не удалось, оставляем ID
+            pass
 
         display_name = f"[{sub['id']}] {sub['channel']} в {chat_name}"
         markup.add(InlineKeyboardButton(display_name, callback_data=f"mng_del_sub:{sub['id']}"))
     
-    markup.add(InlineKeyboardButton("⬅️ Назад", callback_data="adm_manage_subs"))
+    markup.add(InlineKeyboardButton(get_string(user_id, "lang_back"), callback_data="adm_manage_subs"))
     return markup
 
-# --- ЛОГИКА ПРОВЕРКИ ПОДПИСОК ---
+
+# --- ЛОГИКА ПРОВЕРКИ ПОДПИСОК (без изменений) ---
 
 def get_required_channels_for_chat(chat_id):
     """Получает список активных обязательных каналов для чата."""
@@ -361,7 +563,7 @@ def check_subscription_status(user_id, channel):
         # Если бот не может проверить, он должен считать, что пользователь не подписан.
         return False 
 
-# --- ОБРАБОТЧИК CALLBACK (КНОПОК) ---
+# --- ОБРАБОТЧИК CALLBACK (КНОПОК) (ОБНОВЛЕНО) ---
 
 @bot.callback_query_handler(func=lambda call: True)
 def callback_query_handler(call: CallbackQuery):
@@ -369,16 +571,16 @@ def callback_query_handler(call: CallbackQuery):
     chat_id = call.message.chat.id
     msg_id = call.message.message_id
     data = call.data
+    user_lang = get_user_language(user_id)
 
     # --- ОБЩИЕ КНОПКИ ---
     
     if data == "main_menu":
-        # Очистка локальной памяти при возврате в главное меню
         _local_memory.pop(user_id, None)
         bot.edit_message_text(
             chat_id=chat_id,
             message_id=msg_id,
-            text=f"👋 <b>Приветствую, {sanitize_text(call.from_user.first_name)}!</b>\n\nВыберите действие:",
+            text=get_string(user_id, "welcome_private").format(user_name=sanitize_text(call.from_user.first_name)),
             reply_markup=generate_start_keyboard(user_id)
         )
         return
@@ -387,8 +589,8 @@ def callback_query_handler(call: CallbackQuery):
         bot.edit_message_text(
             chat_id=chat_id,
             message_id=msg_id,
-            text="⚙️ <b>Настройки группы (демо)</b>\n\nЗдесь в будущем будут настройки фильтров, приветствий и прочего. Для управления подписками используйте /setup в нужном чате.",
-            reply_markup=generate_settings_keyboard()
+            text=get_string(user_id, "settings_info"),
+            reply_markup=generate_settings_keyboard(user_id)
         )
         return
 
@@ -396,14 +598,30 @@ def callback_query_handler(call: CallbackQuery):
         bot.edit_message_text(
             chat_id=chat_id,
             message_id=msg_id,
-            text="🌐 <b>Выберите язык / Choose Language (демо):</b>",
-            reply_markup=generate_languages_keyboard()
+            text=get_string(user_id, "lang_choose"),
+            reply_markup=generate_languages_keyboard(user_id)
         )
         return
     
-    if data in ["lang_ru", "lang_en"]:
-        lang = "Русский" if data == "lang_ru" else "English"
-        bot.answer_callback_query(call.id, f"✅ Язык изменен на {lang} (демо)", show_alert=False)
+    if data.startswith("lang_select:"):
+        # РАБОЧАЯ ЛОГИКА ВЫБОРА ЯЗЫКА
+        new_lang_code = data.split(":")[1]
+        
+        # Устанавливаем новый язык
+        set_user_language(user_id, new_lang_code)
+        
+        # Получаем имя языка для ответа
+        lang_name = LANGUAGES.get(new_lang_code, 'Unknown')
+        
+        # Редактируем сообщение с новым языком
+        bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=msg_id,
+            text=get_string(user_id, "welcome_private").format(user_name=sanitize_text(call.from_user.first_name)) + "\n\n" + get_string(user_id, "lang_changed").format(lang=lang_name),
+            reply_markup=generate_start_keyboard(user_id)
+        )
+        # Уведомляем пользователя
+        bot.answer_callback_query(call.id, get_string(user_id, "lang_changed").format(lang=lang_name).replace("**", ""), show_alert=True)
         return
     
     if data == "close_panel":
@@ -427,18 +645,18 @@ def callback_query_handler(call: CallbackQuery):
             try:
                 # Удаляем сообщение с требованием подписки
                 bot.delete_message(call.message.chat.id, msg_id)
-                bot.answer_callback_query(call.id, "✅ Доступ разрешен! Можете писать в чат.", show_alert=False)
+                bot.answer_callback_query(call.id, get_string(user_id, "sub_verified"), show_alert=False)
             except Exception:
-                bot.answer_callback_query(call.id, "✅ Доступ разрешен!", show_alert=False)
+                bot.answer_callback_query(call.id, get_string(user_id, "sub_verified"), show_alert=False)
         else:
-            bot.answer_callback_query(call.id, "❌ Вы подписались не на все каналы! Повторите проверку после подписки.", show_alert=True)
+            bot.answer_callback_query(call.id, get_string(user_id, "sub_not_all"), show_alert=True)
         return
 
     # --- АДМИН ПАНЕЛЬ (ПРОВЕРКА) ---
 
     # Проверка на админа для всех действий ниже
     if user_id != ADMIN_ID:
-        bot.answer_callback_query(call.id, "⛔ У вас нет прав доступа к этому меню. Вы не владелец бота.", show_alert=True)
+        bot.answer_callback_query(call.id, get_string(user_id, "no_rights"), show_alert=True)
         return
     
     # Очистка состояния перед входом в меню
@@ -449,11 +667,11 @@ def callback_query_handler(call: CallbackQuery):
         bot.edit_message_text(
             chat_id=chat_id,
             message_id=msg_id,
-            text="<b>🎛 Панель Администратора</b>\nГлавное меню управления ботом.",
-            reply_markup=generate_main_admin_keyboard()
+            text=get_string(user_id, "admin_panel_title"),
+            reply_markup=generate_main_admin_keyboard(user_id)
         )
 
-    # --- АДМИН: СТАТИСТИКА ---
+    # --- АДМИН: СТАТИСТИКА (с использованием локализации) ---
     elif data == "adm_stats":
         with get_db_connection() as conn:
             # Общая статистика
@@ -474,9 +692,9 @@ def callback_query_handler(call: CallbackQuery):
             f"⚠️ Выдано предупреждений: <b>{warns_count}</b>\n"
             f"🕒 Время сервера: <code>{get_iso_now()}</code>"
         )
-        bot.edit_message_text(chat_id=chat_id, message_id=msg_id, text=stats_text, reply_markup=generate_back_button())
+        bot.edit_message_text(chat_id=chat_id, message_id=msg_id, text=stats_text, reply_markup=generate_back_button(user_id))
 
-    # --- АДМИН: ЛОГИ ---
+    # --- АДМИН: ЛОГИ (с использованием локализации) ---
     elif data == "adm_logs":
         with get_db_connection() as conn:
             logs = conn.execute(f"SELECT action_type, details, created_at FROM system_logs ORDER BY id DESC LIMIT {MAX_LOG_ENTRIES}").fetchall()
@@ -491,19 +709,19 @@ def callback_query_handler(call: CallbackQuery):
                 details = sanitize_text(log['details'])
                 log_text += f"🔹 <code>{dt}</code>\n   └ <b>{log['action_type']}</b>: {details[:60]}{'...' if len(details) > 60 else ''}\n"
         
-        bot.edit_message_text(chat_id=chat_id, message_id=msg_id, text=log_text, reply_markup=generate_back_button())
+        bot.edit_message_text(chat_id=chat_id, message_id=msg_id, text=log_text, reply_markup=generate_back_button(user_id))
 
-    # --- АДМИН: МЕНЮ УПРАВЛЕНИЯ ПОДПИСКАМИ ---
+    # --- АДМИН: МЕНЮ УПРАВЛЕНИЯ ПОДПИСКАМИ (с использованием локализации) ---
     elif data == "adm_manage_subs":
         bot.edit_message_text(
             chat_id=chat_id,
             message_id=msg_id,
             text="<b>🛡 Управление обязательными подписками</b>\n\nЗдесь вы можете посмотреть и удалить активные требования подписки.",
-            reply_markup=generate_management_keyboard()
+            reply_markup=generate_management_keyboard(user_id)
         )
 
     elif data == "mng_info_add":
-        # Сообщение-инструкция для добавления подписки
+        # Сообщение-инструкция для добавления подписки (с использованием локализации)
         bot.edit_message_text(
             chat_id=chat_id,
             message_id=msg_id,
@@ -512,10 +730,10 @@ def callback_query_handler(call: CallbackQuery):
                  "<b>Формат:</b> <code>/setup @username_канала [время_действия]</code>\n"
                  "Пример: <code>/setup @MyChannel 1d</code> (на 1 день)\n"
                  "Пример: <code>/setup @MyChannel</code> (навсегда)",
-            reply_markup=generate_back_button("adm_manage_subs")
+            reply_markup=generate_back_button(user_id, "adm_manage_subs")
         )
 
-    # --- АДМИН: ПОКАЗАТЬ ВСЕ ПОДПИСКИ ---
+    # --- АДМИН: ПОКАЗАТЬ ВСЕ ПОДПИСКИ (с использованием локализации) ---
     elif data == "mng_show_subs":
         with get_db_connection() as conn:
             subs = conn.execute("SELECT id, chat_id, channel, expires FROM required_subs ORDER BY chat_id, channel").fetchall()
@@ -543,10 +761,10 @@ def callback_query_handler(call: CallbackQuery):
             chat_id=chat_id, 
             message_id=msg_id, 
             text=sub_list_text, 
-            reply_markup=generate_back_button("adm_manage_subs")
+            reply_markup=generate_back_button(user_id, "adm_manage_subs")
         )
 
-    # --- АДМИН: НАЧАТЬ УДАЛЕНИЕ ПОДПИСКИ ---
+    # --- АДМИН: НАЧАТЬ УДАЛЕНИЕ ПОДПИСКИ (с использованием локализации) ---
     elif data == "mng_del_sub_start":
         with get_db_connection() as conn:
             subs = conn.execute("SELECT id, chat_id, channel, expires FROM required_subs ORDER BY id DESC LIMIT 50").fetchall()
@@ -556,7 +774,7 @@ def callback_query_handler(call: CallbackQuery):
                 chat_id=chat_id, 
                 message_id=msg_id, 
                 text="<b>❌ Нет подписок для удаления.</b>", 
-                reply_markup=generate_back_button("adm_manage_subs")
+                reply_markup=generate_back_button(user_id, "adm_manage_subs")
             )
             return
             
@@ -564,7 +782,7 @@ def callback_query_handler(call: CallbackQuery):
             chat_id=chat_id,
             message_id=msg_id,
             text="<b>➖ Выберите подписку для удаления:</b>\n\n<i>Отображаются последние 50 записей.</i>",
-            reply_markup=generate_delete_subscription_keyboard(subs)
+            reply_markup=generate_delete_subscription_keyboard(user_id, subs)
         )
 
     # --- АДМИН: ФАКТИЧЕСКОЕ УДАЛЕНИЕ ПОДПИСКИ ---
@@ -577,7 +795,6 @@ def callback_query_handler(call: CallbackQuery):
             return
 
         with get_db_connection() as conn:
-            # Получаем информацию для лога
             cursor = conn.execute("SELECT chat_id, channel FROM required_subs WHERE id = ?", (sub_id,))
             sub_info = cursor.fetchone()
             
@@ -591,9 +808,9 @@ def callback_query_handler(call: CallbackQuery):
                 
         # Перезагружаем меню управления подписками
         call.data = "adm_manage_subs"
-        callback_query_handler(call) # Вызываем обработчик для обновления меню
+        callback_query_handler(call) 
 
-    # --- АДМИН: РАССЫЛКА (НАЧАЛО) ---
+    # --- АДМИН: РАССЫЛКА (НАЧАЛО) (с использованием локализации) ---
     elif data == "adm_broadcast":
         # Очистка состояния перед входом в меню
         _local_memory.pop(user_id, None)
@@ -602,19 +819,20 @@ def callback_query_handler(call: CallbackQuery):
             chat_id=chat_id,
             message_id=msg_id,
             text="<b>📡 Режим рассылки</b>\n\nОтправьте сообщение (текст, фото, видео, анимация), и оно будет разослано всем уникальным пользователям из базы данных.\n\n<i>Нажмите 'Назад' для отмены.</i>",
-            reply_markup=generate_back_button()
+            reply_markup=generate_back_button(user_id)
         )
         # Устанавливаем состояние ожидания
         _local_memory[user_id] = "waiting_broadcast"
 
-# --- ОБРАБОТЧИКИ СООБЩЕНИЙ В ЛС ---
+# --- ОБРАБОТЧИКИ СООБЩЕНИЙ В ЛС (ОБНОВЛЕНО: Добавлен check_chat_type) ---
 
 @bot.message_handler(func=lambda m: m.chat.type == 'private' and _local_memory.get(m.from_user.id) == "waiting_broadcast", content_types=['text', 'photo', 'video', 'animation', 'sticker', 'document'])
 def process_broadcast(message):
     """Обрабатывает сообщение для рассылки."""
+    # ... (логика рассылки) ...
     user_id = message.from_user.id
     if user_id != ADMIN_ID: return
-
+    # ... (логика рассылки без изменений) ...
     # Удаляем состояние, чтобы избежать повторной обработки
     _local_memory.pop(user_id, None) 
     
@@ -645,42 +863,36 @@ def process_broadcast(message):
     bot.send_message(user_id, result_message)
     log_system_action(user_id, user_id, "BROADCAST_END", f"Рассылка завершена. Успешно: {success_count}, Ошибок: {fail_count}")
 
-# --- КОМАНДЫ ДЛЯ ЧАТА ---
+# --- КОМАНДЫ ДЛЯ ЧАТА И ЛС (ОБНОВЛЕНО: Разделение по chat.type) ---
 
 @bot.message_handler(commands=['start'])
 def command_start_handler(message):
     """Обработчик команды /start."""
     user_id = message.from_user.id
+    user_lang = get_user_language(user_id)
     
-    # 1. Логика для ГРУППЫ
+    # 1. Логика для ГРУППЫ (только для групп)
     if message.chat.type in ['group', 'supergroup']:
         bot_info = bot.get_me()
         
-        # Пытаемся удалить команду /start, чтобы не засорять чат
         try:
             bot.delete_message(message.chat.id, message.message_id)
         except Exception:
             pass
         
         kb = InlineKeyboardMarkup()
-        kb.add(InlineKeyboardButton("🤖 Перейти в ЛС для настройки", url=f"https://t.me/{bot_info.username}?start=settings"))
+        kb.add(InlineKeyboardButton(get_string(user_id, "group_go_private"), url=f"https://t.me/{bot_info.username}?start=settings"))
         
         bot.send_message(
             message.chat.id,
-            f"👋 Привет! Я — <b>{bot_info.first_name}</b>.\n\n"
-            "Я помогаю управлять группой и подписками. Чтобы настроить меня, перейдите в ЛС.",
+            get_string(user_id, "group_welcome").format(bot_name=bot_info.first_name),
             reply_markup=kb,
-            parse_mode="HTML"
         )
         return
 
-    # 2. Логика для ЛИЧНЫХ СООБЩЕНИЙ (Меню пользователя/админа)
+    # 2. Логика для ЛИЧНЫХ СООБЩЕНИЙ (только для ЛС)
     if message.chat.type == 'private':
-        welcome_msg = (
-            f"👋 <b>Приветствую, {sanitize_text(get_full_user_name(message.from_user))}!</b>\n\n"
-            "Я — автоматизированная система модерации чатов.\n"
-            "Используйте меню ниже для управления ботом:"
-        )
+        welcome_msg = get_string(user_id, "welcome_private").format(user_name=sanitize_text(get_full_user_name(message.from_user)))
         bot.send_message(
             message.chat.id, 
             welcome_msg, 
@@ -689,14 +901,21 @@ def command_start_handler(message):
 
 @bot.message_handler(commands=['setup'])
 def command_setup(message):
-    """Добавляет обязательный канал для подписки в чате."""
-    if not check_admin_rights(message.chat.id, message.from_user.id): 
-        bot.reply_to(message, "⛔ Только администраторы могут использовать эту команду.")
+    """Добавляет обязательный канал для подписки в чате (только для групп)."""
+    user_id = message.from_user.id
+    user_lang = get_user_language(user_id)
+    
+    if message.chat.type not in ['group', 'supergroup']:
+        bot.reply_to(message, "ℹ️ Эта команда работает только в группах.")
+        return
+        
+    if not check_admin_rights(message.chat.id, user_id): 
+        bot.reply_to(message, get_string(user_id, "no_admin_rights"))
         return
         
     args = message.text.split()
     if len(args) < 2:
-        bot.reply_to(message, "ℹ️ <b>Использование:</b>\n<code>/setup @channel [время]</code>\n\nПример: <code>/setup @MyChannel 1d</code>")
+        bot.reply_to(message, get_string(user_id, "setup_info"))
         return
         
     channel = args[1]
@@ -708,46 +927,55 @@ def command_setup(message):
         if delta: 
             expiry_iso = (datetime.utcnow() + delta).isoformat()
         else:
-            bot.reply_to(message, "⚠️ <b>Ошибка:</b> Неверный формат времени. Используйте: <code>30m</code>, <code>1h</code>, <code>5d</code> и т.д.")
+            bot.reply_to(message, get_string(user_id, "setup_error_time"))
             return
 
     try:
-        # Проверяем существование канала и права бота (боту не обязательно быть админом, чтобы проверять подписку)
         chat_info = bot.get_chat(channel)
         if chat_info.type not in ['channel', 'supergroup']:
-             bot.reply_to(message, "⚠️ <b>Ошибка:</b> Это не канал или супергруппа.")
+             bot.reply_to(message, get_string(user_id, "setup_error_not_channel"))
              return
     except Exception as e:
-        bot.reply_to(message, f"⚠️ <b>Ошибка:</b> Я не вижу этот канал. Убедитесь, что он существует и его юзернейм корректен.")
-        log_system_action(message.chat.id, message.from_user.id, "SETUP_FAIL", f"Не удалось добавить канал {channel}. Ошибка: {e}")
+        bot.reply_to(message, get_string(user_id, "setup_error_unknown_channel"))
+        log_system_action(message.chat.id, user_id, "SETUP_FAIL", f"Не удалось добавить канал {channel}. Ошибка: {e}")
         return
         
     with get_db_connection() as conn:
         conn.execute("INSERT INTO required_subs (chat_id, channel, expires, added_by, created_at) VALUES (?, ?, ?, ?, ?)",
-            (message.chat.id, channel, expiry_iso, message.from_user.id, get_iso_now()))
+            (message.chat.id, channel, expiry_iso, user_id, get_iso_now()))
         conn.commit()
         
-    info = f"до <b>{format_readable_date(expiry_iso)}</b>" if expiry_iso else "<b>навсегда</b>"
-    bot.reply_to(message, f"✅ <b>Канал добавлен!</b>\nТеперь подписка на <b>{channel}</b> обязательна {info}.")
-    log_system_action(message.chat.id, message.from_user.id, "SETUP_ADD", f"Добавлен канал: {channel} {info}")
+    if expiry_iso:
+        info = get_string(user_id, "setup_info_until").format(date=format_readable_date(expiry_iso))
+    else:
+        info = get_string(user_id, "setup_info_forever")
+        
+    bot.reply_to(message, get_string(user_id, "setup_success").format(channel=channel, info=info))
+    log_system_action(message.chat.id, user_id, "SETUP_ADD", f"Добавлен канал: {channel} {info}")
 
 @bot.message_handler(commands=['unsetup'])
 def command_unsetup(message):
-    """Удаляет обязательный канал для подписки из чата."""
-    if not check_admin_rights(message.chat.id, message.from_user.id): 
-        bot.reply_to(message, "⛔ Только администраторы могут использовать эту команду.")
+    """Удаляет обязательный канал для подписки из чата (только для групп)."""
+    user_id = message.from_user.id
+    user_lang = get_user_language(user_id)
+    
+    if message.chat.type not in ['group', 'supergroup']:
+        bot.reply_to(message, "ℹ️ Эта команда работает только в группах.")
+        return
+        
+    if not check_admin_rights(message.chat.id, user_id): 
+        bot.reply_to(message, get_string(user_id, "no_admin_rights"))
         return
         
     args = message.text.split()
     if len(args) < 2:
-        # Показываем список текущих подписок, чтобы админ мог выбрать
         required_channels = get_required_channels_for_chat(message.chat.id)
         if not required_channels:
-            bot.reply_to(message, "ℹ️ <b>Использование:</b> <code>/unsetup @channel</code>\n\n<i>В этом чате нет активных требований подписки.</i>")
+            bot.reply_to(message, get_string(user_id, "unsetup_usage"))
             return
         
-        list_text = "ℹ️ <b>Текущие обязательные подписки:</b>\n" + "\n".join(required_channels)
-        bot.reply_to(message, list_text + "\n\nВведите команду с юзернеймом для удаления.")
+        list_text = "\n".join(required_channels)
+        bot.reply_to(message, get_string(user_id, "unsetup_list").format(channels=list_text))
         return
         
     channel = args[1]
@@ -756,39 +984,46 @@ def command_unsetup(message):
         conn.commit()
         
     if cursor.rowcount > 0:
-        bot.reply_to(message, f"🗑 <b>Требование подписки на {channel} удалено.</b>")
-        log_system_action(message.chat.id, message.from_user.id, "SETUP_DEL", f"Удален канал: {channel}")
+        bot.reply_to(message, get_string(user_id, "unsetup_deleted").format(channel=channel))
+        log_system_action(message.chat.id, user_id, "SETUP_DEL", f"Удален канал: {channel}")
     else:
-        bot.reply_to(message, f"❌ <b>Ошибка:</b> Подписка на {channel} не найдена в списке обязательных для этого чата.")
+        bot.reply_to(message, get_string(user_id, "unsetup_not_found").format(channel=channel))
 
 @bot.message_handler(commands=['ban'])
 def command_ban(message):
-    """Банит пользователя по реплаю."""
+    """Банит пользователя по реплаю (только для групп)."""
+    user_id = message.from_user.id
+    user_lang = get_user_language(user_id)
+    
+    if message.chat.type not in ['group', 'supergroup']: return
     if not message.reply_to_message:
-        bot.reply_to(message, "↩️ Ответьте на сообщение пользователя, которого хотите забанить.")
+        bot.reply_to(message, get_string(user_id, "cmd_no_reply"))
         return
-    if not check_admin_rights(message.chat.id, message.from_user.id): return
+    if not check_admin_rights(message.chat.id, user_id): return
     
     target_user = message.reply_to_message.from_user
     
     try:
-        # 1. Бан пользователя
         bot.ban_chat_member(message.chat.id, target_user.id)
-        # 2. Удаление исходного сообщения
         try:
             bot.delete_message(message.chat.id, message.reply_to_message.message_id)
         except Exception:
             pass
-        # 3. Ответ с подтверждением
-        bot.reply_to(message, f"⛔ <b>Забанен:</b> {sanitize_text(get_full_user_name(target_user))}")
-        log_system_action(message.chat.id, message.from_user.id, "BAN", f"Забанен {target_user.id} ({get_full_user_name(target_user)})")
+            
+        user_name = sanitize_text(get_full_user_name(target_user))
+        bot.reply_to(message, get_string(user_id, "ban_success").format(user_name=user_name))
+        log_system_action(message.chat.id, user_id, "BAN", f"Забанен {target_user.id} ({user_name})")
     except Exception as e: 
-        bot.reply_to(message, f"❌ Ошибка бана: {e}")
+        bot.reply_to(message, get_string(user_id, "ban_error").format(error=e))
 
 @bot.message_handler(commands=['unban'])
 def command_unban(message):
-    """Разбанивает пользователя по реплаю или ID."""
-    if not check_admin_rights(message.chat.id, message.from_user.id): return
+    """Разбанивает пользователя по реплаю или ID (только для групп)."""
+    user_id = message.from_user.id
+    user_lang = get_user_language(user_id)
+
+    if message.chat.type not in ['group', 'supergroup']: return
+    if not check_admin_rights(message.chat.id, user_id): return
     
     target_id = None
     if message.reply_to_message:
@@ -797,34 +1032,38 @@ def command_unban(message):
         try:
             target_id = int(message.text.split()[1])
         except ValueError:
-            bot.reply_to(message, "ℹ️ ID или реплай.")
+            bot.reply_to(message, get_string(user_id, "cmd_no_id_reply"))
             return
 
     if not target_id:
-        bot.reply_to(message, "ℹ️ ID или реплай.")
+        bot.reply_to(message, get_string(user_id, "cmd_no_id_reply"))
         return
 
     try:
         bot.unban_chat_member(message.chat.id, target_id, only_if_banned=True)
-        bot.reply_to(message, f"🕊 <b>Разбанен:</b> <code>{target_id}</code>")
-        log_system_action(message.chat.id, message.from_user.id, "UNBAN", f"Разбанен {target_id}")
+        bot.reply_to(message, get_string(user_id, "unban_success").format(user_id=target_id))
+        log_system_action(message.chat.id, user_id, "UNBAN", f"Разбанен {target_id}")
     except Exception as e: 
-        bot.reply_to(message, f"❌ Ошибка разбана: {e}")
+        bot.reply_to(message, get_string(user_id, "unban_error").format(error=e))
 
 @bot.message_handler(commands=['mute'])
 def command_mute(message):
-    """Мьютит пользователя на заданное время по реплаю."""
+    """Мьютит пользователя на заданное время по реплаю (только для групп)."""
+    user_id = message.from_user.id
+    user_lang = get_user_language(user_id)
+
+    if message.chat.type not in ['group', 'supergroup']: return
     if not message.reply_to_message:
-        bot.reply_to(message, "↩️ Ответьте на сообщение. Пример: <code>/mute 1h</code>")
+        bot.reply_to(message, get_string(user_id, "cmd_no_reply") + ". Пример: <code>/mute 1h</code>")
         return
-    if not check_admin_rights(message.chat.id, message.from_user.id): return
+    if not check_admin_rights(message.chat.id, user_id): return
     
     args = message.text.split()
     duration = args[1] if len(args) > 1 else "1h"
     delta = parse_time_string(duration)
     
     if not delta: 
-        bot.reply_to(message, "⚠️ Неверный формат времени. Используйте: <code>30m</code>, <code>1h</code>, <code>5d</code>.")
+        bot.reply_to(message, get_string(user_id, "mute_error_time"))
         return
         
     target = message.reply_to_message.from_user
@@ -832,7 +1071,8 @@ def command_mute(message):
     
     try:
         # 1. Ограничение прав в Telegram
-        bot.restrict_chat_member(message.chat.id, target.id, until_date=until.timestamp(), can_send_messages=False)
+        bot.restrict_chat_member(message.chat.id, target.id, until_date=until.timestamp(), 
+            permissions=ChatPermissions(can_send_messages=False))
         
         # 2. Сохранение мьюта в БД
         with get_db_connection() as conn:
@@ -846,47 +1086,64 @@ def command_mute(message):
         except Exception:
             pass
             
-        bot.reply_to(message, f"🔇 <b>Мут на {duration}:</b> {sanitize_text(get_full_user_name(target))}\nАвтоматический размут: {format_readable_date(until.isoformat())}")
-        log_system_action(message.chat.id, message.from_user.id, "MUTE", f"Замучен {target.id} на {duration}")
+        user_name = sanitize_text(get_full_user_name(target))
+        date_str = format_readable_date(until.isoformat())
+        bot.reply_to(message, get_string(user_id, "mute_success").format(duration=duration, user_name=user_name, date=date_str))
+        log_system_action(message.chat.id, user_id, "MUTE", f"Замучен {target.id} на {duration}")
     except Exception as e: 
-        bot.reply_to(message, f"❌ Ошибка мьюта: {e}")
+        bot.reply_to(message, get_string(user_id, "mute_error").format(error=e))
 
 @bot.message_handler(commands=['unmute'])
 def command_unmute(message):
-    """Снимает мьют с пользователя по реплаю."""
-    if not message.reply_to_message: return
-    if not check_admin_rights(message.chat.id, message.from_user.id): return
+    """Снимает мьют с пользователя по реплаю (только для групп)."""
+    user_id = message.from_user.id
+    user_lang = get_user_language(user_id)
+
+    if message.chat.type not in ['group', 'supergroup']: return
+    if not message.reply_to_message:
+        bot.reply_to(message, get_string(user_id, "cmd_no_reply"))
+        return
+    if not check_admin_rights(message.chat.id, user_id): return
     
     target = message.reply_to_message.from_user
     
     try:
         # 1. Снятие ограничений в Telegram
-        bot.restrict_chat_member(message.chat.id, target.id, can_send_messages=True, can_send_media_messages=True, can_send_other_messages=True, can_add_web_page_previews=True)
+        bot.restrict_chat_member(message.chat.id, target.id, 
+            permissions=ChatPermissions(can_send_messages=True, can_send_media_messages=True, can_send_other_messages=True, can_add_web_page_previews=True))
         
         # 2. Удаление из БД
         with get_db_connection() as conn:
             conn.execute("DELETE FROM mutes WHERE chat_id = ? AND user_id = ?", (message.chat.id, target.id))
             conn.commit()
             
-        bot.reply_to(message, f"🔊 <b>Мут снят</b> с {sanitize_text(get_full_user_name(target))}.")
-        log_system_action(message.chat.id, message.from_user.id, "UNMUTE", f"Размучен {target.id}")
+        user_name = sanitize_text(get_full_user_name(target))
+        bot.reply_to(message, get_string(user_id, "unmute_success").format(user_name=user_name))
+        log_system_action(message.chat.id, user_id, "UNMUTE", f"Размучен {target.id}")
     except Exception as e:
-        bot.reply_to(message, f"❌ Ошибка размута: {e}")
+        bot.reply_to(message, get_string(user_id, "unmute_error").format(error=e))
 
 @bot.message_handler(commands=['warn'])
 def command_warn(message):
-    """Выдает предупреждение (варн) пользователю по реплаю."""
-    if not message.reply_to_message: return
-    if not check_admin_rights(message.chat.id, message.from_user.id): return
+    """Выдает предупреждение (варн) пользователю по реплаю (только для групп)."""
+    user_id = message.from_user.id
+    user_lang = get_user_language(user_id)
+
+    if message.chat.type not in ['group', 'supergroup']: return
+    if not message.reply_to_message:
+        bot.reply_to(message, get_string(user_id, "cmd_no_reply"))
+        return
+    if not check_admin_rights(message.chat.id, user_id): return
     
     target = message.reply_to_message.from_user
-    reason = " ".join(message.text.split()[1:]) or "Нарушение правил чата"
+    reason_default = get_string(user_id, "warn_reason")
+    reason = " ".join(message.text.split()[1:]) or reason_default
     limit = 3 # Лимит варнов перед баном
 
     with get_db_connection() as conn:
         # 1. Добавление варна
         conn.execute("INSERT INTO warns (chat_id, user_id, admin_id, reason, created_at) VALUES (?, ?, ?, ?, ?)",
-            (message.chat.id, target.id, message.from_user.id, reason, get_iso_now()))
+            (message.chat.id, target.id, user_id, reason, get_iso_now()))
         conn.commit()
         # 2. Получение текущего количества варнов
         count = conn.execute("SELECT COUNT(*) FROM warns WHERE chat_id = ? AND user_id = ?", (message.chat.id, target.id)).fetchone()[0]
@@ -897,27 +1154,34 @@ def command_warn(message):
     except Exception:
         pass
 
+    user_name = sanitize_text(get_full_user_name(target))
     if count >= limit:
         # Если превышен лимит - бан
         try:
             bot.ban_chat_member(message.chat.id, target.id)
-            bot.reply_to(message, f"⛔ <b>Бан за варны ({count}/{limit}):</b> {sanitize_text(get_full_user_name(target))}\nПричина: {reason}")
+            bot.reply_to(message, get_string(user_id, "warn_limit_ban").format(count=count, limit=limit, user_name=user_name, reason=reason))
             # Очистка варнов после бана
             with get_db_connection() as conn:
                 conn.execute("DELETE FROM warns WHERE chat_id = ? AND user_id = ?", (message.chat.id, target.id))
                 conn.commit()
-            log_system_action(message.chat.id, message.from_user.id, "BAN_BY_WARN", f"Забанен {target.id} по лимиту варнов: {reason}")
+            log_system_action(message.chat.id, user_id, "BAN_BY_WARN", f"Забанен {target.id} по лимиту варнов: {reason}")
         except Exception as e: 
-            bot.reply_to(message, f"❌ Ошибка бана: {e}")
+            bot.reply_to(message, get_string(user_id, "ban_error").format(error=e))
     else:
-        bot.reply_to(message, f"⚠️ <b>Варн ({count}/{limit}):</b> {sanitize_text(get_full_user_name(target))}\nПричина: {reason}")
-        log_system_action(message.chat.id, message.from_user.id, "WARN_ADD", f"Варн для {target.id}: {reason}. Всего: {count}")
+        bot.reply_to(message, get_string(user_id, "warn_added").format(count=count, limit=limit, user_name=user_name, reason=reason))
+        log_system_action(message.chat.id, user_id, "WARN_ADD", f"Варн для {target.id}: {reason}. Всего: {count}")
 
 @bot.message_handler(commands=['kick'])
 def command_kick(message):
-    """Кикает пользователя по реплаю."""
-    if not message.reply_to_message: return
-    if not check_admin_rights(message.chat.id, message.from_user.id): return
+    """Кикает пользователя по реплаю (только для групп)."""
+    user_id = message.from_user.id
+    user_lang = get_user_language(user_id)
+
+    if message.chat.type not in ['group', 'supergroup']: return
+    if not message.reply_to_message:
+        bot.reply_to(message, get_string(user_id, "cmd_no_reply"))
+        return
+    if not check_admin_rights(message.chat.id, user_id): return
     
     target = message.reply_to_message.from_user
     
@@ -932,10 +1196,11 @@ def command_kick(message):
         # Разбан, чтобы пользователь мог вернуться по ссылке
         bot.unban_chat_member(message.chat.id, target.id, only_if_banned=True) 
         
-        bot.reply_to(message, f"👢 <b>Кикнут:</b> {sanitize_text(get_full_user_name(target))}.")
-        log_system_action(message.chat.id, message.from_user.id, "KICK", f"Кикнут {target.id}")
+        user_name = sanitize_text(get_full_user_name(target))
+        bot.reply_to(message, get_string(user_id, "kick_success").format(user_name=user_name))
+        log_system_action(message.chat.id, user_id, "KICK", f"Кикнут {target.id}")
     except Exception as e:
-        bot.reply_to(message, f"❌ Ошибка кика: {e}")
+        bot.reply_to(message, get_string(user_id, "kick_error").format(error=e))
 
 # --- ОБЩИЙ ОБРАБОТЧИК СООБЩЕНИЙ В ГРУППЕ (ПРОВЕРКА ПОДПИСКИ) ---
 
@@ -945,11 +1210,14 @@ def group_message_processor(message):
     Основной обработчик сообщений в группе. 
     Обновляет активность и проверяет подписки.
     """
+    user_id = message.from_user.id
+    user_lang = get_user_language(user_id)
+
     # 1. Обновление активности
     update_user_activity(message.from_user, message.chat.id)
     
     # 2. Проверка на админа или бота - им разрешено
-    if check_admin_rights(message.chat.id, message.from_user.id) or message.from_user.is_bot:
+    if check_admin_rights(message.chat.id, user_id) or message.from_user.is_bot:
         return
 
     # 3. Получение обязательных каналов для этого чата
@@ -960,7 +1228,7 @@ def group_message_processor(message):
     # 4. Проверка статуса подписки
     missing_channels = []
     for channel in required_channels:
-        if not check_subscription_status(message.from_user.id, channel):
+        if not check_subscription_status(user_id, channel):
             missing_channels.append(channel)
     
     # 5. Если есть пропущенные каналы - удаляем сообщение и отправляем предупреждение
@@ -968,28 +1236,22 @@ def group_message_processor(message):
         try:
             bot.delete_message(message.chat.id, message.message_id)
         except Exception:
-            # Бот не смог удалить сообщение (нет прав, слишком старое)
             pass 
         
-        warning_text = (
-            f"🚫 <b>Доступ ограничен, {sanitize_text(get_full_user_name(message.from_user))}!</b>\n\n"
-            "Для того чтобы писать в этот чат, необходимо подписаться на следующие каналы."
-        )
+        warning_text = get_string(user_id, "sub_access_denied").format(user_name=sanitize_text(get_full_user_name(message.from_user)))
         
         try:
             # Отправляем сообщение с кнопками подписки
             bot.send_message(
                 message.chat.id,
                 warning_text,
-                reply_markup=generate_subscription_keyboard(missing_channels),
+                reply_markup=generate_subscription_keyboard(user_id, missing_channels),
                 disable_notification=True,
-                parse_mode="HTML"
             )
         except Exception:
-            # Невозможно отправить сообщение (например, пользователь заблокировал бота)
             pass
 
-# --- ЗАПУСК ВЕБХУКА И СЕРВЕРА ---
+# --- ЗАПУСК ВЕБХУКА И СЕРВЕРА (без изменений) ---
 
 @app.route(f"/{TOKEN}", methods=["POST"])
 def webhook_receiver():
@@ -1025,15 +1287,11 @@ if __name__ == "__main__":
     initialize_database()
     
     print("Starting background unmute worker...")
-    # Запускаем фоновую задачу размута
     worker_thread = threading.Thread(target=background_unmute_worker, daemon=True)
     worker_thread.start()
     
     print("Setting up webhook...")
-    # Настраиваем вебхук
     setup_webhook_connection()
     
     print(f"Starting Flask server on port {PORT}...")
-    # Запускаем Flask сервер
     app.run(host="0.0.0.0", port=PORT)
-
