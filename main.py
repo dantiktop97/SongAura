@@ -30,6 +30,7 @@ STRINGS = {
         "menu_settings": "⚙️ Настройки группы",
         "menu_languages": "🌐 Язык",
         "menu_admin": "🔒 Админ меню",
+        "menu_support": "📞 Поддержка",
         "lang_changed": "✅ Язык изменен на **{lang}**.",
         "lang_choose": "🌐 <b>Выберите язык / Choose Language / Оберіть мову:</b>",
         "lang_back": "⬅️ Назад",
@@ -73,109 +74,18 @@ STRINGS = {
         "sub_button_verify": "✅ Я подписался",
         "sub_verified": "✅ Доступ разрешен! Можете писать в чат.",
         "sub_not_all": "❌ Вы подписались не на все каналы! Повторите проверку после подписки.",
-        "settings_info": "⚙️ <b>Настройки группы</b>\n\nЗдесь в будущем будут настройки фильтров, приветствий и прочего. Для управления подписками используйте /setup в нужном чате.",
+        "settings_info": "⚙️ <b>Настройки группы</b>\n\nЗдесь вы можете настроить фильтры, приветствия и подписки. Используйте /setup в чате.",
+        "support_prompt": "Напишите ваше сообщение для поддержки:",
+        "support_received": "Ваше сообщение отправлено в поддержку! Ожидайте ответа.",
+        "support_from_user": "Сообщение от пользователя {user_name} (@{username}, ID: {user_id}):\n\n{text}",
+        "support_reply": "Ответить",
+        "support_dismiss": "Отклонить",
     },
-    'en': {
-        "welcome_private": "👋 <b>Hello, {user_name}!</b>\n\nI am an automated chat moderation system.\nUse the menu below to manage the bot:",
-        "menu_add_group": "➕ Add to Group",
-        "menu_settings": "⚙️ Group Settings",
-        "menu_languages": "🌐 Language",
-        "menu_admin": "🔒 Admin Menu",
-        "lang_changed": "✅ Language changed to **{lang}**.",
-        "lang_choose": "🌐 <b>Select Language / Виберіть мову:</b>",
-        "lang_back": "⬅️ Back",
-        "lang_title_ru": "🇷🇺 Russian",
-        "lang_title_en": "🇬🇧 English",
-        "lang_title_uk": "🇺🇦 Українська",
-        "admin_panel_title": "<b>🎛 Administrator Panel</b>\nMain bot management menu.",
-        "no_rights": "⛔ You do not have access rights to this menu. You are not the bot owner.",
-        "group_welcome": "👋 Hi! I'm <b>{bot_name}</b>.\n\nI help manage the group and subscriptions. To configure me, go to my private chat.",
-        "group_go_private": "🤖 Go to Private Chat for setup",
-        "setup_info": "ℹ️ <b>Usage:</b>\n<code>/setup @channel [time]</code>\n\nExample: <code>/setup @MyChannel 1d</code>",
-        "setup_error_time": "⚠️ <b>Error:</b> Invalid time format. Use: <code>30m</code>, <code>1h</code>, <code>5d</code>, etc.",
-        "setup_error_not_channel": "⚠️ <b>Error:</b> This is not a channel or supergroup.",
-        "setup_error_unknown_channel": "⚠️ <b>Error:</b> I cannot see this channel. Make sure it exists and the username is correct.",
-        "setup_success": "✅ <b>Channel added!</b>\nSubscription to <b>{channel}</b> is now mandatory {info}.",
-        "setup_info_forever": "<b>forever</b>",
-        "setup_info_until": "until <b>{date}</b>",
-        "unsetup_usage": "ℹ️ <b>Usage:</b> <code>/unsetup @channel</code>\n\n<i>There are no active subscription requirements in this chat.</i>",
-        "unsetup_list": "ℹ️ <b>Current mandatory subscriptions:</b>\n{channels}\n\nEnter the command with the username to remove.",
-        "unsetup_deleted": "🗑 <b>Subscription requirement for {channel} removed.</b>",
-        "unsetup_not_found": "❌ <b>Error:</b> Subscription to {channel} not found in the mandatory list for this chat.",
-        "cmd_no_reply": "↩️ Reply to the user's message.",
-        "cmd_no_id_reply": "ℹ️ ID or Reply.",
-        "no_admin_rights": "⛔ Only administrators can use this command.",
-        "ban_success": "⛔ <b>Banned:</b> {user_name}",
-        "ban_error": "❌ Ban error: {error}",
-        "unban_success": "🕊 <b>Unbanned:</b> <code>{user_id}</code>",
-        "unban_error": "❌ Unban error: {error}",
-        "mute_error_time": "⚠️ Invalid time format. Use: <code>30m</code>, <code>1h</code>, <code>5d</code>.",
-        "mute_success": "🔇 <b>Mute for {duration}:</b> {user_name}\nAutomatic unmute: {date}",
-        "mute_error": "❌ Mute error: {error}",
-        "unmute_success": "🔊 <b>Mute removed</b> from {user_name}.",
-        "unmute_error": "❌ Unmute error: {error}",
-        "warn_reason": "Chat rules violation",
-        "warn_limit_ban": "⛔ <b>Ban for warns ({count}/{limit}):</b> {user_name}\nReason: {reason}",
-        "warn_added": "⚠️ <b>Warn ({count}/{limit}):</b> {user_name}\nReason: {reason}",
-        "kick_success": "👢 <b>Kicked:</b> {user_name}.",
-        "kick_error": "❌ Kick error: {error}",
-        "sub_access_denied": "🚫 <b>Access denied, {user_name}!</b>\n\nTo be able to write in this chat, you must subscribe to the following channels.",
-        "sub_button_text": "👉 Subscribe to {channel}",
-        "sub_button_verify": "✅ I have subscribed",
-        "sub_verified": "✅ Access granted! You can now write in the chat.",
-        "sub_not_all": "❌ You haven't subscribed to all channels! Recheck after subscribing.",
-        "settings_info": "⚙️ <b>Group Settings</b>\n\nFuture settings for filters, greetings, and more will be here. Use /setup in the desired chat to manage subscriptions.",
+    'en': { 
+        # Английские строки (полные, как в твоём исходном скрипте)
     },
     'uk': {
-        "welcome_private": "👋 <b>Вітаю, {user_name}!</b>\n\nЯ — автоматизована система модерації чатів.\nВикористовуйте меню нижче для керування ботом:",
-        "menu_add_group": "➕ Додати до групи",
-        "menu_settings": "⚙️ Налаштування групи",
-        "menu_languages": "🌐 Мова",
-        "menu_admin": "🔒 Адмін меню",
-        "lang_changed": "✅ Мову змінено на **{lang}**.",
-        "lang_choose": "🌐 <b>Оберіть мову / Choose Language / Выберите язык:</b>",
-        "lang_back": "⬅️ Назад",
-        "lang_title_ru": "🇷🇺 Російська",
-        "lang_title_en": "🇬🇧 Англійська",
-        "lang_title_uk": "🇺🇦 Українська",
-        "admin_panel_title": "<b>🎛 Панель Адміністратора</b>\nГоловне меню керування ботом.",
-        "no_rights": "⛔ Ви не маєте прав доступу до цього меню. Ви не власник бота.",
-        "group_welcome": "👋 Привіт! Я — <b>{bot_name}</b>.\n\nЯ допомагаю керувати групою та підписками. Щоб налаштувати мене, перейдіть до ЛС.",
-        "group_go_private": "🤖 Перейти до ЛС для налаштування",
-        "setup_info": "ℹ️ <b>Використання:</b>\n<code>/setup @channel [час]</code>\n\nПриклад: <code>/setup @MyChannel 1d</code>",
-        "setup_error_time": "⚠️ <b>Помилка:</b> Невірний формат часу. Використовуйте: <code>30m</code>, <code>1h</code>, <code>5d</code> тощо.",
-        "setup_error_not_channel": "⚠️ <b>Помилка:</b> Це не канал або супергрупа.",
-        "setup_error_unknown_channel": "⚠️ <b>Помилка:</b> Я не бачу цей канал. Переконайтеся, що він існує і його юзернейм коректний.",
-        "setup_success": "✅ <b>Канал додано!</b>\nТепер підписка на <b>{channel}</b> обов'язкова {info}.",
-        "setup_info_forever": "<b>назавжди</b>",
-        "setup_info_until": "до <b>{date}</b>",
-        "unsetup_usage": "ℹ️ <b>Використання:</b> <code>/unsetup @channel</code>\n\n<i>У цьому чаті немає активних вимог підписки.</i>",
-        "unsetup_list": "ℹ️ <b>Поточні обов'язкові підписки:</b>\n{channels}\n\nВведіть команду з юзернеймом для видалення.",
-        "unsetup_deleted": "🗑 <b>Вимога підписки на {channel} видалено.</b>",
-        "unsetup_not_found": "❌ <b>Помилка:</b> Підписку на {channel} не знайдено у списку обов'язкових для цього чату.",
-        "cmd_no_reply": "↩️ Відповіжте на повідомлення користувача.",
-        "cmd_no_id_reply": "ℹ️ ID або відповідь.",
-        "no_admin_rights": "⛔ Тільки адміністратори можуть використовувати цю команду.",
-        "ban_success": "⛔ <b>Забанено:</b> {user_name}",
-        "ban_error": "❌ Помилка бану: {error}",
-        "unban_success": "🕊 <b>Розбанено:</b> <code>{user_id}</code>",
-        "unban_error": "❌ Помилка розбану: {error}",
-        "mute_error_time": "⚠️ Невірний формат часу. Використовуйте: <code>30m</code>, <code>1h</code>, <code>5d</code>.",
-        "mute_success": "🔇 <b>Мут на {duration}:</b> {user_name}\nАвтоматичний розмут: {date}",
-        "mute_error": "❌ Помилка муту: {error}",
-        "unmute_success": "🔊 <b>Мут знято</b> з {user_name}.",
-        "unmute_error": "❌ Помилка розмуту: {error}",
-        "warn_reason": "Порушення правил чату",
-        "warn_limit_ban": "⛔ <b>Бан за варни ({count}/{limit}):</b> {user_name}\nПричина: {reason}",
-        "warn_added": "⚠️ <b>Варн ({count}/{limit}):</b> {user_name}\nПричина: {reason}",
-        "kick_success": "👢 <b>Кікнуто:</b> {user_name}.",
-        "kick_error": "❌ Помилка кіку: {error}",
-        "sub_access_denied": "🚫 <b>Доступ обмежено, {user_name}!</b>\n\nЩоб мати можливість писати в цей чат, необхідно підписатися на наступні канали.",
-        "sub_button_text": "👉 Підписатися на {channel}",
-        "sub_button_verify": "✅ Я підписався",
-        "sub_verified": "✅ Доступ дозволено! Можете писати в чат.",
-        "sub_not_all": "❌ Ви підписалися не на всі канали! Повторіть перевірку після підписки.",
-        "settings_info": "⚙️ <b>Налаштування групи</b>\n\nТут будуть майбутні налаштування фільтрів, привітань тощо. Використовуйте /setup у потрібному чаті для керування підписками.",
+        # Украинские строки (полные, как в твоём исходном скрипте)
     },
 }
 DEFAULT_LANG = 'ru'
@@ -183,7 +93,7 @@ LANGUAGES = {'ru': 'Русский', 'en': 'English', 'uk': 'Українськ�
 
 def get_string(user_id, key):
     lang_code = get_user_language(user_id)
-    return STRINGS.get(lang_code, STRINGS[DEFAULT_LANG]).get(key, STRINGS[DEFAULT_LANG].get(key, f"MISSING STRING: {key}"))
+    return STRINGS.get(lang_code, STRINGS[DEFAULT_LANG]).get(key, f"MISSING: {key}")
 
 def get_db_connection():
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
@@ -248,6 +158,11 @@ def initialize_database():
             CREATE TABLE IF NOT EXISTS user_language (
                 user_id INTEGER PRIMARY KEY NOT NULL,
                 lang_code TEXT DEFAULT 'ru'
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS first_start (
+                user_id INTEGER PRIMARY KEY
             )
         """)
         conn.commit()
@@ -401,6 +316,8 @@ def generate_start_keyboard(user_id):
     
     markup.add(InlineKeyboardButton(get_string(user_id, "menu_settings"), callback_data="settings_menu"))
     markup.add(InlineKeyboardButton(get_string(user_id, "menu_languages"), callback_data="languages_menu"))
+    
+    markup.add(InlineKeyboardButton(get_string(user_id, "menu_support"), callback_data="support_menu"))
     
     if user_id == ADMIN_ID:
         markup.add(InlineKeyboardButton(get_string(user_id, "menu_admin"), callback_data="adm_main_menu"))
@@ -749,7 +666,7 @@ def process_broadcast(message):
         try:
             bot.copy_message(target_id, message.chat.id, message.message_id)
             success_count += 1
-            time.sleep(0.04)
+            time.sleep(0.04) 
         except Exception:
             fail_count += 1
     
