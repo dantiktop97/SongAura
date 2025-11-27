@@ -146,10 +146,10 @@ STRINGS = {
         "setup_info_forever": "<b>forever</b>",
         "setup_info_until": "until <b>{date}</b>",
         "unsetup_usage": "ℹ️ <b>Usage:</b> <code>/unsetup @channel</code>\n\n<i>There are no active subscription requirements in this chat.</i>",
-        "unsetup_list": "ℹ️ <b>Current required subscriptions:</b>\n{channels}\n\nEnter the command with the username to delete.",
-        "unsetup_deleted": "🗑 <b>Subscription requirement for {channel} deleted.</b>",
+        "unsetup_list": "ℹ️ <b>Current required subscriptions:</b>\n{channels}\n\nEnter the command with username to delete.",
+        "unsetup_deleted": "🗑 <b>Subscription requirement for {channel} removed.</b>",
         "unsetup_not_found": "❌ <b>Error:</b> Subscription to {channel} not found in the required list for this chat.",
-        "cmd_no_reply": "↩️ Reply to the user's message.",
+        "cmd_no_reply": "↩️ Reply to a user's message.",
         "cmd_no_id_reply": "ℹ️ ID or reply.",
         "no_admin_rights": "⛔ Only administrators can use this command.",
         "ban_success": "⛔ <b>Banned:</b> {user_name}",
@@ -185,30 +185,30 @@ STRINGS = {
         "group_settings_details": "<b>Settings for {chat_title} (ID: {chat_id})</b>\n\n<b>Required subscriptions:</b>\n{subs}\n\n<b>Available commands:</b>\n/setup @channel [time]\n/unsetup @channel\n/ban (reply)\n/unban ID\n/mute [time] (reply)\n/unmute (reply)\n/warn [reason] (reply)\n/kick (reply)\n\n<b>Additional functions:</b>\n/anti_flood on/off\n/set_welcome text\n/set_rules text",
         "anti_flood_on": "✅ Anti-flood enabled.",
         "anti_flood_off": "❌ Anti-flood disabled.",
-        "set_welcome_success": "✅ Welcome set.",
+        "set_welcome_success": "✅ Greeting set.",
         "set_rules_success": "✅ Rules set.",
         "rules": "<b>Chat rules:</b>\n{text}",
         "welcome_new_member": "👋 Welcome, {user_name}!\n\n{rules}",
         "no_bot_admin": "<b>⚠️ Bot is not admin in {channel}.</b>\n\n<b>Add as admin first.</b>",
         "status_text": "<b>📋 Active checks:</b>\n\n{list}",
         "profile_text": "<b>💳 Your profile</b>\n━━━━━━━━━━━━━━━\n🆔 ID: {user_id}\n👤 Nick: @{username}\n📅 Registration: {reg_date}\n━━━━━━━━━━━━━━━\n<b>Your active chats:</b>\n{chats}",
-        "op_public": "✅ <b>Subscription check function for public channels/groups 🛡️</b>\n\n"
-                     "▸ <b>Step 1:</b> Add me as admin to the channel/group for check.\n"
+        "op_public": "✅ <b>Public channels/chats subscription check feature 🛡️</b>\n\n"
+                     "▸ <b>Step 1:</b> Add me as admin to the channel/chat for check.\n"
                      "▸ <b>Step 2:</b> In your chat: <code>/setup @channel</code> and time (60s, 60m, 24h, 1d).\n\n"
                      "<b>⛔ To disable:</b> <code>/unsetup @channel</code> ❌\n\n"
                      "<b>➕ Max. 5 checks!</b>\n\n"
                      "<b>💡 /status</b> will show active checks and timers. ⏰\n\n"
-                     "<b>Questions? To support 📞</b>",
+                     "<b>Questions? Contact support 📞</b>",
         "op_private": "<b>📢 Subscription check for private channels/chats:</b>\n\n"
-                      "<b>Step 1:</b> Find out private channel ID.\n"
+                      "<b>Step 1:</b> Find the private channel ID.\n"
                       "<b>Step 2:</b> In chat: <code>/setup 1001994526641</code>\n\n"
                       "<b>Disable:</b> <code>/unsetup 1001994526641</code>\n\n"
                       "<b>💡 /status</b> for view and edit menu.",
         "op_invite": "<b>🔗 Subscription check for invite links.</b>\n\n"
-                     "<b>Step 1:</b> Find out private channel ID.\n"
+                     "<b>Step 1:</b> Find the private channel ID.\n"
                      "<b>Step 2:</b> <code>/setup 1001994526641 https://t.me/+Gju-8R_A7LQ3MDhi</code>\n\n"
                      "<b>Disable:</b> <code>/unsetup 1001994526641</code>\n\n"
-                     "<b>Subscription limit:</b> <code>/setup ... 100</code>\n"
+                     "<b>Subscriptions limit:</b> <code>/setup ... 100</code>\n"
                      "<b>Timer:</b> <code>/setup ... 1d</code> (s/m/h/d)\n\n"
                      "<b>💡 /status</b> for management.",
     },
@@ -784,7 +784,7 @@ def callback_query_handler(call: CallbackQuery):
     if data == "close_panel":
         try:
             bot.delete_message(chat_id, msg_id)
-        except Exception:
+        except:
             bot.answer_callback_query(call.id, "Панель закрыта.", show_alert=False)
         return
 
@@ -795,7 +795,7 @@ def callback_query_handler(call: CallbackQuery):
             try:
                 bot.delete_message(call.message.chat.id, msg_id)
                 bot.answer_callback_query(call.id, get_string(user_id, "sub_verified"), show_alert=False)
-            except Exception:
+            except:
                 bot.answer_callback_query(call.id, get_string(user_id, "sub_verified"), show_alert=False)
         else:
             bot.answer_callback_query(call.id, get_string(user_id, "sub_not_all"), show_alert=True)
