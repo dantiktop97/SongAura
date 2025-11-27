@@ -700,7 +700,7 @@ def format_readable_date(iso_str):
 
 def sanitize_text(text):
     if not text: return ""
-    return str(text).replace("&", "&").replace("<", "<").replace(">", ">").replace('"', """).replace("'", "'")
+    return str(text).replace("&", "&").replace("<", "<").replace(">", ">").replace('"', r'"').replace("'", r"'")
 
 def get_full_user_name(user):
     name = ""
