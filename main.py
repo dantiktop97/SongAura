@@ -750,7 +750,7 @@ def update_user_activity(user, chat_id):
                 conn.execute("""
                     INSERT INTO members (user_id, chat_id, username, first_name, last_name, messages_count, last_seen)
                     VALUES (?, ?, ?, ?, ?, 1, ?)
-                """, (user.id, chat_id, username, first_name, last_name, get_iso_now()))
+                """, (user.id, chat_id, username, first_name, last_name, get_iso_now()))"""
             conn.execute("UPDATE user_stats SET total_messages = total_messages + 1, last_activity = ? WHERE user_id = ?", (get_iso_now(), user.id))
             conn.execute("UPDATE chat_stats SET total_messages = total_messages + 1 WHERE chat_id = ?", (chat_id,))
             conn.execute("INSERT OR REPLACE INTO user_groups (user_id, chat_id, chat_title) VALUES (?, ?, ?)",
