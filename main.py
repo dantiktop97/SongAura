@@ -7,15 +7,11 @@ from datetime import datetime, timedelta
 from flask import Flask, request
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, Update, ChatPermissions, ReplyKeyboardRemove
-from dotenv import load_dotenv
 import logging
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-# Загрузка переменных окружения
-load_dotenv()
 
 # Конфигурация
 TOKEN = os.getenv("BOT_TOKEN") or "YOUR_TOKEN_HERE"
@@ -700,7 +696,7 @@ def format_readable_date(iso_str):
 
 def sanitize_text(text):
     if not text: return ""
-    return str(text).replace("&", "&").replace("<", "<").replace(">", ">").replace('"', r'"').replace("'", r"'")
+    return str(text).replace("&", "&").replace("<", "<").replace(">", ">").replace('"', """).replace("'", "'")
 
 def get_full_user_name(user):
     name = ""
@@ -1435,7 +1431,7 @@ def process_support_reply(message):
     if user_id != ADMIN_ID: return
     target_user_id = _local_memory[user_id]["reply_to"]
     text = message.text
-    _local_memory.pop(user_id)
+    _local_memory.pop(user_id, None)
 
     bot.send_message(target_user_id, get_string(target_user_id, "support_response").format(text=text))
     bot.reply_to(message, "✅ Ответ отправлен.")
