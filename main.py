@@ -26,7 +26,7 @@ _local_memory = {}  # Локальная память для состояний
 
 STRINGS = {
     'ru': {
-        "welcome_private": "👋 <b>Добро пожаловать, {user_name}!</b>\n\n<b>SUB PR — бот для управления подписками, безопасностью чатов и модерацией.</b>\n\n<b>Функции:</b>\n- Настройка проверок подписки (ОП)\n- Анти-флуд\n- Авто-удаление сообщений\n- Модерация (бан/кик/мут/варн)\n- Приветствия и правила\n- Поддержка\n- Профиль\n- Информация\n- Выбор языка\n\nИспользуйте меню ниже для управления ботом:",
+        "welcome_private": "👋 Добро пожаловать, {user_name}!\n\nSUB PR — бот для управления подписками, безопасностью чатов и модерацией.\n\nФункции:\n- Настройка проверок подписки (ОП)\n- Анти-флуд\n- Авто-удаление сообщений\n- Модерация (бан/кик/мут/варн)\n- Приветствия и правила\n- Поддержка\n- Профиль\n- Информация\n- Выбор языка\n\nИспользуйте меню ниже для управления ботом:",
         "menu_add_group": "➕ Добавить в группу",
         "menu_settings": "⚙ Настройки группы",
         "menu_auto_delete": "🧹 Авто-удаление",
@@ -40,100 +40,100 @@ STRINGS = {
         "menu_group_settings": "⚙️ Настройки групп",
         "menu_manage_subs": "🛡 Управление подписками",
         "lang_changed": "✅ Язык изменен на **{lang}**.",
-        "lang_choose": "🌐 <b>Выберите язык / Choose Language / Оберіть мову:</b>",
+        "lang_choose": "🌐 Выберите язык / Choose Language / Оберіть мову:",
         "lang_back": "🔙 Назад",
         "lang_title_ru": "🇷🇺 Русский",
         "lang_title_en": "🇺🇸 English",
         "lang_title_uk": "🇺🇦 Українська",
-        "admin_panel_title": "<b>🎛 Панель Администратора</b>\nГлавное меню управления ботом.",
+        "admin_panel_title": "🎛 Панель Администратора\nГлавное меню управления ботом.",
         "no_rights": "⛔ У вас нет прав доступа к этому меню. Вы не владелец бота.",
-        "group_welcome": "👋 Привет! Я — <b>{bot_name}</b>.\n\nЯ помогаю управлять группой и подписками. Чтобы настроить меня, перейдите в ЛС.",
+        "group_welcome": "👋 Привет! Я — {bot_name}.\n\nЯ помогаю управлять группой и подписками. Чтобы настроить меня, перейдите в ЛС.",
         "group_go_private": "🤖 Перейти в ЛС для настройки",
-        "setup_info": "ℹ️ <b>Использование:</b>\n<code>/setup @channel [время]</code>\n\nПример: <code>/setup @MyChannel 1d</code>",
-        "setup_error_time": "⚠️ <b>Ошибка:</b> Неверный формат времени. Используйте: <code>30m</code>, <code>1h</code>, <code>5d</code> и т.д.",
-        "setup_error_not_channel": "⚠️ <b>Ошибка:</b> Это не канал или супергруппа.",
-        "setup_error_unknown_channel": "⚠️ <b>Ошибка:</b> Я не вижу этот канал. Убедитесь, что он существует и его юзернейм корректен.",
-        "setup_success": "✅ <b>Канал добавлен!</b>\nТеперь подписка на <b>{channel}</b> обязательна {info}.",
-        "setup_info_forever": "<b>навсегда</b>",
-        "setup_info_until": "до <b>{date}</b>",
-        "unsetup_usage": "ℹ️ <b>Использование:</b> <code>/unsetup @channel</code>\n\n<i>В этом чате нет активных требований подписки.</i>",
-        "unsetup_list": "ℹ️ <b>Текущие обязательные подписки:</b>\n{channels}\n\nВведите команду с юзернеймом для удаления.",
-        "unsetup_deleted": "🗑 <b>Требование подписки на {channel} удалено.</b>",
-        "unsetup_not_found": "❌ <b>Ошибка:</b> Подписка на {channel} не найдена в списке обязательных для этого чата.",
+        "setup_info": "ℹ️ Использование:\n/setup @channel [время]\n\nПример: /setup @MyChannel 1d",
+        "setup_error_time": "⚠️ Ошибка: Неверный формат времени. Используйте: 30m, 1h, 5d и т.д.",
+        "setup_error_not_channel": "⚠️ Ошибка: Это не канал или супергруппа.",
+        "setup_error_unknown_channel": "⚠️ Ошибка: Я не вижу этот канал. Убедитесь, что он существует и его юзернейм корректен.",
+        "setup_success": "✅ Канал добавлен!\nТеперь подписка на {channel} обязательна {info}.",
+        "setup_info_forever": "навсегда",
+        "setup_info_until": "до {date}",
+        "unsetup_usage": "ℹ️ Использование: /unsetup @channel\n\nВ этом чате нет активных требований подписки.",
+        "unsetup_list": "ℹ️ Текущие обязательные подписки:\n{channels}\n\nВведите команду с юзернеймом для удаления.",
+        "unsetup_deleted": "🗑 Требование подписки на {channel} удалено.",
+        "unsetup_not_found": "❌ Ошибка: Подписка на {channel} не найдена в списке обязательных для этого чата.",
         "cmd_no_reply": "↩️ Ответьте на сообщение пользователя.",
         "cmd_no_id_reply": "ℹ️ ID или реплай.",
         "no_admin_rights": "⛔ Только администраторы могут использовать эту команду.",
-        "ban_success": "⛔ <b>Забанен:</b> {user_name}\nПричина: {reason}",
+        "ban_success": "⛔ Забанен: {user_name}\nПричина: {reason}",
         "ban_error": "❌ Ошибка бана: {error}",
-        "unban_success": "🕊 <b>Разбанен:</b> <code>{user_id}</code>",
+        "unban_success": "🕊 Разбанен: {user_id}",
         "unban_error": "❌ Ошибка разбана: {error}",
-        "mute_error_time": "⚠️ Неверный формат времени. Используйте: <code>30m</code>, <code>1h</code>, <code>5d</code>.",
-        "mute_success": "🔇 <b>Мут на {duration}:</b> {user_name}\nАвтоматический размут: {date}\nПричина: {reason}",
+        "mute_error_time": "⚠️ Неверный формат времени. Используйте: 30m, 1h, 5d.",
+        "mute_success": "🔇 Мут на {duration}: {user_name}\nАвтоматический размут: {date}\nПричина: {reason}",
         "mute_error": "❌ Ошибка мьюта: {error}",
-        "unmute_success": "🔊 <b>Мут снят</b> с {user_name}.",
+        "unmute_success": "🔊 Мут снят с {user_name}.",
         "unmute_error": "❌ Ошибка размута: {error}",
         "warn_reason": "Нарушение правил чата",
-        "warn_limit_ban": "⛔ <b>Бан за варны ({count}/{limit}):</b> {user_name}\nПричина: {reason}",
-        "warn_added": "⚠️ <b>Варн ({count}/{limit}):</b> {user_name}\nПричина: {reason}",
-        "kick_success": "👢 <b>Кикнут:</b> {user_name}.\nПричина: {reason}",
+        "warn_limit_ban": "⛔ Бан за варны ({count}/{limit}): {user_name}\nПричина: {reason}",
+        "warn_added": "⚠️ Варн ({count}/{limit}): {user_name}\nПричина: {reason}",
+        "kick_success": "👢 Кикнут: {user_name}.\nПричина: {reason}",
         "kick_error": "❌ Ошибка кика: {error}",
-        "sub_access_denied": "🚫 <b>Доступ ограничен, {user_name}!</b>\n\nДля того чтобы писать в этот чат, необходимо подписаться на следующие каналы.",
+        "sub_access_denied": "🚫 Доступ ограничен, {user_name}!\n\nДля того чтобы писать в этот чат, необходимо подписаться на следующие каналы.",
         "sub_button_text": "👉 Подписаться на {channel}",
         "sub_button_verify": "✅ Я подписался",
         "sub_verified": "✅ Доступ разрешен! Можете писать в чат.",
         "sub_not_all": "❌ Вы подписались не на все каналы! Повторите проверку после подписки.",
-        "settings_info": "⚙️ <b>Настройки группы</b>\n\nЗдесь вы можете настроить фильтры, приветствия и подписки. Используйте /setup в чате.",
-        "support_prompt": "📞 <b>Поддержка</b>\n\nНапишите ваше сообщение для поддержки:",
+        "settings_info": "⚙️ Настройки группы\n\nЗдесь вы можете настроить фильтры, приветствия и подписки. Используйте /setup в чате.",
+        "support_prompt": "📞 Поддержка\n\nНапишите ваше сообщение для поддержки:",
         "support_received": "✅ Ваше сообщение отправлено в поддержку! Ожидайте ответа.",
         "support_from_user": "📩 Сообщение от пользователя {user_name} (@{username}, ID: {user_id}):\n\n{text}",
         "support_reply": "Ответить",
         "support_dismiss": "Отклонить",
-        "support_response": "📨 <b>Ответ от поддержки:</b>\n\n{text}",
-        "user_check_prompt": "🔍 <b>Проверка пользователя</b>\n\nВведите ID или @username:",
+        "support_response": "📨 Ответ от поддержки:\n\n{text}",
+        "user_check_prompt": "🔍 Проверка пользователя\n\nВведите ID или @username:",
         "user_check_not_found": "❌ Пользователь не найден.",
-        "user_check_info": "<b>Информация о пользователе:</b>\nID: {user_id}\nИмя: {first_name}\nФамилия: {last_name}\nUsername: @{username}\n\n<b>Чаты:</b>\n{chats}\n\n<b>Варны:</b> {warns}\n<b>Мьюты:</b> {mutes}",
-        "group_settings_title": "<b>⚙️ Настройки групп</b>\n\nВыберите группу:",
-        "group_settings_details": "<b>Настройки для {chat_title} (ID: {chat_id})\nТип: {chat_type}\nСтатус: {status}\nДобавил: {added_by}</b>\n\n<b>Функции:</b>\n- ОП (Публичный канал): {op_pub}\n- ОП (Приватный канал): {op_priv}\n- ОП (Инвайт-ссылка): {op_inv}\n- Анти-флуд: {flood}\n- Авто-удаление сообщений: {auto_del}\n- Приветствие новых участников: {welcome}\n- Правила группы: {rules}\n- Служебные сообщения: {service}",
+        "user_check_info": "Информация о пользователе:\nID: {user_id}\nИмя: {first_name}\nФамилия: {last_name}\nUsername: @{username}\n\nЧаты:\n{chats}\n\nВарны: {warns}\nМьюты: {mutes}",
+        "group_settings_title": "⚙️ Настройки групп\n\nВыберите группу:",
+        "group_settings_details": "Настройки для {chat_title} (ID: {chat_id})\nТип: {chat_type}\nСтатус: {status}\nДобавил: {added_by}\n\nФункции:\n- ОП (Публичный канал): {op_pub}\n- ОП (Приватный канал): {op_priv}\n- ОП (Инвайт-ссылка): {op_inv}\n- Анти-флуд: {flood}\n- Авто-удаление сообщений: {auto_del}\n- Приветствие новых участников: {welcome}\n- Правила группы: {rules}\n- Служебные сообщения: {service}",
         "anti_flood_on": "✅ Антифлуд включен.",
         "anti_flood_off": "❌ Антифлуд выключен.",
         "set_welcome_success": "✅ Приветствие установлено.",
         "set_rules_success": "✅ Правила установлены.",
-        "rules": "<b>Правила чата:</b>\n{text}",
+        "rules": "Правила чата:\n{text}",
         "welcome_new_member": "👋 Добро пожаловать, {user_name}!\n\n{rules}",
-        "no_bot_admin": "<b>⚠️ Бот не админ в {channel}.</b>\n\n<b>Добавьте в админы сначала.</b>",
-        "status_text": "<b>📋 Активные проверки:</b>\n\n{list}",
-        "status_empty": "<i>Нет активных проверок.</i>",
-        "profile_text": "<b>💳 Ваш профиль</b>\n━━━━━━━━━━━━━━━\n🆔 ID: {user_id}\n👤 Ник: @{username}\n📅 Регистрация: {reg_date}\n━━━━━━━━━━━━━━━\n<b>Ваши активные чаты:</b>\n{chats}",
-        "op_public": "✅ <b>Функция проверки подписки на публичные каналы/чаты 🛡️</b>\n\n"
-                     "▸ <b>Шаг 1:</b> Добавьте меня в админы канала/чата для проверки.\n"
-                     "▸ <b>Шаг 2:</b> В вашем чате: <code>/setup @channel</code> и время (60s, 60m, 24h, 1d).\n\n"
-                     "<b>⛔ Для отключения:</b> <code>/unsetup @channel</code> ❌\n\n"
-                     "<b>➕ Макс. 5 проверок!</b>\n\n"
-                     "<b>💡 /status</b> покажет активные проверки и таймеры. ⏰\n\n"
-                     "<b>Вопросы? В поддержку 📞</b>",
-        "op_private": "<b>📢 Проверка подписки для приватных каналов/чатов:</b>\n\n"
-                      "<b>Шаг 1:</b> Узнайте ID приватного канала.\n"
-                      "<b>Шаг 2:</b> В чате: <code>/setup 1001994526641</code>\n\n"
-                      "<b>Отключить:</b> <code>/unsetup 1001994526641</code>\n\n"
-                      "<b>💡 /status</b> для меню просмотра и редактирования.",
-        "op_invite": "<b>🔗 Проверка подписки на пригласительные ссылки.</b>\n\n"
-                     "<b>Шаг 1:</b> Узнайте ID приватного канала.\n"
-                     "<b>Шаг 2:</b> <code>/setup 1001994526641 https://t.me/+Link</code>\n\n"
-                     "<b>Отключить:</b> <code>/unsetup 1001994526641</code>\n\n"
-                     "<b>Лимит подписок:</b> <code>/setup ... 100</code>\n"
-                     "<b>Таймер:</b> <code>/setup ... 1d</code> (s/m/h/d)\n\n"
-                     "<b>💡 /status</b> для управления.",
+        "no_bot_admin": "⚠️ Бот не админ в {channel}.\n\nДобавьте в админы сначала.",
+        "status_text": "📋 Активные проверки:\n\n{list}",
+        "status_empty": "Нет активных проверок.",
+        "profile_text": "💳 Ваш профиль\n━━━━━━━━━━━━━━━\n🆔 ID: {user_id}\n👤 Ник: @{username}\n📅 Регистрация: {reg_date}\n━━━━━━━━━━━━━━━\nВаши активные чаты:\n{chats}",
+        "op_public": "✅ Функция проверки подписки на публичные каналы/чаты 🛡️\n\n"
+                     "▸ Шаг 1: Добавьте меня в админы канала/чата для проверки.\n"
+                     "▸ Шаг 2: В вашем чате: /setup @channel и время (60s, 60m, 24h, 1d).\n\n"
+                     "⛔ Для отключения: /unsetup @channel ❌\n\n"
+                     "➕ Макс. 5 проверок!\n\n"
+                     "💡 /status покажет активные проверки и таймеры. ⏰\n\n"
+                     "Вопросы? В поддержку 📞",
+        "op_private": "📢 Проверка подписки для приватных каналов/чатов:\n\n"
+                      "Шаг 1: Узнайте ID приватного канала.\n"
+                     "Шаг 2: В чате: /setup 1001994526641\n\n"
+                      "Отключить: /unsetup 1001994526641\n\n"
+                      "💡 /status для меню просмотра и редактирования.",
+        "op_invite": "🔗 Проверка подписки на пригласительные ссылки.\n\n"
+                     "Шаг 1: Узнайте ID приватного канала.\n"
+                     "Шаг 2: /setup 1001994526641 https://t.me/+Link\n\n"
+                     "Отключить: /unsetup 1001994526641\n\n"
+                     "Лимит подписок: /setup ... 100\n"
+                     "Таймер: /setup ... 1d (s/m/h/d)\n\n"
+                     "💡 /status для управления.",
         "op_error": "❌ Я не могу установить проверку подписки. Причина: я не администратор канала/чата {channel}.",
         "op_max": "❌ Превышено максимальное количество проверок (5). Удалите старые через /unsetup.",
         "op_invalid_format": "❌ Неправильный формат команды. Используйте /setup @channel или /setup ID [ссылка] [лимит] [время].",
-        "op_group_list": "<b>Список ваших групп:</b>\n\n{chats}",
-        "antiflood_menu": "<b>🚫 Анти-флуд</b>\n\nВыберите лимит:\n- 3 сообщения / 5 сек\n- 5 сообщений / 10 сек\n- 10 сообщений / 30 сек\n\nДействие: {action}",
+        "op_group_list": "Список ваших групп:\n\n{chats}",
+        "antiflood_menu": "🚫 Анти-флуд\n\nВыберите лимит:\n- 3 сообщения / 5 сек\n- 5 сообщений / 10 сек\n- 10 сообщений / 30 сек\n\nДействие: {action}",
         "antiflood_action_warn": "⚠ Предупреждение",
         "antiflood_action_mute": "🔇 Мут",
         "antiflood_action_delete": "🧹 Удаление сообщений",
         "antiflood_action_off": "❌ Отключить",
         "antiflood_set": "✅ Анти-флуд установлен: {limit} сообщений / {time} сек. Действие: {action}.",
-        "autodel_menu": "<b>🧹 Авто-удаление</b>\n\nВыберите тип сообщений для удаления:\n- ОП\n- Анти-флуд\n- Служебные (покинул, присоединился, закрепил, смена фото/названия, уведомления Telegram, сообщения бота)\n\nТаймер: {timer}",
+        "autodel_menu": "🧹 Авто-удаление\n\nВыберите тип сообщений для удаления:\n- ОП\n- Анти-флуд\n- Служебные (покинул, присоединился, закрепил, смена фото/названия, уведомления Telegram, сообщения бота)\n\nТаймер: {timer}",
         "autodel_timer_10s": "10s",
         "autodel_timer_30s": "30s",
         "autodel_timer_1m": "1m",
@@ -142,25 +142,278 @@ STRINGS = {
         "autodel_timer_1d": "1d",
         "autodel_timer_instant": "Моментально",
         "autodel_set": "✅ Авто-удаление установлено для {types} с таймером {timer}.",
-        "welcome_rules_menu": "<b>📝 Приветствия и правила</b>\n\nРедактируйте приветствие: /set_welcome текст\nПравила: /set_rules текст\nАвто-удаление приветствий: {auto_del}",
-        "info_text": "📢 <b>SUB PR — мощный бот для защиты и управления вашими чатами</b>\n\n🔹 Подписка на каналы и чаты (ОП) — публичные, приватные и по инвайт-ссылке  \n🔹 Анти-флуд с гибкими настройками  \n🔹 Модерация: бан, кик, мут, варн (через команды или свайп по сообщению)  \n🔹 Авто-удаление служебных сообщений, ОП и анти-флуда  \n🔹 Красивые приветствия и правила  \n🔹 Удобная панель управления прямо в Telegram  \n🔹 Поддержка 24/7  \n🔹 Многоязычный интерфейс  \n\n🔔 <b>Официальный канал с обновлениями, новостями и полезными материалами:</b>  \n👉 https://t.me/sub_pr  \n\n💡 По всем вопросам — пишите в [Поддержку] в главном меню",
-        "adm_stats": "<b>📊 Статистика</b>\n\nВсего пользователей: {users}\nАктивные чаты: {chats}\nСообщений в базе: {msgs}\nАктивных подписок: {subs}\nАктивных мьютов: {mutes}\nПредупреждений: {warns}\nВремя сервера: {time}",
-        "adm_broadcast_prompt": "<b>📡 Рассылка</b>\n\nОтправьте текст, фото, видео или анимацию для рассылки всем пользователям.",
-        "adm_logs": "<b>📋 Логи системы</b>\n\nПоследние 10 действий:\n{logs}",
-        "adm_group_manage": "<b>🛠 Управление группами</b>\n\nВыберите группу для настройки.",
-        "adm_group_logs": "<b>📝 Логи групп</b>\n\n{logs}",
-        "adm_create_func": "<b>Создать функцию</b>\n\nВ разработке.",
-        "service_msgs_menu": "<b>Служебные сообщения</b>\n\nВыберите, что удалять: покинул, присоединился, закрепил, смена фото/названия, уведомления Telegram, сообщения бота.",
+        "welcome_rules_menu": "📝 Приветствия и правила\n\nРедактируйте приветствие: /set_welcome текст\nПравила: /set_rules текст\nАвто-удаление приветствий: {auto_del}",
+        "info_text": "📢 SUB PR — мощный бот для защиты и управления вашими чатами\n\n🔹 Подписка на каналы и чаты (ОП) — публичные, приватные и по инвайт-ссылке  \n🔹 Анти-флуд с гибкими настройками  \n🔹 Модерация: бан, кик, мут, варн (через команды или свайп по сообщению)  \n🔹 Авто-удаление служебных сообщений, ОП и анти-флуда  \n🔹 Красивые приветствия и правила  \n🔹 Удобная панель управления прямо в Telegram  \n🔹 Поддержка 24/7  \n🔹 Многоязычный интерфейс  \n\n🔔 Официальный канал с обновлениями, новостями и полезными материалами:  \n👉 https://t.me/sub_pr  \n\n💡 По всем вопросам — пишите в [Поддержку] в главном меню",
+        "adm_stats": "📊 Статистика\n\nВсего пользователей: {users}\nАктивные чаты: {chats}\nСообщений в базе: {msgs}\nАктивных подписок: {subs}\nАктивных мьютов: {mutes}\nПредупреждений: {warns}\nВремя сервера: {time}",
+        "adm_broadcast_prompt": "📡 Рассылка\n\nОтправьте текст, фото, видео или анимацию для рассылки всем пользователям.",
+        "adm_logs": "📋 Логи системы\n\nПоследние 10 действий:\n{logs}",
+        "adm_group_manage": "🛠 Управление группами\n\nВыберите группу для настройки.",
+        "adm_group_logs": "📝 Логи групп\n\n{logs}",
+        "adm_create_func": "Создать функцию\n\nВ разработке.",
+        "service_msgs_menu": "Служебные сообщения\n\nВыберите, что удалять: покинул, присоединился, закрепил, смена фото/названия, уведомления Telegram, сообщения бота.",
         "op_invalid_id": "❌ Неправильный ID канала. Должен начинаться с -100 или быть числом.",
         "op_invite_limit": "Опционально: количество подписок: /setup ID ссылка 100",
         "log_entry": "Админ: {admin}\nЦель: {target}\nДействие: {action}\nСрок: {term}\nПричина: {reason}\nЧат: {chat}\nДата: {date}",
     },
-    # Добавьте переводы для en и uk аналогично, но для краткости оставим ru как базовый
-    'en': {  # Placeholder, скопируйте и переведите из ru
-        # ...
+    'en': {
+        "welcome_private": "👋 Welcome, {user_name}!\n\nSUB PR — bot for managing subscriptions, chat security, and moderation.\n\nFeatures:\n- Subscription checks setup (OP)\n- Anti-flood\n- Auto-delete messages\n- Moderation (ban/kick/mute/warn)\n- Greetings and rules\n- Support\n- Profile\n- Information\n- Language selection\n\nUse the menu below to manage the bot:",
+        "menu_add_group": "➕ Add to group",
+        "menu_settings": "⚙ Group settings",
+        "menu_auto_delete": "🧹 Auto-delete",
+        "menu_welcome_rules": "📝 Greetings and rules",
+        "menu_info": "💬 Information",
+        "menu_support": "🛟 Support",
+        "menu_profile": "👤 Profile",
+        "menu_languages": "🌍 Language",
+        "menu_admin": "🔒 Admin menu",
+        "menu_user_check": "🔍 User check",
+        "menu_group_settings": "⚙️ Groups settings",
+        "menu_manage_subs": "🛡 Manage subscriptions",
+        "lang_changed": "✅ Language changed to **{lang}**.",
+        "lang_choose": "🌐 Select language / Choose Language / Оберіть мову:",
+        "lang_back": "🔙 Back",
+        "lang_title_ru": "🇷🇺 Russian",
+        "lang_title_en": "🇺🇸 English",
+        "lang_title_uk": "🇺🇦 Ukrainian",
+        "admin_panel_title": "🎛 Admin Panel\nMain bot management menu.",
+        "no_rights": "⛔ You do not have access to this menu. You are not the bot owner.",
+        "group_welcome": "👋 Hi! I am {bot_name}.\n\nI help manage the group and subscriptions. To set me up, go to PM.",
+        "group_go_private": "🤖 Go to PM for setup",
+        "setup_info": "ℹ️ Usage:\n/setup @channel [time]\n\nExample: /setup @MyChannel 1d",
+        "setup_error_time": "⚠️ Error: Invalid time format. Use: 30m, 1h, 5d etc.",
+        "setup_error_not_channel": "⚠️ Error: This is not a channel or supergroup.",
+        "setup_error_unknown_channel": "⚠️ Error: I can't see this channel. Make sure it exists and the username is correct.",
+        "setup_success": "✅ Channel added!\nSubscription to {channel} is now required {info}.",
+        "setup_info_forever": "forever",
+        "setup_info_until": "until {date}",
+        "unsetup_usage": "ℹ️ Usage: /unsetup @channel\n\nThere are no active subscription requirements in this chat.",
+        "unsetup_list": "ℹ️ Current required subscriptions:\n{channels}\n\nEnter the command with username to delete.",
+        "unsetup_deleted": "🗑 Subscription requirement for {channel} removed.",
+        "unsetup_not_found": "❌ Error: Subscription to {channel} not found in the required list for this chat.",
+        "cmd_no_reply": "↩️ Reply to a user's message.",
+        "cmd_no_id_reply": "ℹ️ ID or reply.",
+        "no_admin_rights": "⛔ Only administrators can use this command.",
+        "ban_success": "⛔ Banned: {user_name}\nReason: {reason}",
+        "ban_error": "❌ Ban error: {error}",
+        "unban_success": "🕊 Unbanned: {user_id}",
+        "unban_error": "❌ Unban error: {error}",
+        "mute_error_time": "⚠️ Invalid time format. Use: 30m, 1h, 5d.",
+        "mute_success": "🔇 Mute for {duration}: {user_name}\nAuto-unmute: {date}\nReason: {reason}",
+        "mute_error": "❌ Mute error: {error}",
+        "unmute_success": "🔊 Mute removed from {user_name}.",
+        "unmute_error": "❌ Unmute error: {error}",
+        "warn_reason": "Chat rules violation",
+        "warn_limit_ban": "⛔ Ban for warns ({count}/{limit}): {user_name}\nReason: {reason}",
+        "warn_added": "⚠️ Warn ({count}/{limit}): {user_name}\nReason: {reason}",
+        "kick_success": "👢 Kicked: {user_name}.\nReason: {reason}",
+        "kick_error": "❌ Kick error: {error}",
+        "sub_access_denied": "🚫 Access restricted, {user_name}!\n\nTo write in this chat, you need to subscribe to the following channels.",
+        "sub_button_text": "👉 Subscribe to {channel}",
+        "sub_button_verify": "✅ I subscribed",
+        "sub_verified": "✅ Access granted! You can write in the chat.",
+        "sub_not_all": "❌ You haven't subscribed to all channels! Repeat the check after subscribing.",
+        "settings_info": "⚙️ Group settings\n\nHere you can set filters, greetings, and subscriptions. Use /setup in the chat.",
+        "support_prompt": "📞 Support\n\nWrite your message for support:",
+        "support_received": "✅ Your message has been sent to support! Wait for a response.",
+        "support_from_user": "📩 Message from user {user_name} (@{username}, ID: {user_id}):\n\n{text}",
+        "support_reply": "Reply",
+        "support_dismiss": "Dismiss",
+        "support_response": "📨 Response from support:\n\n{text}",
+        "user_check_prompt": "🔍 User check\n\nEnter ID or @username:",
+        "user_check_not_found": "❌ User not found.",
+        "user_check_info": "User information:\nID: {user_id}\nFirst name: {first_name}\nLast name: {last_name}\nUsername: @{username}\n\nChats:\n{chats}\n\nWarns: {warns}\nMutes: {mutes}",
+        "group_settings_title": "⚙️ Groups settings\n\nSelect a group:",
+        "group_settings_details": "Settings for {chat_title} (ID: {chat_id})\nType: {chat_type}\nStatus: {status}\nAdded by: {added_by}\n\nFeatures:\n- OP (Public channel): {op_pub}\n- OP (Private channel): {op_priv}\n- OP (Invite link): {op_inv}\n- Anti-flood: {flood}\n- Auto-delete messages: {auto_del}\n- Greeting new members: {welcome}\n- Group rules: {rules}\n- Service messages: {service}",
+        "anti_flood_on": "✅ Anti-flood enabled.",
+        "anti_flood_off": "❌ Anti-flood disabled.",
+        "set_welcome_success": "✅ Greeting set.",
+        "set_rules_success": "✅ Rules set.",
+        "rules": "Chat rules:\n{text}",
+        "welcome_new_member": "👋 Welcome, {user_name}!\n\n{rules}",
+        "no_bot_admin": "⚠️ Bot is not admin in {channel}.\n\nAdd as admin first.",
+        "status_text": "📋 Active checks:\n\n{list}",
+        "status_empty": "No active checks.",
+        "profile_text": "💳 Your profile\n━━━━━━━━━━━━━━━\n🆔 ID: {user_id}\n👤 Nick: @{username}\n📅 Registration: {reg_date}\n━━━━━━━━━━━━━━━\nYour active chats:\n{chats}",
+        "op_public": "✅ Public channels/chats subscription check feature 🛡️\n\n"
+                     "▸ Step 1: Add me as admin to the channel/chat for check.\n"
+                     "▸ Step 2: In your chat: /setup @channel and time (60s, 60m, 24h, 1d).\n\n"
+                     "⛔ To disable: /unsetup @channel ❌\n\n"
+                     "➕ Max 5 checks!\n\n"
+                     "💡 /status will show active checks and timers. ⏰\n\n"
+                     "Questions? Contact support 📞",
+        "op_private": "📢 Subscription check for private channels/chats:\n\n"
+                      "Step 1: Find the private channel ID.\n"
+                      "Step 2: In chat: /setup 1001994526641\n\n"
+                      "Disable: /unsetup 1001994526641\n\n"
+                      "💡 /status for view and edit menu.",
+        "op_invite": "🔗 Subscription check for invite links.\n\n"
+                     "Step 1: Find the private channel ID.\n"
+                     "Step 2: /setup 1001994526641 https://t.me/+Link\n\n"
+                     "Disable: /unsetup 1001994526641\n\n"
+                     "Subscriptions limit: /setup ... 100\n"
+                     "Timer: /setup ... 1d (s/m/h/d)\n\n"
+                     "💡 /status for management.",
+        "op_error": "❌ I can't set subscription check. Reason: I am not an admin of the channel/chat {channel}.",
+        "op_max": "❌ Maximum number of checks exceeded (5). Remove old ones via /unsetup.",
+        "op_invalid_format": "❌ Invalid command format. Use /setup @channel or /setup ID [link] [limit] [time].",
+        "op_group_list": "List of your groups:\n\n{chats}",
+        "antiflood_menu": "🚫 Anti-flood\n\nSelect limit:\n- 3 messages / 5 sec\n- 5 messages / 10 sec\n- 10 messages / 30 sec\n\nAction: {action}",
+        "antiflood_action_warn": "⚠ Warning",
+        "antiflood_action_mute": "🔇 Mute",
+        "antiflood_action_delete": "🧹 Delete messages",
+        "antiflood_action_off": "❌ Disable",
+        "antiflood_set": "✅ Anti-flood set: {limit} messages / {time} sec. Action: {action}.",
+        "autodel_menu": "🧹 Auto-delete\n\nSelect message types to delete:\n- OP\n- Anti-flood\n- Service (left, joined, pinned, photo/title change, Telegram notifications, bot messages)\n\nTimer: {timer}",
+        "autodel_timer_10s": "10s",
+        "autodel_timer_30s": "30s",
+        "autodel_timer_1m": "1m",
+        "autodel_timer_15m": "15m",
+        "autodel_timer_1h": "1h",
+        "autodel_timer_1d": "1d",
+        "autodel_timer_instant": "Instantly",
+        "autodel_set": "✅ Auto-delete set for {types} with timer {timer}.",
+        "welcome_rules_menu": "📝 Greetings and rules\n\nEdit greeting: /set_welcome text\nRules: /set_rules text\nAuto-delete greetings: {auto_del}",
+        "info_text": "📢 SUB PR — powerful bot for protecting and managing your chats\n\n🔹 Subscriptions to channels and chats (OP) — public, private, and via invite link  \n🔹 Anti-flood with flexible settings  \n🔹 Moderation: ban, kick, mute, warn (via commands or swipe on message)  \n🔹 Auto-delete service messages, OP, and anti-flood  \n🔹 Beautiful greetings and rules  \n🔹 Convenient control panel right in Telegram  \n🔹 24/7 support  \n🔹 Multilingual interface  \n\n🔔 Official channel with updates, news, and useful materials:  \n👉 https://t.me/sub_pr  \n\n💡 For any questions — write to [Support] in the main menu",
+        "adm_stats": "📊 Statistics\n\nTotal users: {users}\nActive chats: {chats}\nMessages in DB: {msgs}\nActive subscriptions: {subs}\nActive mutes: {mutes}\nWarnings: {warns}\nServer time: {time}",
+        "adm_broadcast_prompt": "📡 Broadcast\n\nSend text, photo, video or animation for broadcasting to all users.",
+        "adm_logs": "📋 System logs\n\nLast 10 actions:\n{logs}",
+        "adm_group_manage": "🛠 Groups management\n\nSelect a group to set up.",
+        "adm_group_logs": "📝 Groups logs\n\n{logs}",
+        "adm_create_func": "Create function\n\nIn development.",
+        "service_msgs_menu": "Service messages\n\nSelect what to delete: left, joined, pinned, photo/title change, Telegram notifications, bot messages.",
+        "op_invalid_id": "❌ Invalid channel ID. Must start with -100 or be a number.",
+        "op_invite_limit": "Optional: subscriptions count: /setup ID link 100",
+        "log_entry": "Admin: {admin}\nTarget: {target}\nAction: {action}\nTerm: {term}\nReason: {reason}\nChat: {chat}\nDate: {date}",
     },
-    'uk': {  # Placeholder
-        # ...
+    'uk': {
+        "welcome_private": "👋 Ласкаво просимо, {user_name}!\n\nSUB PR — бот для керування підписками, безпекою чатів та модерацією.\n\nФункції:\n- Налаштування перевірок підписки (ОП)\n- Анти-флуд\n- Авто-видалення повідомлень\n- Модерація (бан/кік/мут/варн)\n- Привітання та правила\n- Підтримка\n- Профіль\n- Інформація\n- Вибір мови\n\nВикористовуйте меню нижче для керування ботом:",
+        "menu_add_group": "➕ Додати до групи",
+        "menu_settings": "⚙ Налаштування групи",
+        "menu_auto_delete": "🧹 Авто-видалення",
+        "menu_welcome_rules": "📝 Привітання та правила",
+        "menu_info": "💬 Інформація",
+        "menu_support": "🛟 Підтримка",
+        "menu_profile": "👤 Профіль",
+        "menu_languages": "🌍 Мова",
+        "menu_admin": "🔒 Адмін меню",
+        "menu_user_check": "🔍 Перевірка користувача",
+        "menu_group_settings": "⚙️ Налаштування груп",
+        "menu_manage_subs": "🛡 Керування підписками",
+        "lang_changed": "✅ Мову змінено на **{lang}**.",
+        "lang_choose": "🌐 Оберіть мову / Choose Language / Оберіть мову:",
+        "lang_back": "🔙 Назад",
+        "lang_title_ru": "🇷🇺 Російська",
+        "lang_title_en": "🇺🇸 Англійська",
+        "lang_title_uk": "🇺🇦 Українська",
+        "admin_panel_title": "🎛 Панель Адміністратора\nГоловне меню керування ботом.",
+        "no_rights": "⛔ У вас немає прав доступу до цього меню. Ви не власник бота.",
+        "group_welcome": "👋 Привіт! Я — {bot_name}.\n\nЯ допомагаю керувати групою та підписками. Щоб налаштувати мене, перейдіть в ПП.",
+        "group_go_private": "🤖 Перейти в ПП для налаштування",
+        "setup_info": "ℹ️ Використання:\n/setup @channel [час]\n\nПриклад: /setup @MyChannel 1d",
+        "setup_error_time": "⚠️ Помилка: Неправильний формат часу. Використовуйте: 30m, 1h, 5d тощо.",
+        "setup_error_not_channel": "⚠️ Помилка: Це не канал або супергрупа.",
+        "setup_error_unknown_channel": "⚠️ Помилка: Я не бачу цей канал. Переконайтеся, що він існує та його юзернейм правильний.",
+        "setup_success": "✅ Канал додано!\nТепер підписка на {channel} обов'язкова {info}.",
+        "setup_info_forever": "назавжди",
+        "setup_info_until": "до {date}",
+        "unsetup_usage": "ℹ️ Використання: /unsetup @channel\n\nУ цьому чаті немає активних вимог підписки.",
+        "unsetup_list": "ℹ️ Поточні обов'язкові підписки:\n{channels}\n\nВведіть команду з юзернеймом для видалення.",
+        "unsetup_deleted": "🗑 Вимогу підписки на {channel} видалено.",
+        "unsetup_not_found": "❌ Помилка: Підписка на {channel} не знайдена в списку обов'язкових для цього чату.",
+        "cmd_no_reply": "↩️ Відповідайте на повідомлення користувача.",
+        "cmd_no_id_reply": "ℹ️ ID або реплай.",
+        "no_admin_rights": "⛔ Тільки адміністратори можуть використовувати цю команду.",
+        "ban_success": "⛔ Забанено: {user_name}\nПричина: {reason}",
+        "ban_error": "❌ Помилка бану: {error}",
+        "unban_success": "🕊 Розбанено: {user_id}",
+        "unban_error": "❌ Помилка розбану: {error}",
+        "mute_error_time": "⚠️ Неправильний формат часу. Використовуйте: 30m, 1h, 5d.",
+        "mute_success": "🔇 Мут на {duration}: {user_name}\nАвтоматичний розмут: {date}\nПричина: {reason}",
+        "mute_error": "❌ Помилка муту: {error}",
+        "unmute_success": "🔊 Мут знято з {user_name}.",
+        "unmute_error": "❌ Помилка розмуту: {error}",
+        "warn_reason": "Порушення правил чату",
+        "warn_limit_ban": "⛔ Бан за варни ({count}/{limit}): {user_name}\nПричина: {reason}",
+        "warn_added": "⚠️ Варн ({count}/{limit}): {user_name}\nПричина: {reason}",
+        "kick_success": "👢 Кікнуто: {user_name}.\nПричина: {reason}",
+        "kick_error": "❌ Помилка кіку: {error}",
+        "sub_access_denied": "🚫 Доступ обмежено, {user_name}!\n\nЩоб писати в цей чат, необхідно підписатися на наступні канали.",
+        "sub_button_text": "👉 Підписатися на {channel}",
+        "sub_button_verify": "✅ Я підписався",
+        "sub_verified": "✅ Доступ дозволено! Можете писати в чат.",
+        "sub_not_all": "❌ Ви підписалися не на всі канали! Повторіть перевірку після підписки.",
+        "settings_info": "⚙️ Налаштування групи\n\nТут ви можете налаштувати фільтри, привітання та підписки. Використовуйте /setup в чаті.",
+        "support_prompt": "📞 Підтримка\n\nНапишіть ваше повідомлення для підтримки:",
+        "support_received": "✅ Ваше повідомлення надіслано в підтримку! Очікуйте відповіді.",
+        "support_from_user": "📩 Повідомлення від користувача {user_name} (@{username}, ID: {user_id}):\n\n{text}",
+        "support_reply": "Відповісти",
+        "support_dismiss": "Відхилити",
+        "support_response": "📨 Відповідь від підтримки:\n\n{text}",
+        "user_check_prompt": "🔍 Перевірка користувача\n\nВведіть ID або @username:",
+        "user_check_not_found": "❌ Користувача не знайдено.",
+        "user_check_info": "Інформація про користувача:\nID: {user_id}\nІм'я: {first_name}\nПрізвище: {last_name}\nUsername: @{username}\n\nЧати:\n{chats}\n\nВарни: {warns}\nМути: {mutes}",
+        "group_settings_title": "⚙️ Налаштування груп\n\nОберіть групу:",
+        "group_settings_details": "Налаштування для {chat_title} (ID: {chat_id})\nТип: {chat_type}\nСтатус: {status}\nДодано: {added_by}\n\nФункції:\n- ОП (Публічний канал): {op_pub}\n- ОП (Приватний канал): {op_priv}\n- ОП (Інвайт-посилання): {op_inv}\n- Анти-флуд: {flood}\n- Авто-видалення повідомлень: {auto_del}\n- Привітання нових учасників: {welcome}\n- Правила групи: {rules}\n- Службові повідомлення: {service}",
+        "anti_flood_on": "✅ Антифлуд увімкнено.",
+        "anti_flood_off": "❌ Антифлуд вимкнено.",
+        "set_welcome_success": "✅ Привітання встановлено.",
+        "set_rules_success": "✅ Правила встановлено.",
+        "rules": "Правила чату:\n{text}",
+        "welcome_new_member": "👋 Ласкаво просимо, {user_name}!\n\n{rules}",
+        "no_bot_admin": "⚠️ Бот не адмін в {channel}.\n\nДодайте в адміни спочатку.",
+        "status_text": "📋 Активні перевірки:\n\n{list}",
+        "status_empty": "Немає активних перевірок.",
+        "profile_text": "💳 Ваш профіль\n━━━━━━━━━━━━━━━\n🆔 ID: {user_id}\n👤 Нік: @{username}\n📅 Реєстрація: {reg_date}\n━━━━━━━━━━━━━━━\nВаші активні чати:\n{chats}",
+        "op_public": "✅ Функція перевірки підписки на публічні канали/чати 🛡️\n\n"
+                     "▸ Крок 1: Додайте мене в адміни каналу/чату для перевірки.\n"
+                     "▸ Крок 2: У вашому чаті: /setup @channel та час (60s, 60m, 24h, 1d).\n\n"
+                     "⛔ Для вимкнення: /unsetup @channel ❌\n\n"
+                     "➕ Макс. 5 перевірок!\n\n"
+                     "💡 /status покаже активні перевірки та таймери. ⏰\n\n"
+                     "Питання? В підтримку 📞",
+        "op_private": "📢 Перевірка підписки для приватних каналів/чатів:\n\n"
+                      "Крок 1: Дізнайтеся ID приватного каналу.\n"
+                      "Крок 2: У чаті: /setup 1001994526641\n\n"
+                      "Вимкнути: /unsetup 1001994526641\n\n"
+                      "💡 /status для меню перегляду та редагування.",
+        "op_invite": "🔗 Перевірка підписки на запрошувальні посилання.\n\n"
+                     "Крок 1: Дізнайтеся ID приватного каналу.\n"
+                     "Крок 2: /setup 1001994526641 https://t.me/+Link\n\n"
+                     "Вимкнути: /unsetup 1001994526641\n\n"
+                     "Ліміт підписок: /setup ... 100\n"
+                     "Таймер: /setup ... 1d (s/m/h/d)\n\n"
+                     "💡 /status для керування.",
+        "op_error": "❌ Я не можу встановити перевірку підписки. Причина: я не адміністратор каналу/чату {channel}.",
+        "op_max": "❌ Перевищено максимальну кількість перевірок (5). Видаліть старі через /unsetup.",
+        "op_invalid_format": "❌ Неправильний формат команди. Використовуйте /setup @channel або /setup ID [посилання] [ліміт] [час].",
+        "op_group_list": "Список ваших груп:\n\n{chats}",
+        "antiflood_menu": "🚫 Анти-флуд\n\nОберіть ліміт:\n- 3 повідомлення / 5 сек\n- 5 повідомлень / 10 сек\n- 10 повідомлень / 30 сек\n\nДія: {action}",
+        "antiflood_action_warn": "⚠ Попередження",
+        "antiflood_action_mute": "🔇 Мут",
+        "antiflood_action_delete": "🧹 Видалення повідомлень",
+        "antiflood_action_off": "❌ Вимкнути",
+        "antiflood_set": "✅ Анти-флуд встановлено: {limit} повідомлень / {time} сек. Дія: {action}.",
+        "autodel_menu": "🧹 Авто-видалення\n\nОберіть тип повідомлень для видалення:\n- ОП\n- Анти-флуд\n- Службові (покинув, приєднався, закріпив, зміна фото/назви, сповіщення Telegram, повідомлення бота)\n\nТаймер: {timer}",
+        "autodel_timer_10s": "10s",
+        "autodel_timer_30s": "30s",
+        "autodel_timer_1m": "1m",
+        "autodel_timer_15m": "15m",
+        "autodel_timer_1h": "1h",
+        "autodel_timer_1d": "1d",
+        "autodel_timer_instant": "Миттєво",
+        "autodel_set": "✅ Авто-видалення встановлено для {types} з таймером {timer}.",
+        "welcome_rules_menu": "📝 Привітання та правила\n\nРедагуйте привітання: /set_welcome текст\nПравила: /set_rules текст\nАвто-видалення привітань: {auto_del}",
+        "info_text": "📢 SUB PR — потужний бот для захисту та керування вашими чатами\n\n🔹 Підписка на канали та чати (ОП) — публічні, приватні та за інвайт-посиланням  \n🔹 Анти-флуд з гнучкими налаштуваннями  \n🔹 Модерація: бан, кік, мут, варн (через команди або свайп по повідомленню)  \n🔹 Авто-видалення службових повідомлень, ОП та анти-флуду  \n🔹 Красиві привітання та правила  \n🔹 Зручна панель керування прямо в Telegram  \n🔹 Підтримка 24/7  \n🔹 Багатомовний інтерфейс  \n\n🔔 Офіційний канал з оновленнями, новинами та корисними матеріалами:  \n👉 https://t.me/sub_pr  \n\n💡 З усіх питань — пишіть в [Підтримку] в головному меню",
+        "adm_stats": "📊 Статистика\n\nВсього користувачів: {users}\nАктивні чати: {chats}\nПовідомлень в базі: {msgs}\nАктивних підписок: {subs}\nАктивних мутів: {mutes}\nПопереджень: {warns}\nЧас сервера: {time}",
+        "adm_broadcast_prompt": "📡 Розсилка\n\nНадішліть текст, фото, відео або анімацію для розсилки всім користувачам.",
+        "adm_logs": "📋 Логи системи\n\nОстанні 10 дій:\n{logs}",
+        "adm_group_manage": "🛠 Керування групами\n\nОберіть групу для налаштування.",
+        "adm_group_logs": "📝 Логи груп\n\n{logs}",
+        "adm_create_func": "Створити функцію\n\nВ розробці.",
+        "service_msgs_menu": "Службові повідомлення\n\nОберіть, що видаляти: покинув, приєднався, закріпив, зміна фото/назви, сповіщення Telegram, повідомлення бота.",
+        "op_invalid_id": "❌ Неправильний ID каналу. Повинен починатися з -100 або бути числом.",
+        "op_invite_limit": "Опціонально: кількість підписок: /setup ID посилання 100",
+        "log_entry": "Адмін: {admin}\nЦіль: {target}\nДія: {action}\nТермін: {term}\nПричина: {reason}\nЧат: {chat}\nДата: {date}",
     },
 }
 
@@ -358,7 +611,7 @@ def callback_query_handler(call: CallbackQuery):
             reg = conn.execute("SELECT created_at FROM first_start WHERE user_id = ?", (user_id,)).fetchone()
             reg_date = format_readable_date(reg['created_at']) if reg else "Неизвестно"
             groups = conn.execute("SELECT chat_title FROM user_groups WHERE user_id = ?", (user_id,)).fetchall()
-            chats_list = "\n".join([f"• <a href=\"https://t.me/joinchat/{g['chat_title']}\">{g['chat_title']}</a>" for g in groups]) or "Нет"  # Пример с ссылками
+            chats_list = "\n".join([f"• {g['chat_title']}" for g in groups]) or "Нет"  # Пример с ссылками
         username = call.from_user.username or "нет"
         text = get_string(user_id, "profile_text").format(user_id=user_id, username=username, reg_date=reg_date, chats=chats_list)
         markup = InlineKeyboardMarkup()
@@ -370,7 +623,7 @@ def callback_query_handler(call: CallbackQuery):
         chats_text = ""
         with get_db_connection() as conn:
             chats = conn.execute("SELECT chat_id, chat_title FROM user_groups WHERE user_id = ?", (user_id,)).fetchall()
-            chats_text = "\n".join([f"• <a href=\"https://t.me/joinchat/{chat['chat_id']}\">{chat['chat_title']}</a> [Настроить]" for chat in chats]) or "Нет активных чатов."
+            chats_text = "\n".join([f"• {chat['chat_title']} [Настроить]" for chat in chats]) or "Нет активных чатов."
         bot.edit_message_text(
             get_string(user_id, "op_group_list").format(chats=chats_text),
             chat_id, msg_id,
@@ -385,7 +638,7 @@ def callback_query_handler(call: CallbackQuery):
             chat_type = "Публичный" if chat.type == "group" else "Приватный"
             status = "Вы — создатель" if chat.permissions.can_change_info else "Администратор"
             added_by = conn.execute("SELECT added_by FROM required_subs WHERE chat_id = ? LIMIT 1", (target_chat_id,)).fetchone()
-            added_by = f"<a href=\"tg://user?id={added_by['added_by']}\">@{bot.get_chat_member(target_chat_id, added_by['added_by']).user.username}</a>" if added_by else "Неизвестно"
+            added_by = f"@{bot.get_chat_member(target_chat_id, added_by['added_by']).user.username}" if added_by else "Неизвестно"
             op_pub = "✅" if conn.execute("SELECT COUNT(*) FROM required_subs WHERE chat_id = ? AND type = 'public'", (target_chat_id,)).fetchone()[0] > 0 else "❌"
             op_priv = "✅" if conn.execute("SELECT COUNT(*) FROM required_subs WHERE chat_id = ? AND type = 'private'", (target_chat_id,)).fetchone()[0] > 0 else "❌"
             op_inv = "✅" if conn.execute("SELECT COUNT(*) FROM required_subs WHERE chat_id = ? AND type = 'invite'", (target_chat_id,)).fetchone()[0] > 0 else "❌"
