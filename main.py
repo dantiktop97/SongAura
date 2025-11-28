@@ -406,7 +406,7 @@ STRINGS = {
                      "💡 /status для керування.",
         "op_error": "❌ Я не можу встановити перевірку підписки. Причина: я не адміністратор каналу/чату {channel}.",
         "op_max": "❌ Перевищено максимальну кількість перевірок (5). Видаліть старі через /unsetup.",
-        "op_invalid_format": "❌ Неправильний формат команди. Використовуйте /setup @channel або /setup ID [посилання] [ліміт] [час].",
+        "op_invalid_format": "❌ Неправильний формат команды. Використовуйте /setup @channel або /setup ID [посилання] [ліміт] [час].",
         "op_group_list": "Список ваших груп:\n\n{chats}",
         "antiflood_menu": "🚫 Анти-флуд\n\nОберіть ліміт:\n- 3 повідомлення / 5 сек\n- 5 повідомлень / 10 сек\n- 10 повідомлень / 30 сек\n\nДія: {action}",
         "antiflood_action_warn": "⚠ Попередження",
@@ -741,12 +741,11 @@ def update_user_activity(user, chat_id):
                 """, (username, first_name, last_name, get_iso_now(), exists['id']))
             else:
                 conn.execute("""
-                    INSERT INTO users (id, chat_id, username, first_name, last_name, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    INSERT INTO members (user_id, chat_id, username, first_name, last_name, last_seen, messages_count)
+                    VALUES (?, ?, ?, ?, ?, ?, 1)
                 """, (user.id, chat_id, username, first_name, last_name, get_iso_now()))
 
-            conn.execute("UPDATE user_stats SET total_messages = total_messages + 1, last_activity = ? WHERE user_id = ?", 
-                        (get_iso_now(), user.id))
+            conn.execute("UPDATE user_stats SET total_messages = total_messages + 1, last_activity = ? WHERE user_id = ?", (get_iso_now(), user.id))
             conn.execute("UPDATE chat_stats SET total_messages = total_messages + 1 WHERE chat_id = ?", (chat_id,))
             conn.execute("INSERT OR REPLACE INTO user_groups (user_id, chat_id, chat_title) VALUES (?, ?, ?)",
                          (user.id, chat_id, bot.get_chat(chat_id).title or f"Chat {chat_id}"))
