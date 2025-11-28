@@ -406,7 +406,7 @@ STRINGS = {
                      "💡 /status для керування.",
         "op_error": "❌ Я не можу встановити перевірку підписки. Причина: я не адміністратор каналу/чату {channel}.",
         "op_max": "❌ Перевищено максимальну кількість перевірок (5). Видаліть старі через /unsetup.",
-        "op_invalid_format": "❌ Неправильний формат команды. Використовуйте /setup @channel або /setup ID [посилання] [ліміт] [час].",
+        "op_invalid_format": "❌ Неправильний формат команди. Використовуйте /setup @channel або /setup ID [посилання] [ліміт] [час].",
         "op_group_list": "Список ваших груп:\n\n{chats}",
         "antiflood_menu": "🚫 Анти-флуд\n\nОберіть ліміт:\n- 3 повідомлення / 5 сек\n- 5 повідомлень / 10 сек\n- 10 повідомлень / 30 сек\n\nДія: {action}",
         "antiflood_action_warn": "⚠ Попередження",
@@ -452,197 +452,155 @@ def get_db_connection():
 
 def initialize_database():
     with get_db_connection() as conn:
-        conn.execute("""
-        CREATE TABLE IF NOT EXISTS required_subs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            chat_id INTEGER NOT NULL,
-            channel TEXT NOT NULL,
-            expires TEXT,
-            added_by INTEGER,
-            created_at TEXT,
-            type TEXT DEFAULT 'public',  -- public, private, invite
-            invite_link TEXT,
-            sub_limit INTEGER
-        )
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS required_subs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id INTEGER NOT NULL,
+                channel TEXT NOT NULL,
+                expires TEXT,
+                added_by INTEGER,
+                created_at TEXT,
+                type TEXT DEFAULT 'public',
+                invite_link TEXT,
+                sub_limit INTEGER
+            );
+            CREATE TABLE IF NOT EXISTS members (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                chat_id INTEGER NOT NULL,
+                username TEXT,
+                first_name TEXT,
+                last_name TEXT,
+                messages_count INTEGER DEFAULT 0,
+                last_seen TEXT,
+                UNIQUE(user_id, chat_id)
+            );
+            CREATE TABLE IF NOT EXISTS warns (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                admin_id INTEGER,
+                reason TEXT,
+                created_at TEXT
+            );
+            CREATE TABLE IF NOT EXISTS mutes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                expires_at TEXT,
+                UNIQUE(chat_id, user_id)
+            );
+            CREATE TABLE IF NOT EXISTS system_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id INTEGER,
+                user_id INTEGER,
+                action_type TEXT,
+                details TEXT,
+                created_at TEXT
+            );
+            CREATE TABLE IF NOT EXISTS user_language (
+                user_id INTEGER PRIMARY KEY NOT NULL,
+                lang_code TEXT DEFAULT 'ru'
+            );
+            CREATE TABLE IF NOT EXISTS first_start (
+                user_id INTEGER PRIMARY KEY,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS group_settings (
+                chat_id INTEGER PRIMARY KEY,
+                anti_flood BOOLEAN DEFAULT 0,
+                welcome_text TEXT,
+                rules_text TEXT
+            );
+            CREATE TABLE IF NOT EXISTS user_groups (
+                user_id INTEGER,
+                chat_id INTEGER,
+                chat_title TEXT,
+                UNIQUE(user_id, chat_id)
+            );
+            CREATE TABLE IF NOT EXISTS broadcast_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                message_id INTEGER,
+                success_count INTEGER,
+                fail_count INTEGER,
+                created_at TEXT
+            );
+            CREATE TABLE IF NOT EXISTS additional_settings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id INTEGER,
+                setting_name TEXT,
+                setting_value TEXT
+            );
+            CREATE TABLE IF NOT EXISTS user_stats (
+                user_id INTEGER PRIMARY KEY,
+                total_messages INTEGER DEFAULT 0,
+                last_activity TEXT
+            );
+            CREATE TABLE IF NOT EXISTS chat_stats (
+                chat_id INTEGER PRIMARY KEY,
+                total_members INTEGER DEFAULT 0,
+                total_messages INTEGER DEFAULT 0
+            );
+            CREATE TABLE IF NOT EXISTS subscription_limits (
+                chat_id INTEGER PRIMARY KEY,
+                max_subs INTEGER DEFAULT 5
+            );
+            CREATE TABLE IF NOT EXISTS invite_links (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id INTEGER,
+                link TEXT,
+                sub_limit INTEGER
+            );
+            CREATE TABLE IF NOT EXISTS private_channels (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                channel_id INTEGER,
+                added_by INTEGER
+            );
+            CREATE TABLE IF NOT EXISTS antiflood_settings (
+                chat_id INTEGER PRIMARY KEY,
+                msg_limit INTEGER DEFAULT 5,
+                time_sec INTEGER DEFAULT 10,
+                action TEXT DEFAULT 'mute'  -- warn, mute, delete, off
+            );
+            CREATE TABLE IF NOT EXISTS autodel_settings (
+                chat_id INTEGER PRIMARY KEY,
+                types TEXT,  -- comma-separated: op, flood, service
+                timer TEXT DEFAULT '10s'  -- 10s,30s,1m,15m,1h,1d,instant
+            );
+            CREATE TABLE IF NOT EXISTS service_msgs (
+                chat_id INTEGER PRIMARY KEY,
+                delete_left BOOLEAN DEFAULT 1,
+                delete_joined BOOLEAN DEFAULT 1,
+                delete_pinned BOOLEAN DEFAULT 1,
+                delete_photo_change BOOLEAN DEFAULT 1,
+                delete_title_change BOOLEAN DEFAULT 1,
+                delete_tg_notif BOOLEAN DEFAULT 1,
+                delete_bot_msgs BOOLEAN DEFAULT 1
+            );
+            CREATE TABLE IF NOT EXISTS mod_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id INTEGER,
+                admin_id INTEGER,
+                target_id INTEGER,
+                action TEXT,
+                term TEXT,
+                reason TEXT,
+                date TEXT
+            );
+            CREATE TABLE IF NOT EXISTS bot_chats (
+                chat_id INTEGER PRIMARY KEY,
+                title TEXT,
+                type TEXT,
+                added_at TEXT
+            );
+            CREATE TABLE IF NOT EXISTS custom_functions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT UNIQUE,
+                description TEXT,
+                code TEXT
+            );
         """)
-        conn.execute("""
-        CREATE TABLE IF NOT EXISTS members (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
-            chat_id INTEGER NOT NULL,
-            username TEXT,
-            first_name TEXT,
-            last_name TEXT,
-            messages_count INTEGER DEFAULT 0,
-            last_seen TEXT,
-            UNIQUE(user_id, chat_id)
-        )
-        """)
-        conn.execute("""
-        CREATE TABLE IF NOT EXISTS warns (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            chat_id INTEGER NOT NULL,
-            user_id INTEGER NOT NULL,
-            admin_id INTEGER,
-            reason TEXT,
-            created_at TEXT
-        )
-        """)
-        conn.execute("""
-        CREATE TABLE IF NOT EXISTS mutes (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            chat_id INTEGER NOT NULL,
-            user_id INTEGER NOT NULL,
-            expires_at TEXT,
-            UNIQUE(chat_id, user_id)
-        )
-        """)
-        conn.execute("""
-        CREATE TABLE IF NOT EXISTS system_logs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            chat_id INTEGER,
-            user_id INTEGER,
-            action_type TEXT,
-            details TEXT,
-            created_at TEXT
-        )
-        """)
-        conn.execute("""
-        CREATE TABLE IF NOT EXISTS user_language (
-            user_id INTEGER PRIMARY KEY NOT NULL,
-            lang_code TEXT DEFAULT 'ru'
-        )
-        """)
-        conn.execute("""
-        CREATE TABLE IF NOT EXISTS first_start (
-            user_id INTEGER PRIMARY KEY,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP
-        )
-        """)
-        conn.execute("""
-        CREATE TABLE IF NOT EXISTS group_settings (
-            chat_id INTEGER PRIMARY KEY,
-            anti_flood BOOLEAN DEFAULT 0,
-            welcome_text TEXT,
-            rules_text TEXT
-        )
-        """)
-        conn.execute("""
-        CREATE TABLE IF NOT EXISTS user_groups (
-            user_id INTEGER,
-            chat_id INTEGER,
-            chat_title TEXT,
-            UNIQUE(user_id, chat_id)
-        )
-        """)
-        conn.execute("""
-        CREATE TABLE IF NOT EXISTS broadcast_history (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            message_id INTEGER,
-            success_count INTEGER,
-            fail_count INTEGER,
-            created_at TEXT
-        )
-        """)
-        conn.execute("""
-        CREATE TABLE IF NOT EXISTS additional_settings (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            chat_id INTEGER,
-            setting_name TEXT,
-            setting_value TEXT
-        )
-        """)
-        conn.execute("""
-        CREATE TABLE IF NOT EXISTS user_stats (
-            user_id INTEGER PRIMARY KEY,
-            total_messages INTEGER DEFAULT 0,
-            last_activity TEXT
-        )
-        """)
-        conn.execute("""
-        CREATE TABLE IF NOT EXISTS chat_stats (
-            chat_id INTEGER PRIMARY KEY,
-            total_members INTEGER DEFAULT 0,
-            total_messages INTEGER DEFAULT 0
-        )
-        """)
-        conn.execute("""
-        CREATE TABLE IF NOT EXISTS subscription_limits (
-            chat_id INTEGER PRIMARY KEY,
-            max_subs INTEGER DEFAULT 5
-        )
-        """)
-        conn.execute("""
-        CREATE TABLE IF NOT EXISTS invite_links (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            chat_id INTEGER,
-            link TEXT,
-            sub_limit INTEGER
-        )
-        """)
-        conn.execute("""
-        CREATE TABLE IF NOT EXISTS private_channels (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            channel_id INTEGER,
-            added_by INTEGER
-        )
-        """)
-        conn.execute("""
-        CREATE TABLE IF NOT EXISTS antiflood_settings (
-            chat_id INTEGER PRIMARY KEY,
-            msg_limit INTEGER DEFAULT 5,
-            time_sec INTEGER DEFAULT 10,
-            action TEXT DEFAULT 'mute'  -- warn, mute, delete, off
-        )
-        """)
-        conn.execute("""
-        CREATE TABLE IF NOT EXISTS autodel_settings (
-            chat_id INTEGER PRIMARY KEY,
-            types TEXT,  -- comma-separated: op, flood, service
-            timer TEXT DEFAULT '10s'  -- 10s,30s,1m,15m,1h,1d,instant
-        )
-        """)
-        conn.execute("""
-        CREATE TABLE IF NOT EXISTS service_msgs (
-            chat_id INTEGER PRIMARY KEY,
-            delete_left BOOLEAN DEFAULT 1,
-            delete_joined BOOLEAN DEFAULT 1,
-            delete_pinned BOOLEAN DEFAULT 1,
-            delete_photo_change BOOLEAN DEFAULT 1,
-            delete_title_change BOOLEAN DEFAULT 1,
-            delete_tg_notif BOOLEAN DEFAULT 1,
-            delete_bot_msgs BOOLEAN DEFAULT 1
-        )
-        """)
-        conn.execute("""
-        CREATE TABLE IF NOT EXISTS mod_logs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            chat_id INTEGER,
-            admin_id INTEGER,
-            target_id INTEGER,
-            action TEXT,
-            term TEXT,
-            reason TEXT,
-            date TEXT
-        )
-        """)
-        conn.execute("""
-        CREATE TABLE IF NOT EXISTS bot_chats (
-            chat_id INTEGER PRIMARY KEY,
-            title TEXT,
-            type TEXT,
-            added_at TEXT
-        )
-        """)
-        conn.execute("""
-        CREATE TABLE IF NOT EXISTS custom_functions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT UNIQUE,
-            description TEXT,
-            code TEXT
-        )
-        """)
-        # Индексы
+
         indexes = [
             "CREATE INDEX IF NOT EXISTS idx_required_subs_chat ON required_subs(chat_id)",
             "CREATE INDEX IF NOT EXISTS idx_members_user_chat ON members(user_id, chat_id)",
@@ -741,8 +699,8 @@ def update_user_activity(user, chat_id):
                 """, (username, first_name, last_name, get_iso_now(), exists['id']))
             else:
                 conn.execute("""
-                    INSERT INTO members (user_id, chat_id, username, first_name, last_name, last_seen, messages_count)
-                    VALUES (?, ?, ?, ?, ?, ?, 1)
+                    INSERT INTO members (user_id, chat_id, username, first_name, last_name, messages_count, last_seen)
+                    VALUES (?, ?, ?, ?, ?, 1, ?)
                 """, (user.id, chat_id, username, first_name, last_name, get_iso_now()))
 
             conn.execute("UPDATE user_stats SET total_messages = total_messages + 1, last_activity = ? WHERE user_id = ?", (get_iso_now(), user.id))
@@ -1905,7 +1863,7 @@ def group_message_processor(message):
             )
         except:
             pass
-    # Авто-удаление: добавить timer для удаления сообщений бота/служебных
+    # Авто-удаление: добавь timer для удаления сообщений бота/служебных
     if message.new_chat_members or message.left_chat_member or message.pinned_message or message.new_chat_photo or message.new_chat_title or message.from_user.is_bot:
         with get_db_connection() as conn:
             autodel = conn.execute("SELECT timer FROM autodel_settings WHERE chat_id = ? AND types LIKE '%service%'", (chat_id,)).fetchone()
