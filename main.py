@@ -261,7 +261,7 @@ STRINGS = {
                       "Step 1: Find the private channel ID.\n"
                       "Step 2: In chat: /setup 1001994526641\n\n"
                       "Disable: /unsetup 1001994526641\n\n"
-                      "💡 /status for view and edit menu.",
+                     "💡 /status for view and edit menu.",
         "op_invite": "🔗 Subscription check for invite links.\n\n"
                      "Step 1: Find the private channel ID.\n"
                      "Step 2: /setup 1001994526641 https://t.me/+Link\n\n"
@@ -737,13 +737,13 @@ def update_user_activity(user, chat_id):
             last_name = user.last_name or ""
 
             if exists:
-    conn.execute("""
-        UPDATE members SET 
-        username = ?, first_name = ?, last_name = ?, messages_count = messages_count + 1, last_seen = ? 
-        WHERE id = ?
-    """, (username, first_name, last_name, get_iso_now(), exists['id']))
-else:
-                    cursor.execute("""
+                conn.execute("""
+                    UPDATE members SET 
+                    username = ?, first_name = ?, last_name = ?, messages_count = messages_count + 1, last_seen = ? 
+                    WHERE id = ?
+                """, (username, first_name, last_name, get_iso_now(), exists['id']))
+            else:
+                cursor.execute("""
                     INSERT INTO users (id, chat_id, username, first_name, last_name, created_at)
                     VALUES (?, ?, ?, ?, ?, ?)
                 """, (user.id, chat_id, username, first_name, last_name, get_iso_now()))
@@ -852,6 +852,16 @@ def generate_group_detail_keyboard(user_id, chat_id):
                InlineKeyboardButton("Приветствия и правила", callback_data=f"welcome:{chat_id}"))
     markup.add(InlineKeyboardButton("Служебные сообщения", callback_data=f"service:{chat_id}"))
     markup.add(InlineKeyboardButton(get_string(user_id, "lang_back"), callback_data="group_settings"))
+    return markup
+
+def generate_languages_keyboard(user_id):
+    markup = InlineKeyboardMarkup(row_width=3)
+    markup.add(
+        InlineKeyboardButton(get_string(user_id, "lang_title_ru"), callback_data="lang_ru"),
+        InlineKeyboardButton(get_string(user_id, "lang_title_en"), callback_data="lang_en"),
+        InlineKeyboardButton(get_string(user_id, "lang_title_uk"), callback_data="lang_uk")
+    )
+    markup.add(InlineKeyboardButton(get_string(user_id, "lang_back"), callback_data="main_menu"))
     return markup
 
 def generate_languages_keyboard(user_id):
