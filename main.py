@@ -445,10 +445,6 @@ DEFAULT_LANG = 'ru'
 LANGUAGES = {'ru': 'Русский', 'en': 'English', 'uk': 'Українська'}
 LANG_FLAGS = {'ru': '🇷🇺', 'en': '🇺🇸', 'uk': '🇺🇦'}
 
-def get_string(user_id, key):
-    lang_code = get_user_language(user_id)
-    return STRINGS.get(lang_code, STRINGS[DEFAULT_LANG]).get(key, f"MISSING: {key}")
-
 def get_db_connection():
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     conn.row_factory = sqlite3.Row
@@ -739,15 +735,18 @@ def update_user_activity(user, chat_id):
             if exists:
                 conn.execute("""
                     UPDATE members SET 
-                    username = ?, first_name = ?, last_name = ?, messages_count = messages_count + 1, last_seen = ? 
+                        username = ?, first_name = ?, last_name = ?, 
+                        messages_count = messages_count + 1, last_seen = ? 
                     WHERE id = ?
                 """, (username, first_name, last_name, get_iso_now(), exists['id']))
             else:
-                cursor.execute("""
+                conn.execute("""
                     INSERT INTO users (id, chat_id, username, first_name, last_name, created_at)
                     VALUES (?, ?, ?, ?, ?, ?)
                 """, (user.id, chat_id, username, first_name, last_name, get_iso_now()))
-            conn.execute("UPDATE user_stats SET total_messages = total_messages + 1, last_activity = ? WHERE user_id = ?", (get_iso_now(), user.id))
+
+            conn.execute("UPDATE user_stats SET total_messages = total_messages + 1, last_activity = ? WHERE user_id = ?", 
+                        (get_iso_now(), user.id))
             conn.execute("UPDATE chat_stats SET total_messages = total_messages + 1 WHERE chat_id = ?", (chat_id,))
             conn.execute("INSERT OR REPLACE INTO user_groups (user_id, chat_id, chat_title) VALUES (?, ?, ?)",
                          (user.id, chat_id, bot.get_chat(chat_id).title or f"Chat {chat_id}"))
@@ -852,16 +851,6 @@ def generate_group_detail_keyboard(user_id, chat_id):
                InlineKeyboardButton("Приветствия и правила", callback_data=f"welcome:{chat_id}"))
     markup.add(InlineKeyboardButton("Служебные сообщения", callback_data=f"service:{chat_id}"))
     markup.add(InlineKeyboardButton(get_string(user_id, "lang_back"), callback_data="group_settings"))
-    return markup
-
-def generate_languages_keyboard(user_id):
-    markup = InlineKeyboardMarkup(row_width=3)
-    markup.add(
-        InlineKeyboardButton(get_string(user_id, "lang_title_ru"), callback_data="lang_ru"),
-        InlineKeyboardButton(get_string(user_id, "lang_title_en"), callback_data="lang_en"),
-        InlineKeyboardButton(get_string(user_id, "lang_title_uk"), callback_data="lang_uk")
-    )
-    markup.add(InlineKeyboardButton(get_string(user_id, "lang_back"), callback_data="main_menu"))
     return markup
 
 def generate_languages_keyboard(user_id):
