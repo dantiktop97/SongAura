@@ -6,7 +6,7 @@ import time
 from datetime import datetime, timedelta
 from flask import Flask, request
 import telebot
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, Update, ChatPermissions, ReplyKeyboardRemove
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, Update, ChatPermissions
 import logging
 
 # Настройка логирования
@@ -18,7 +18,7 @@ TOKEN = os.getenv("BOT_TOKEN") or "YOUR_TOKEN_HERE"
 WEBHOOK_HOST = os.getenv("WEBHOOK_HOST", "https://songaura.onrender.com")
 PORT = int(os.getenv("PORT", "8000"))
 ADMIN_ID = int(os.getenv("ADMIN_ID", "7549204023"))
-LOG_CHANNEL = int(os.getenv("LOG_CHANNEL", "4902536707"))  
+LOG_CHANNEL = int(os.getenv("LOG_CHANNEL", "4902536707"))
 DB_PATH = os.getenv("DB_PATH", "data.db")
 ADMIN_STATUSES = ("administrator", "creator")
 MAX_LOG_ENTRIES = 10
@@ -115,9 +115,25 @@ STRINGS = {
         "status_text": "📋 Активные проверки:\n\n{list}",
         "status_empty": "Нет активных проверок.",
         "profile_text": "💳 Ваш профиль\n━━━━━━━━━━━━━━━\n🆔 ID: {user_id}\n👤 Ник: @{username}\n📅 Регистрация: {reg_date}\n━━━━━━━━━━━━━━━\nВаши активные чаты:\n{chats}",
-        "op_public": "✅ Функция проверки подписки на публичные каналы/чаты 🛡️\n\n▸ Шаг 1: Добавьте меня в админы канала/чата для проверки.\n▸ Шаг 2: В вашем чате: /setup @channel и время (60s, 60m, 24h, 1d).\n\n⛔ Для отключения: /unsetup @channel ❌\n\n➕ Макс. 5 проверок!\n\n💡 /status покажет активные проверки и таймеры. ⏰\n\nВопросы? В поддержку 📞",
-        "op_private": "📢 Проверка подписки для приватных каналов/чатов:\n\nШаг 1: Узнайте ID приватного канала.\nШаг 2: В чате: /setup 1001994526641\n\nОтключить: /unsetup 1001994526641\n\n💡 /status для меню просмотра и редактирования.",
-        "op_invite": "🔗 Проверка подписки на пригласительные ссылки.\n\nШаг 1: Узнайте ID приватного канала.\nШаг 2: /setup 1001994526641 https://t.me/+Link\n\nОтключить: /unsetup 1001994526641\n\nЛимит подписок: /setup ... 100\nТаймер: /setup ... 1d (s/m/h/d)\n\n💡 /status для управления.",
+        "op_public": "✅ Функция проверки подписки на публичные каналы/чаты 🛡️\n\n"
+                     "▸ Шаг 1: Добавьте меня в админы канала/чата для проверки.\n"
+                     "▸ Шаг 2: В вашем чате: /setup @channel и время (60s, 60m, 24h, 1d).\n\n"
+                     "⛔ Для отключения: /unsetup @channel ❌\n\n"
+                     "➕ Макс. 5 проверок!\n\n"
+                     "💡 /status покажет активные проверки и таймеры. ⏰\n\n"
+                     "Вопросы? В поддержку 📞",
+        "op_private": "📢 Проверка подписки для приватных каналов/чатов:\n\n"
+                      "Шаг 1: Узнайте ID приватного канала.\n"
+                      "Шаг 2: В чате: /setup 1001994526641\n\n"
+                      "Отключить: /unsetup 1001994526641\n\n"
+                     "💡 /status для меню просмотра и редактирования.",
+        "op_invite": "🔗 Проверка подписки на пригласительные ссылки.\n\n"
+                     "Шаг 1: Узнайте ID приватного канала.\n"
+                     "Шаг 2: /setup 1001994526641 https://t.me/+Link\n\n"
+                     "Отключить: /unsetup 1001994526641\n\n"
+                     "Лимит подписок: /setup ... 100\n"
+                     "Таймер: /setup ... 1d (s/m/h/d)\n\n"
+                     "💡 /status для управления.",
         "op_error": "❌ Я не могу установить проверку подписки. Причина: я не администратор канала/чата {channel}.",
         "op_max": "❌ Превышено максимальное количество проверок (5). Удалите старые через /unsetup @channel.",
         "op_invalid_format": "❌ Неправильный формат команды. Используйте /setup @channel или /setup ID [ссылка] [лимит] [время].",
@@ -234,9 +250,25 @@ STRINGS = {
         "status_text": "📋 Active checks:\n\n{list}",
         "status_empty": "No active checks.",
         "profile_text": "💳 Your profile\n━━━━━━━━━━━━━━━\n🆔 ID: {user_id}\n👤 Nick: @{username}\n📅 Registration: {reg_date}\n━━━━━━━━━━━━━━━\nYour active chats:\n{chats}",
-        "op_public": "✅ Public channels/chats subscription check feature 🛡️\n\n▸ Step 1: Add me as admin to the channel/chat for check.\n▸ Step 2: In your chat: /setup @channel and time (60s, 60m, 24h, 1d).\n\n⛔ To disable: /unsetup @channel ❌\n\n➕ Max 5 checks!\n\n💡 /status will show active checks and timers. ⏰\n\nQuestions? Contact support 📞",
-        "op_private": "📢 Subscription check for private channels/chats:\n\nStep 1: Find the private channel ID.\nStep 2: In chat: /setup 1001994526641\n\nDisable: /unsetup 1001994526641\n\n💡 /status for view and edit menu.",
-        "op_invite": "🔗 Subscription check for invite links.\n\nStep 1: Find the private channel ID.\nStep 2: /setup 1001994526641 https://t.me/+Link\n\nDisable: /unsetup 1001994526641\n\nSubscriptions limit: /setup ... 100\nTimer: /setup ... 1d (s/m/h/d)\n\n💡 /status for management.",
+        "op_public": "✅ Public channels/chats subscription check feature 🛡️\n\n"
+                     "▸ Step 1: Add me as admin to the channel/chat for check.\n"
+                     "▸ Step 2: In your chat: /setup @channel and time (60s, 60m, 24h, 1d).\n\n"
+                     "⛔ To disable: /unsetup @channel ❌\n\n"
+                     "➕ Max 5 checks!\n\n"
+                     "💡 /status will show active checks and timers. ⏰\n\n"
+                     "Questions? Contact support 📞",
+        "op_private": "📢 Subscription check for private channels/chats:\n\n"
+                      "Step 1: Find the private channel ID.\n"
+                      "Step 2: In chat: /setup 1001994526641\n\n"
+                      "Disable: /unsetup 1001994526641\n\n"
+                     "💡 /status for view and edit menu.",
+        "op_invite": "🔗 Subscription check for invite links.\n\n"
+                     "Step 1: Find the private channel ID.\n"
+                     "Step 2: /setup 1001994526641 https://t.me/+Link\n\n"
+                     "Disable: /unsetup 1001994526641\n\n"
+                     "Subscriptions limit: /setup ... 100\n"
+                     "Timer: /setup ... 1d (s/m/h/d)\n\n"
+                     "💡 /status for management.",
         "op_error": "❌ I can't set subscription check. Reason: I am not an admin of the channel/chat {channel}.",
         "op_max": "❌ Maximum number of checks exceeded (5). Remove old ones via /unsetup.",
         "op_invalid_format": "❌ Invalid command format. Use /setup @channel or /setup ID [link] [limit] [time].",
@@ -353,9 +385,25 @@ STRINGS = {
         "status_text": "📋 Активні перевірки:\n\n{list}",
         "status_empty": "Немає активних перевірок.",
         "profile_text": "💳 Ваш профіль\n━━━━━━━━━━━━━━━\n🆔 ID: {user_id}\n👤 Нік: @{username}\n📅 Реєстрація: {reg_date}\n━━━━━━━━━━━━━━━\nВаші активні чати:\n{chats}",
-        "op_public": "✅ Функція перевірки підписки на публічні канали/чати 🛡️\n\n▸ Крок 1: Додайте мене в адміни каналу/чату для перевірки.\n▸ Крок 2: У вашому чаті: /setup @channel та час (60s, 60m, 24h, 1d).\n\n⛔ Для вимкнення: /unsetup @channel ❌\n\n➕ Макс. 5 перевірок!\n\n💡 /status покаже активні перевірки та таймери. ⏰\n\nПитання? В підтримку 📞",
-        "op_private": "📢 Перевірка підписки для приватних каналів/чатів:\n\nКрок 1: Дізнайтеся ID приватного каналу.\nКрок 2: У чаті: /setup 1001994526641\n\nВимкнути: /unsetup 1001994526641\n\n💡 /status для меню перегляду та редагування.",
-        "op_invite": "🔗 Перевірка підписки на запрошувальні посилання.\n\nКрок 1: Дізнайтеся ID приватного каналу.\nКрок 2: /setup 1001994526641 https://t.me/+Link\n\nВимкнути: /unsetup 1001994526641\n\nЛіміт підписок: /setup ... 100\nТаймер: /setup ... 1d (s/m/h/d)\n\n💡 /status для керування.",
+        "op_public": "✅ Функція перевірки підписки на публічні канали/чати 🛡️\n\n"
+                     "▸ Крок 1: Додайте мене в адміни каналу/чату для перевірки.\n"
+                     "▸ Крок 2: У вашому чаті: /setup @channel та час (60s, 60m, 24h, 1d).\n\n"
+                     "⛔ Для вимкнення: /unsetup @channel ❌\n\n"
+                     "➕ Макс. 5 перевірок!\n\n"
+                     "💡 /status покаже активні перевірки та таймери. ⏰\n\n"
+                     "Питання? В підтримку 📞",
+        "op_private": "📢 Перевірка підписки для приватних каналів/чатів:\n\n"
+                      "Крок 1: Дізнайтеся ID приватного каналу.\n"
+                      "Крок 2: У чаті: /setup 1001994526641\n\n"
+                      "Вимкнути: /unsetup 1001994526641\n\n"
+                      "💡 /status для меню перегляду та редагування.",
+        "op_invite": "🔗 Перевірка підписки на запрошувальні посилання.\n\n"
+                     "Крок 1: Дізнайтеся ID приватного каналу.\n"
+                     "Крок 2: /setup 1001994526641 https://t.me/+Link\n\n"
+                     "Вимкнути: /unsetup 1001994526641\n\n"
+                     "Ліміт підписок: /setup ... 100\n"
+                     "Таймер: /setup ... 1d (s/m/h/d)\n\n"
+                     "💡 /status для керування.",
         "op_error": "❌ Я не можу встановити перевірку підписки. Причина: я не адміністратор каналу/чату {channel}.",
         "op_max": "❌ Перевищено максимальну кількість перевірок (5). Видаліть старі через /unsetup.",
         "op_invalid_format": "❌ Неправильний формат команди. Використовуйте /setup @channel або /setup ID [посилання] [ліміт] [час].",
@@ -416,7 +464,7 @@ def initialize_database():
             expires TEXT,
             added_by INTEGER,
             created_at TEXT,
-            type TEXT DEFAULT 'public',  -- public, private, invite
+            type TEXT DEFAULT 'public',
             invite_link TEXT,
             sub_limit INTEGER
         )
@@ -548,14 +596,14 @@ def initialize_database():
             chat_id INTEGER PRIMARY KEY,
             msg_limit INTEGER DEFAULT 5,
             time_sec INTEGER DEFAULT 10,
-            action TEXT DEFAULT 'mute'  -- warn, mute, delete, off
+            action TEXT DEFAULT 'mute'
         )
         """)
         conn.execute("""
         CREATE TABLE IF NOT EXISTS autodel_settings (
             chat_id INTEGER PRIMARY KEY,
-            types TEXT,  -- comma-separated: op, flood, service
-            timer TEXT DEFAULT '10s'  -- 10s,30s,1m,15m,1h,1d,instant
+            types TEXT,
+            timer TEXT DEFAULT '10s'
         )
         """)
         conn.execute("""
@@ -689,16 +737,15 @@ def update_user_activity(user, chat_id):
             last_name = user.last_name or ""
 
             if exists:
-                conn.execute("""
-                    UPDATE members SET 
-                    username = ?, first_name = ?, last_name = ?, messages_count = messages_count + 1, last_seen = ? 
-                    WHERE id = ?
-                """, (username, first_name, last_name, get_iso_now(), exists['id']))
+                conn.execute(
+                    "UPDATE members SET username = ?, first_name = ?, last_name = ?, messages_count = messages_count + 1, last_seen = ? WHERE id = ?",
+                    (username, first_name, last_name, get_iso_now(), exists['id'])
+                )
             else:
-                conn.execute("""
-                    INSERT INTO members (user_id, chat_id, username, first_name, last_name, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                """, (user.id, chat_id, username, first_name, last_name, get_iso_now()))
+                conn.execute(
+                    "INSERT INTO members (user_id, chat_id, username, first_name, last_name, messages_count, last_seen) VALUES (?, ?, ?, ?, ?, 1, ?)",
+                    (user.id, chat_id, username, first_name, last_name, get_iso_now())
+                )
             conn.execute("UPDATE user_stats SET total_messages = total_messages + 1, last_activity = ? WHERE user_id = ?", (get_iso_now(), user.id))
             conn.execute("UPDATE chat_stats SET total_messages = total_messages + 1 WHERE chat_id = ?", (chat_id,))
             conn.execute("INSERT OR REPLACE INTO user_groups (user_id, chat_id, chat_title) VALUES (?, ?, ?)",
@@ -788,9 +835,9 @@ def generate_group_settings_keyboard(user_id, for_admin=False):
         chat_id = chat['chat_id']
         title = chat['title'] or chat.get('chat_title') or f"Chat {chat_id}"
         link = f"https://t.me/c/{str(chat_id)[4:]}" if str(chat_id).startswith('-100') else f"https://t.me/{title.lstrip('@')}"
-        markup.add(InlineKeyboardButton(title, callback_data=f"group_set:{chat_id}", url=link))
+        markup.add(InlineKeyboardButton(title, callback_data=f"group_set:{chat_id}"))
     if not chats:
-        bot.send_message(user_id, get_string(user_id, "no_groups_added"))
+        markup.add(InlineKeyboardButton(get_string(user_id, "no_groups_added"), callback_data="main_menu"))
     markup.add(InlineKeyboardButton(get_string(user_id, "lang_back"), callback_data="main_menu"))
     return markup
 
@@ -952,7 +999,7 @@ def callback_query_handler(call: CallbackQuery):
     if data == "profile":
         with get_db_connection() as conn:
             reg = conn.execute("SELECT created_at FROM first_start WHERE user_id = ?", (user_id,)).fetchone()
-            reg_date = format_readable_date(reg['created_at']) if reg else "Неизвестно"
+            reg_date = format_readable_date(reg['created_at'] if reg else None)
             groups = conn.execute("SELECT chat_title FROM user_groups WHERE user_id = ?", (user_id,)).fetchall()
             chats_list = "\n".join([f"• {g['chat_title']}" for g in groups]) or "Нет"
         username = call.from_user.username or "нет"
@@ -1185,117 +1232,22 @@ def callback_query_handler(call: CallbackQuery):
                 target_user = bot.get_chat_member(log['target_id'], log['target_id']).user
                 chat = bot.get_chat(log['chat_id'])
                 chat_title = chat.title or "Chat"
-                chat_link = f"https://t.me/c/{str(log['chat_id'])[4:]}" if str(log['chat_id']).startswith('-100') else f"https://t.me/{chat.username}"
                 logs_text += get_string(user_id, "log_entry").format(
-                    admin_id=log['admin_id'], admin_username=admin_user.username or "unknown",
-                    target_id=log['target_id'], target_username=target_user.username or "unknown",
+                    admin_username=admin_user.username or "unknown", admin_id=log['admin_id'],
+                    target_username=target_user.username or "unknown", target_id=log['target_id'],
                     action=log['action'], term=log['term'] or "", reason=log['reason'] or "",
-                    chat_id=log['chat_id'], chat_link=chat_link, chat_title=chat_title, date=log['date']
+                    chat_title=chat_title, chat_id=log['chat_id'], date=log['date']
                 ) + "\n\n"
             except:
                 continue
         text = get_string(user_id, "adm_group_logs").format(logs=logs_text or "Нет логов.")
-        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=generate_back_button(user_id, "adm_main"), disable_web_page_preview=True)
+        bot.edit_message_text(text, chat_id, msg_id, reply_markup=generate_back_button(user_id, "adm_main"))
         return
 
     if data == "adm_create_func":
-        user_id = call.from_user.id
-        if user_id != ADMIN_ID: return
         _local_memory[user_id] = "waiting_create_func"
-        bot.edit_message_text(get_string(user_id, "adm_create_func_prompt"), call.message.chat.id, call.message.message_id, reply_markup=generate_back_button(user_id, "adm_main"))
-
-    if data == "adm_manage_subs":
-        bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=msg_id,
-            text="🛡 Управление обязательными подписками\n\nЗдесь вы можете посмотреть и удалить активные требования подписки.",
-            reply_markup=generate_management_keyboard(user_id)
-        )
-
-    if data == "mng_info_add":
-        bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=msg_id,
-            text="ℹ️ Добавление подписки\n\n"
-                 "Чтобы добавить обязательную подписку для группы, вам нужно использовать команду /setup в самой группе, где бот является администратором.\n\n"
-                 "Формат: /setup @username_канала [время_действия]\n"
-                 "Пример: /setup @MyChannel 1d (на 1 день)\n"
-                 "Пример: /setup @MyChannel (навсегда)",
-            reply_markup=generate_back_button(user_id, "adm_manage_subs")
-        )
-
-    if data == "mng_show_subs":
-        with get_db_connection() as conn:
-            subs = conn.execute("SELECT id, chat_id, channel, expires FROM required_subs ORDER BY chat_id, channel").fetchall()
-
-        sub_list_text = "📋 Активные требования подписок:\n\n"
-        if not subs:
-            sub_list_text += "Нет активных требований подписки ни в одном из чатов."
-        else:
-            current_chat_id = None
-            for sub in subs:
-                if sub['chat_id'] != current_chat_id:
-                    current_chat_id = sub['chat_id']
-                    try:
-                        chat_info = bot.get_chat(current_chat_id)
-                        chat_name = sanitize_text(chat_info.title)
-                    except Exception:
-                        chat_name = f"Неизвестный чат ({current_chat_id})"
-                    
-                    sub_list_text += f"\n--- 👥 {chat_name} (ID: {current_chat_id}) ---\n"
-                
-                expiry_str = format_readable_date(sub['expires'])
-                sub_list_text += f"• [ID:{sub['id']}] {sub['channel']} (до: {expiry_str})\n"
-
-        bot.edit_message_text(
-            chat_id=chat_id, 
-            message_id=msg_id, 
-            text=sub_list_text, 
-            reply_markup=generate_back_button(user_id, "adm_manage_subs")
-        )
-
-    if data == "mng_del_sub_start":
-        with get_db_connection() as conn:
-            subs = conn.execute("SELECT id, chat_id, channel, expires FROM required_subs ORDER BY id DESC LIMIT 50").fetchall()
-        
-        if not subs:
-            bot.edit_message_text(
-                chat_id=chat_id, 
-                message_id=msg_id, 
-                text="❌ Нет подписок для удаления.", 
-                reply_markup=generate_back_button(user_id, "adm_manage_subs")
-            )
-            return
-            
-        bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=msg_id,
-            text="➖ Выберите подписку для удаления:\n\nОтображаются последние 50 записей.",
-            reply_markup=generate_delete_subscription_keyboard(user_id, subs)
-        )
-
-    if data.startswith("mng_del_sub:"):
-        sub_id = data.split(":")[1]
-        try:
-            sub_id = int(sub_id)
-        except ValueError:
-            bot.answer_callback_query(call.id, "❌ Некорректный ID.", show_alert=True)
-            return
-
-        with get_db_connection() as conn:
-            cursor = conn.execute("SELECT chat_id, channel FROM required_subs WHERE id = ?", (sub_id,))
-            sub_info = cursor.fetchone()
-            
-            if sub_info:
-                conn.execute("DELETE FROM required_subs WHERE id = ?", (sub_id,))
-                conn.commit()
-                log_system_action(sub_info['chat_id'], user_id, "DEL_SUB", f"Удалена подписка [ID:{sub_id}] {sub_info['channel']}")
-                bot.answer_callback_query(call.id, f"✅ Подписка [ID:{sub_id}] удалена.", show_alert=False)
-            else:
-                bot.answer_callback_query(call.id, f"❌ Подписка [ID:{sub_id}] не найдена.", show_alert=True)
-                
-        call.data = "adm_manage_subs"
-        callback_query_handler(call) 
+        bot.edit_message_text(get_string(user_id, "adm_create_func_prompt"), chat_id, msg_id, reply_markup=generate_back_button(user_id, "adm_main"))
+        return
 
     if data == "support":
         bot.edit_message_text(get_string(user_id, "support_prompt"), chat_id, msg_id, reply_markup=generate_back_button(user_id, "main_menu"))
@@ -1337,19 +1289,6 @@ def callback_query_handler(call: CallbackQuery):
         set_user_language(user_id, lang_code)
         bot.edit_message_text(get_string(user_id, "lang_changed").format(lang=LANGUAGES[lang_code]), chat_id, msg_id, reply_markup=generate_start_keyboard(user_id))
         return
-
-    if data == "adm_user_check":
-        _local_memory[user_id] = "waiting_user_check"
-        bot.edit_message_text(get_string(user_id, "user_check_prompt"), chat_id, msg_id, reply_markup=generate_back_button(user_id, "adm_main"))
-        return
-
-    if data == "auto_delete":
-        user_id = call.from_user.id
-        bot.edit_message_text(get_string(user_id, "autodel_menu").format(types="", timer=""), call.message.chat.id, call.message.message_id, reply_markup=generate_autodel_keyboard(user_id, 0))  # chat_id=0 placeholder if needed
-
-    if data == "welcome_rules":
-        user_id = call.from_user.id
-        bot.edit_message_text(get_string(user_id, "welcome_rules_menu").format(auto_del=""), call.message.chat.id, call.message.message_id, reply_markup=generate_welcome_rules_keyboard(user_id, 0))  # placeholder
 
 @bot.message_handler(func=lambda m: _local_memory.get(m.from_user.id, "").startswith("waiting_welcome:"))
 def process_welcome_edit(message):
@@ -1409,7 +1348,7 @@ def process_broadcast(message):
         try:
             bot.copy_message(target_id, message.chat.id, message.message_id)
             success_count += 1
-            time.sleep(0.04) 
+            time.sleep(0.04)
         except Exception:
             fail_count += 1
 
