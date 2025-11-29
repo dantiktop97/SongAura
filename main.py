@@ -115,25 +115,9 @@ STRINGS = {
         "status_text": "📋 Активные проверки:\n\n{list}",
         "status_empty": "Нет активных проверок.",
         "profile_text": "💳 Ваш профиль\n━━━━━━━━━━━━━━━\n🆔 ID: {user_id}\n👤 Ник: @{username}\n📅 Регистрация: {reg_date}\n━━━━━━━━━━━━━━━\nВаши активные чаты:\n{chats}",
-        "op_public": "✅ Функция проверки подписки на публичные каналы/чаты 🛡️\n\n"
-                     "▸ Шаг 1: Добавьте меня в админы канала/чата для проверки.\n"
-                     "▸ Шаг 2: В вашем чате: /setup @channel и время (60s, 60m, 24h, 1d).\n\n"
-                     "⛔ Для отключения: /unsetup @channel ❌\n\n"
-                     "➕ Макс. 5 проверок!\n\n"
-                     "💡 /status покажет активные проверки и таймеры. ⏰\n\n"
-                     "Вопросы? В поддержку 📞",
-        "op_private": "📢 Проверка подписки для приватных каналов/чатов:\n\n"
-                      "Шаг 1: Узнайте ID приватного канала.\n"
-                      "Шаг 2: В чате: /setup 1001994526641\n\n"
-                      "Отключить: /unsetup 1001994526641\n\n"
-                     "💡 /status для меню просмотра и редактирования.",
-        "op_invite": "🔗 Проверка подписки на пригласительные ссылки.\n\n"
-                     "Шаг 1: Узнайте ID приватного канала.\n"
-                     "Шаг 2: /setup 1001994526641 https://t.me/+Link\n\n"
-                     "Отключить: /unsetup 1001994526641\n\n"
-                     "Лимит подписок: /setup ... 100\n"
-                     "Таймер: /setup ... 1d (s/m/h/d)\n\n"
-                     "💡 /status для управления.",
+        "op_public": "✅ Функция проверки подписки на публичные каналы/чаты 🛡️\n\n▸ Шаг 1: Добавьте меня в админы канала/чата для проверки.\n▸ Шаг 2: В вашем чате: /setup @channel и время (60s, 60m, 24h, 1d).\n\n⛔ Для отключения: /unsetup @channel ❌\n\n➕ Макс. 5 проверок!\n\n💡 /status покажет активные проверки и таймеры. ⏰\n\nВопросы? В поддержку 📞",
+        "op_private": "📢 Проверка подписки для приватных каналов/чатов:\n\nШаг 1: Узнайте ID приватного канала.\nШаг 2: В чате: /setup 1001994526641\n\nОтключить: /unsetup 1001994526641\n\n💡 /status для меню просмотра и редактирования.",
+        "op_invite": "🔗 Проверка подписки на пригласительные ссылки.\n\nШаг 1: Узнайте ID приватного канала.\nШаг 2: /setup 1001994526641 https://t.me/+Link\n\nОтключить: /unsetup 1001994526641\n\nЛимит подписок: /setup ... 100\nТаймер: /setup ... 1d (s/m/h/d)\n\n💡 /status для управления.",
         "op_error": "❌ Я не могу установить проверку подписки. Причина: я не администратор канала/чата {channel}.",
         "op_max": "❌ Превышено максимальное количество проверок (5). Удалите старые через /unsetup @channel.",
         "op_invalid_format": "❌ Неправильный формат команды. Используйте /setup @channel или /setup ID [ссылка] [лимит] [время].",
@@ -250,25 +234,9 @@ STRINGS = {
         "status_text": "📋 Active checks:\n\n{list}",
         "status_empty": "No active checks.",
         "profile_text": "💳 Your profile\n━━━━━━━━━━━━━━━\n🆔 ID: {user_id}\n👤 Nick: @{username}\n📅 Registration: {reg_date}\n━━━━━━━━━━━━━━━\nYour active chats:\n{chats}",
-        "op_public": "✅ Public channels/chats subscription check feature 🛡️\n\n"
-                     "▸ Step 1: Add me as admin to the channel/chat for check.\n"
-                     "▸ Step 2: In your chat: /setup @channel and time (60s, 60m, 24h, 1d).\n\n"
-                     "⛔ To disable: /unsetup @channel ❌\n\n"
-                     "➕ Max 5 checks!\n\n"
-                     "💡 /status will show active checks and timers. ⏰\n\n"
-                     "Questions? Contact support 📞",
-        "op_private": "📢 Subscription check for private channels/chats:\n\n"
-                      "Step 1: Find the private channel ID.\n"
-                      "Step 2: In chat: /setup 1001994526641\n\n"
-                      "Disable: /unsetup 1001994526641\n\n"
-                     "💡 /status for view and edit menu.",
-        "op_invite": "🔗 Subscription check for invite links.\n\n"
-                     "Step 1: Find the private channel ID.\n"
-                     "Step 2: /setup 1001994526641 https://t.me/+Link\n\n"
-                     "Disable: /unsetup 1001994526641\n\n"
-                     "Subscriptions limit: /setup ... 100\n"
-                     "Timer: /setup ... 1d (s/m/h/d)\n\n"
-                     "💡 /status for management.",
+        "op_public": "✅ Public channels/chats subscription check feature 🛡️\n\n▸ Step 1: Add me as admin to the channel/chat for check.\n▸ Step 2: In your chat: /setup @channel and time (60s, 60m, 24h, 1d).\n\n⛔ To disable: /unsetup @channel ❌\n\n➕ Max 5 checks!\n\n💡 /status will show active checks and timers. ⏰\n\nQuestions? Contact support 📞",
+        "op_private": "📢 Subscription check for private channels/chats:\n\nStep 1: Find the private channel ID.\nStep 2: In chat: /setup 1001994526641\n\nDisable: /unsetup 1001994526641\n\n💡 /status for view and edit menu.",
+        "op_invite": "🔗 Subscription check for invite links.\n\nStep 1: Find the private channel ID.\nStep 2: /setup 1001994526641 https://t.me/+Link\n\nDisable: /unsetup 1001994526641\n\nSubscriptions limit: /setup ... 100\nTimer: /setup ... 1d (s/m/h/d)\n\n💡 /status for management.",
         "op_error": "❌ I can't set subscription check. Reason: I am not an admin of the channel/chat {channel}.",
         "op_max": "❌ Maximum number of checks exceeded (5). Remove old ones via /unsetup.",
         "op_invalid_format": "❌ Invalid command format. Use /setup @channel or /setup ID [link] [limit] [time].",
@@ -385,25 +353,9 @@ STRINGS = {
         "status_text": "📋 Активні перевірки:\n\n{list}",
         "status_empty": "Немає активних перевірок.",
         "profile_text": "💳 Ваш профіль\n━━━━━━━━━━━━━━━\n🆔 ID: {user_id}\n👤 Нік: @{username}\n📅 Реєстрація: {reg_date}\n━━━━━━━━━━━━━━━\nВаші активні чати:\n{chats}",
-        "op_public": "✅ Функція перевірки підписки на публічні канали/чати 🛡️\n\n"
-                     "▸ Крок 1: Додайте мене в адміни каналу/чату для перевірки.\n"
-                     "▸ Крок 2: У вашому чаті: /setup @channel та час (60s, 60m, 24h, 1d).\n\n"
-                     "⛔ Для вимкнення: /unsetup @channel ❌\n\n"
-                     "➕ Макс. 5 перевірок!\n\n"
-                     "💡 /status покаже активні перевірки та таймери. ⏰\n\n"
-                     "Питання? В підтримку 📞",
-        "op_private": "📢 Перевірка підписки для приватних каналів/чатів:\n\n"
-                      "Крок 1: Дізнайтеся ID приватного каналу.\n"
-                      "Крок 2: У чаті: /setup 1001994526641\n\n"
-                      "Вимкнути: /unsetup 1001994526641\n\n"
-                      "💡 /status для меню перегляду та редагування.",
-        "op_invite": "🔗 Перевірка підписки на запрошувальні посилання.\n\n"
-                     "Крок 1: Дізнайтеся ID приватного каналу.\n"
-                     "Крок 2: /setup 1001994526641 https://t.me/+Link\n\n"
-                     "Вимкнути: /unsetup 1001994526641\n\n"
-                     "Ліміт підписок: /setup ... 100\n"
-                     "Таймер: /setup ... 1d (s/m/h/d)\n\n"
-                     "💡 /status для керування.",
+        "op_public": "✅ Функція перевірки підписки на публічні канали/чати 🛡️\n\n▸ Крок 1: Додайте мене в адміни каналу/чату для перевірки.\n▸ Крок 2: У вашому чаті: /setup @channel та час (60s, 60m, 24h, 1d).\n\n⛔ Для вимкнення: /unsetup @channel ❌\n\n➕ Макс. 5 перевірок!\n\n💡 /status покаже активні перевірки та таймери. ⏰\n\nПитання? В підтримку 📞",
+        "op_private": "📢 Перевірка підписки для приватних каналів/чатів:\n\nКрок 1: Дізнайтеся ID приватного каналу.\nКрок 2: У чаті: /setup 1001994526641\n\nВимкнути: /unsetup 1001994526641\n\n💡 /status для меню перегляду та редагування.",
+        "op_invite": "🔗 Перевірка підписки на запрошувальні посилання.\n\nКрок 1: Дізнайтеся ID приватного каналу.\nКрок 2: /setup 1001994526641 https://t.me/+Link\n\nВимкнути: /unsetup 1001994526641\n\nЛіміт підписок: /setup ... 100\nТаймер: /setup ... 1d (s/m/h/d)\n\n💡 /status для керування.",
         "op_error": "❌ Я не можу встановити перевірку підписки. Причина: я не адміністратор каналу/чату {channel}.",
         "op_max": "❌ Перевищено максимальну кількість перевірок (5). Видаліть старі через /unsetup.",
         "op_invalid_format": "❌ Неправильний формат команди. Використовуйте /setup @channel або /setup ID [посилання] [ліміт] [час].",
@@ -445,6 +397,10 @@ DEFAULT_LANG = 'ru'
 LANGUAGES = {'ru': 'Русский', 'en': 'English', 'uk': 'Українська'}
 LANG_FLAGS = {'ru': '🇷🇺', 'en': '🇺🇸', 'uk': '🇺🇦'}
 
+def get_string(user_id, key):
+    lang_code = get_user_language(user_id)
+    return STRINGS.get(lang_code, STRINGS[DEFAULT_LANG]).get(key, f"MISSING: {key}")
+
 def get_db_connection():
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     conn.row_factory = sqlite3.Row
@@ -452,155 +408,197 @@ def get_db_connection():
 
 def initialize_database():
     with get_db_connection() as conn:
-        conn.executescript("""
-            CREATE TABLE IF NOT EXISTS required_subs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                chat_id INTEGER NOT NULL,
-                channel TEXT NOT NULL,
-                expires TEXT,
-                added_by INTEGER,
-                created_at TEXT,
-                type TEXT DEFAULT 'public',
-                invite_link TEXT,
-                sub_limit INTEGER
-            );
-            CREATE TABLE IF NOT EXISTS members (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL,
-                chat_id INTEGER NOT NULL,
-                username TEXT,
-                first_name TEXT,
-                last_name TEXT,
-                messages_count INTEGER DEFAULT 0,
-                last_seen TEXT,
-                UNIQUE(user_id, chat_id)
-            );
-            CREATE TABLE IF NOT EXISTS warns (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                chat_id INTEGER NOT NULL,
-                user_id INTEGER NOT NULL,
-                admin_id INTEGER,
-                reason TEXT,
-                created_at TEXT
-            );
-            CREATE TABLE IF NOT EXISTS mutes (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                chat_id INTEGER NOT NULL,
-                user_id INTEGER NOT NULL,
-                expires_at TEXT,
-                UNIQUE(chat_id, user_id)
-            );
-            CREATE TABLE IF NOT EXISTS system_logs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                chat_id INTEGER,
-                user_id INTEGER,
-                action_type TEXT,
-                details TEXT,
-                created_at TEXT
-            );
-            CREATE TABLE IF NOT EXISTS user_language (
-                user_id INTEGER PRIMARY KEY NOT NULL,
-                lang_code TEXT DEFAULT 'ru'
-            );
-            CREATE TABLE IF NOT EXISTS first_start (
-                user_id INTEGER PRIMARY KEY,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP
-            );
-            CREATE TABLE IF NOT EXISTS group_settings (
-                chat_id INTEGER PRIMARY KEY,
-                anti_flood BOOLEAN DEFAULT 0,
-                welcome_text TEXT,
-                rules_text TEXT
-            );
-            CREATE TABLE IF NOT EXISTS user_groups (
-                user_id INTEGER,
-                chat_id INTEGER,
-                chat_title TEXT,
-                UNIQUE(user_id, chat_id)
-            );
-            CREATE TABLE IF NOT EXISTS broadcast_history (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                message_id INTEGER,
-                success_count INTEGER,
-                fail_count INTEGER,
-                created_at TEXT
-            );
-            CREATE TABLE IF NOT EXISTS additional_settings (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                chat_id INTEGER,
-                setting_name TEXT,
-                setting_value TEXT
-            );
-            CREATE TABLE IF NOT EXISTS user_stats (
-                user_id INTEGER PRIMARY KEY,
-                total_messages INTEGER DEFAULT 0,
-                last_activity TEXT
-            );
-            CREATE TABLE IF NOT EXISTS chat_stats (
-                chat_id INTEGER PRIMARY KEY,
-                total_members INTEGER DEFAULT 0,
-                total_messages INTEGER DEFAULT 0
-            );
-            CREATE TABLE IF NOT EXISTS subscription_limits (
-                chat_id INTEGER PRIMARY KEY,
-                max_subs INTEGER DEFAULT 5
-            );
-            CREATE TABLE IF NOT EXISTS invite_links (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                chat_id INTEGER,
-                link TEXT,
-                sub_limit INTEGER
-            );
-            CREATE TABLE IF NOT EXISTS private_channels (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                channel_id INTEGER,
-                added_by INTEGER
-            );
-            CREATE TABLE IF NOT EXISTS antiflood_settings (
-                chat_id INTEGER PRIMARY KEY,
-                msg_limit INTEGER DEFAULT 5,
-                time_sec INTEGER DEFAULT 10,
-                action TEXT DEFAULT 'mute'  -- warn, mute, delete, off
-            );
-            CREATE TABLE IF NOT EXISTS autodel_settings (
-                chat_id INTEGER PRIMARY KEY,
-                types TEXT,  -- comma-separated: op, flood, service
-                timer TEXT DEFAULT '10s'  -- 10s,30s,1m,15m,1h,1d,instant
-            );
-            CREATE TABLE IF NOT EXISTS service_msgs (
-                chat_id INTEGER PRIMARY KEY,
-                delete_left BOOLEAN DEFAULT 1,
-                delete_joined BOOLEAN DEFAULT 1,
-                delete_pinned BOOLEAN DEFAULT 1,
-                delete_photo_change BOOLEAN DEFAULT 1,
-                delete_title_change BOOLEAN DEFAULT 1,
-                delete_tg_notif BOOLEAN DEFAULT 1,
-                delete_bot_msgs BOOLEAN DEFAULT 1
-            );
-            CREATE TABLE IF NOT EXISTS mod_logs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                chat_id INTEGER,
-                admin_id INTEGER,
-                target_id INTEGER,
-                action TEXT,
-                term TEXT,
-                reason TEXT,
-                date TEXT
-            );
-            CREATE TABLE IF NOT EXISTS bot_chats (
-                chat_id INTEGER PRIMARY KEY,
-                title TEXT,
-                type TEXT,
-                added_at TEXT
-            );
-            CREATE TABLE IF NOT EXISTS custom_functions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT UNIQUE,
-                description TEXT,
-                code TEXT
-            );
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS required_subs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id INTEGER NOT NULL,
+            channel TEXT NOT NULL,
+            expires TEXT,
+            added_by INTEGER,
+            created_at TEXT,
+            type TEXT DEFAULT 'public',  -- public, private, invite
+            invite_link TEXT,
+            sub_limit INTEGER
+        )
         """)
-
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS members (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            chat_id INTEGER NOT NULL,
+            username TEXT,
+            first_name TEXT,
+            last_name TEXT,
+            messages_count INTEGER DEFAULT 0,
+            last_seen TEXT,
+            UNIQUE(user_id, chat_id)
+        )
+        """)
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS warns (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            admin_id INTEGER,
+            reason TEXT,
+            created_at TEXT
+        )
+        """)
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS mutes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            expires_at TEXT,
+            UNIQUE(chat_id, user_id)
+        )
+        """)
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS system_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id INTEGER,
+            user_id INTEGER,
+            action_type TEXT,
+            details TEXT,
+            created_at TEXT
+        )
+        """)
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS user_language (
+            user_id INTEGER PRIMARY KEY NOT NULL,
+            lang_code TEXT DEFAULT 'ru'
+        )
+        """)
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS first_start (
+            user_id INTEGER PRIMARY KEY,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+        """)
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS group_settings (
+            chat_id INTEGER PRIMARY KEY,
+            anti_flood BOOLEAN DEFAULT 0,
+            welcome_text TEXT,
+            rules_text TEXT
+        )
+        """)
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS user_groups (
+            user_id INTEGER,
+            chat_id INTEGER,
+            chat_title TEXT,
+            UNIQUE(user_id, chat_id)
+        )
+        """)
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS broadcast_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            message_id INTEGER,
+            success_count INTEGER,
+            fail_count INTEGER,
+            created_at TEXT
+        )
+        """)
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS additional_settings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id INTEGER,
+            setting_name TEXT,
+            setting_value TEXT
+        )
+        """)
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS user_stats (
+            user_id INTEGER PRIMARY KEY,
+            total_messages INTEGER DEFAULT 0,
+            last_activity TEXT
+        )
+        """)
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS chat_stats (
+            chat_id INTEGER PRIMARY KEY,
+            total_members INTEGER DEFAULT 0,
+            total_messages INTEGER DEFAULT 0
+        )
+        """)
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS subscription_limits (
+            chat_id INTEGER PRIMARY KEY,
+            max_subs INTEGER DEFAULT 5
+        )
+        """)
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS invite_links (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id INTEGER,
+            link TEXT,
+            sub_limit INTEGER
+        )
+        """)
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS private_channels (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            channel_id INTEGER,
+            added_by INTEGER
+        )
+        """)
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS antiflood_settings (
+            chat_id INTEGER PRIMARY KEY,
+            msg_limit INTEGER DEFAULT 5,
+            time_sec INTEGER DEFAULT 10,
+            action TEXT DEFAULT 'mute'  -- warn, mute, delete, off
+        )
+        """)
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS autodel_settings (
+            chat_id INTEGER PRIMARY KEY,
+            types TEXT,  -- comma-separated: op, flood, service
+            timer TEXT DEFAULT '10s'  -- 10s,30s,1m,15m,1h,1d,instant
+        )
+        """)
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS service_msgs (
+            chat_id INTEGER PRIMARY KEY,
+            delete_left BOOLEAN DEFAULT 1,
+            delete_joined BOOLEAN DEFAULT 1,
+            delete_pinned BOOLEAN DEFAULT 1,
+            delete_photo_change BOOLEAN DEFAULT 1,
+            delete_title_change BOOLEAN DEFAULT 1,
+            delete_tg_notif BOOLEAN DEFAULT 1,
+            delete_bot_msgs BOOLEAN DEFAULT 1
+        )
+        """)
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS mod_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id INTEGER,
+            admin_id INTEGER,
+            target_id INTEGER,
+            action TEXT,
+            term TEXT,
+            reason TEXT,
+            date TEXT
+        )
+        """)
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS bot_chats (
+            chat_id INTEGER PRIMARY KEY,
+            title TEXT,
+            type TEXT,
+            added_at TEXT
+        )
+        """)
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS custom_functions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT UNIQUE,
+            description TEXT,
+            code TEXT
+        )
+        """)
+        # Индексы
         indexes = [
             "CREATE INDEX IF NOT EXISTS idx_required_subs_chat ON required_subs(chat_id)",
             "CREATE INDEX IF NOT EXISTS idx_members_user_chat ON members(user_id, chat_id)",
@@ -693,16 +691,14 @@ def update_user_activity(user, chat_id):
             if exists:
                 conn.execute("""
                     UPDATE members SET 
-                        username = ?, first_name = ?, last_name = ?, 
-                        messages_count = messages_count + 1, last_seen = ? 
+                    username = ?, first_name = ?, last_name = ?, messages_count = messages_count + 1, last_seen = ? 
                     WHERE id = ?
                 """, (username, first_name, last_name, get_iso_now(), exists['id']))
             else:
                 conn.execute("""
-                    INSERT INTO members (user_id, chat_id, username, first_name, last_name, messages_count, last_seen)
-                    VALUES (?, ?, ?, ?, ?, 1, ?)
+                    INSERT INTO members (user_id, chat_id, username, first_name, last_name, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
                 """, (user.id, chat_id, username, first_name, last_name, get_iso_now()))
-
             conn.execute("UPDATE user_stats SET total_messages = total_messages + 1, last_activity = ? WHERE user_id = ?", (get_iso_now(), user.id))
             conn.execute("UPDATE chat_stats SET total_messages = total_messages + 1 WHERE chat_id = ?", (chat_id,))
             conn.execute("INSERT OR REPLACE INTO user_groups (user_id, chat_id, chat_title) VALUES (?, ?, ?)",
