@@ -1863,7 +1863,7 @@ def group_message_processor(message):
             )
         except:
             pass
-    # Авто-удаление: добавь timer для удаления сообщений бота/служебных
+    # Авто-удаление: добавить timer для удаления сообщений бота/служебных
     if message.new_chat_members or message.left_chat_member or message.pinned_message or message.new_chat_photo or message.new_chat_title or message.from_user.is_bot:
         with get_db_connection() as conn:
             autodel = conn.execute("SELECT timer FROM autodel_settings WHERE chat_id = ? AND types LIKE '%service%'", (chat_id,)).fetchone()
