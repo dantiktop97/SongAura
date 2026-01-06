@@ -7,15 +7,15 @@ from flask import Flask, request
 from telebot import TeleBot
 from telebot.types import (
     ReplyKeyboardMarkup, KeyboardButton, Update,
-    InlineKeyboardMarkup, InlineKeyboardButton, ForceReply
+    InlineKeyboardMarkup, InlineKeyboardButton
 )
 
 # ====== Конфигурация ======
 PLAY = os.getenv("PLAY") or "YOUR_BOT_TOKEN_HERE"
 WEBHOOK_HOST = os.getenv("WEBHOOK_HOST", "https://songaura.onrender.com")
 PORT = int(os.getenv("PORT", "8000"))
-ADMIN_ID = 7549204023  # Твой ID
-LOG_CHANNEL = int(os.getenv("LOG_CHANNEL", "-1004902536707"))  # Канал для логов (опционально)
+ADMIN_ID = 7549204023
+LOG_CHANNEL = int(os.getenv("LOG_CHANNEL", "-1004902536707"))  # опционально
 DB_PATH = os.getenv("DB_PATH", "data.db")
 
 BOT_USERNAME = "anonysms_bot"
@@ -64,7 +64,7 @@ def init_db():
 init_db()
 
 # ====== Память и настройки ======
-waiting_message = {}        # {user_id: target_id или "support"/"admin_reply_XXXX"}
+waiting_message = {}        # {user_id: target_id или "support"/"manual_reply"/"admin_reply_XXXX"/"broadcast"}
 blocked_users = set()
 last_message_time = {}
 ANTISPAM_INTERVAL = 30
@@ -89,6 +89,7 @@ cancel_menu.add(KeyboardButton("❌ Отмена"))
 
 admin_menu = ReplyKeyboardMarkup(resize_keyboard=True)
 admin_menu.row(KeyboardButton("📊 Статистика бота"), KeyboardButton("📨 Рассылка"))
+admin_menu.row(KeyboardButton("🔥 Топ-10 пользователей"), KeyboardButton("📜 Последние 20 логов"))
 admin_menu.add(KeyboardButton("⬅️ Назад в главное меню"))
 
 # ====== Утилиты ======
@@ -109,17 +110,17 @@ def increment_stat(user_id, field):
     conn.commit()
     conn.close()
 
-def log_anon(sender_id, receiver_id, content_type, text=""):
-    try:
-        msg = (f"📬 <b>Новое анонимное сообщение</b> 🚀\n\n"
-               f"👤 <b>От кого:</b> <code>{sender_id}</code>\n"
-               f"👤 <b>Кому:</b> <code>{receiver_id}</code>\n"
-               f"📥 <b>Тип:</b> <code>{content_type}</code>")
-        if text:
-            msg += f"\n💬 <b>Текст:</b> {text[:300]}..."
-        bot.send_message(LOG_CHANNEL, msg, disable_web_page_preview=True)
-    except:
-        pass
+def get_user_info(user_id):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT username, first_name FROM users WHERE user_id = ?", (user_id,))
+    row = c.fetchone()
+    conn.close()
+    if row:
+        username = f"@{row[0]}" if row[0] else "отсутствует"
+        name = row[1] or "Неизвестно"
+        return name, username
+    return "Неизвестно", "отсутствует"
 
 # ====== Обработчики ======
 @bot.message_handler(commands=["start"])
@@ -153,11 +154,10 @@ def start(message):
 
     link = f"https://t.me/{BOT_USERNAME}?start={user_id}"
     bot.send_message(user_id,
-        f"🎉 <b>Приветствуем в {BOT_NAME}!</b> 🎉\n\n"
+        f"🎉 <b>Добро пожаловать в {BOT_NAME}!</b> 🎉\n\n"
         f"🔗 <b>Твоя личная анонимная ссылка:</b>\n<code>{link}</code>\n\n"
-        f"📢 Распространяй её — получай <b>анонимные сообщения</b> от друзей и подписчиков!\n"
-        f"💬 Под каждым сообщением будет кнопка <b>«Ответить»</b> — удобно и быстро!\n\n"
-        f"🚀 <b>Начни прямо сейчас!</b>",
+        f"📢 Распространяй её — получай <b>анонимные сообщения</b> от всех!\n"
+        f"💬 Под каждым анонимным сообщением — кнопки <b>«Ответить»</b> и <b>«Игнор»</b> 🚀",
         reply_markup=get_main_menu(is_admin))
 
 @bot.message_handler(content_types=['text', 'photo', 'video', 'audio', 'document', 'sticker', 'voice', 'animation'])
@@ -171,6 +171,7 @@ def handle_all(message):
         if text == "🔧 Админ-панель":
             bot.send_message(user_id, "🔧 <b>Админ-панель открыта</b> 🔥", reply_markup=admin_menu)
             return
+
         if text == "📊 Статистика бота":
             conn = sqlite3.connect(DB_PATH)
             c = conn.cursor()
@@ -185,13 +186,68 @@ def handle_all(message):
                 f"💬 <b>Всего анонимных сообщений:</b> <code>{total_msgs}</code>",
                 reply_markup=admin_menu)
             return
+
         if text == "📨 Рассылка":
             bot.send_message(user_id,
                 "📨 <b>Рассылка всем пользователям</b>\n\n"
-                "Отправь сообщение (текст, фото, видео и т.д.) — оно уйдёт всем!",
+                "Отправь сообщение (текст, фото, видео...) — оно уйдёт всем!",
                 reply_markup=cancel_menu)
             waiting_message[user_id] = "broadcast"
             return
+
+        if text == "🔥 Топ-10 пользователей":
+            conn = sqlite3.connect(DB_PATH)
+            c = conn.cursor()
+            c.execute("""SELECT user_id, messages_received, link_clicks 
+                         FROM users 
+                         ORDER BY messages_received DESC, link_clicks DESC 
+                         LIMIT 10""")
+            rows = c.fetchall()
+            conn.close()
+
+            if not rows:
+                bot.send_message(user_id, "📊 <b>Топ-10 пока пуст</b> — нет данных!", reply_markup=admin_menu)
+                return
+
+            top_text = "🔥 <b>Топ-10 самых популярных профилей</b> 🏆\n\n"
+            for i, (uid, msgs, clicks) in enumerate(rows, 1):
+                name, username = get_user_info(uid)
+                top_text += f"<b>{i}.</b> 👤 {name} ({username})\n"
+                top_text += f"   🆔 <code>{uid}</code>\n"
+                top_text += f"   💬 <b>Получено сообщений:</b> <code>{msgs}</code>\n"
+                top_text += f"   👀 <b>Переходов по ссылке:</b> <code>{clicks}</code>\n\n"
+            bot.send_message(user_id, top_text, reply_markup=admin_menu)
+            return
+
+        if text == "📜 Последние 20 логов":
+            conn = sqlite3.connect(DB_PATH)
+            c = conn.cursor()
+            c.execute("""SELECT sender, receiver, type, content, timestamp 
+                         FROM anon_messages 
+                         ORDER BY timestamp DESC 
+                         LIMIT 20""")
+            logs = c.fetchall()
+            conn.close()
+
+            if not logs:
+                bot.send_message(user_id, "📜 <b>Логов пока нет</b>", reply_markup=admin_menu)
+                return
+
+            log_text = "📜 <b>Последние 20 анонимных сообщений</b> ⏳\n\n"
+            for sender, receiver, mtype, content, ts in reversed(logs):
+                time_str = time.strftime("%d.%m.%Y %H:%M", time.localtime(ts))
+                sender_name, sender_un = get_user_info(sender)
+                receiver_name, receiver_un = get_user_info(receiver)
+                log_text += f"<b>{time_str}</b>\n"
+                log_text += f"👤 <b>От:</b> {sender_name} ({sender_un}) <code>{sender}</code>\n"
+                log_text += f"👤 <b>Кому:</b> {receiver_name} ({receiver_un}) <code>{receiver}</code>\n"
+                log_text += f"📥 <b>Тип:</b> <code>{mtype}</code>\n"
+                if content:
+                    log_text += f"💬 <b>Текст:</b> {content[:200]}\n"
+                log_text += "➖➖➖\n\n"
+            bot.send_message(user_id, log_text, reply_markup=admin_menu)
+            return
+
         if text == "⬅️ Назад в главное меню":
             bot.send_message(user_id, "🏠 <b>Главное меню</b>", reply_markup=get_main_menu(True))
             return
@@ -202,7 +258,7 @@ def handle_all(message):
         bot.send_message(user_id,
             f"🔗 <b>Твоя анонимная ссылка:</b>\n\n"
             f"<code>{link}</code>\n\n"
-            f"📢 Распространяй её везде — получай тонну анонимок! 🚀",
+            f"📢 Распространяй — получай анонимки! 🚀",
             reply_markup=get_main_menu(is_admin))
 
     elif text == "📱 QR-код":
@@ -216,25 +272,24 @@ def handle_all(message):
         img.save(bio, "PNG")
         bio.seek(0)
         bot.send_photo(user_id, bio,
-            caption="📱 <b>Твой QR-код</b>\n\nСканируй и получай анонимные сообщения мгновенно! ✨",
+            caption=f"📱 <b>Твой QR-код</b> ✨\n\n<i>Ссылка: {link}</i>",
             reply_markup=get_main_menu(is_admin))
 
     elif text == "📌 Профиль":
+        name, username = get_user_info(user_id)
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
-        c.execute("SELECT username, first_name, link_clicks, messages_received FROM users WHERE user_id = ?", (user_id,))
-        row = c.fetchone() or ("", "Неизвестно", 0, 0)
+        c.execute("SELECT link_clicks, messages_received FROM users WHERE user_id = ?", (user_id,))
+        row = c.fetchone()
         conn.close()
 
-        username = f"@{row[0]}" if row[0] else "отсутствует"
-        first_name = row[1]
-        clicks = row[2]
-        msgs = row[3]
+        clicks = row[0] if row else 0
+        msgs = row[1] if row else 0
 
         link = f"https://t.me/{BOT_USERNAME}?start={user_id}"
         bot.send_message(user_id,
             f"📌 <b>Твой профиль</b> 👤\n\n"
-            f"👤 <b>Имя:</b> {first_name}\n"
+            f"👤 <b>Имя:</b> {name}\n"
             f"🌀 <b>Username:</b> {username}\n"
             f"🆔 <b>ID:</b> <code>{user_id}</code>\n\n"
             f"📊 <b>Статистика за всё время</b> 📈\n"
@@ -262,30 +317,36 @@ def handle_all(message):
             "ℹ️ <b>Как пользоваться ботом</b> ❓\n\n"
             "1️⃣ Получи свою ссылку или QR-код\n"
             "2️⃣ Распространи её где угодно\n"
-            "3️⃣ Получай анонимные сообщения с кнопкой <b>«Ответить»</b>\n"
+            "3️⃣ Получай анонимные сообщения с кнопками <b>«Ответить»</b> и <b>«Игнор»</b>\n"
             "4️⃣ Отвечай анонимно одним кликом!\n\n"
             f"⏱ <b>Лимит:</b> 1 сообщение каждые <code>{ANTISPAM_INTERVAL}</code> секунд\n"
-            f"📩 Есть вопрос или баг? — пиши в <b>Поддержку</b>!",
+            f"📩 Проблема или вопрос? — жми <b>Поддержка</b>!",
             reply_markup=get_main_menu(is_admin))
 
     elif text == "📩 Поддержка":
         bot.send_message(user_id,
             "📩 <b>Поддержка</b> 👨‍💻\n\n"
-            "Напиши свой вопрос, опиши баг или пришли скриншот/видео ошибки.\n"
+            "<b>Напиши свой вопрос</b>, опиши баг или пришли скриншот/видео.\n"
             "Мы ответим как можно скорее! 🚀\n\n"
-            "<i>Можешь отправлять текст, фото, видео, документы...</i>",
+            "<i>Поддерживаются текст, фото, видео, документы...</i>",
             reply_markup=cancel_menu)
         waiting_message[user_id] = "support"
+        return  # НЕ отправляем подтверждение сразу!
 
     elif text == "✉️ Ответить анонимно":
-        bot.send_message(user_id, "🔍 <b>Введи ID пользователя</b>, которому хочешь ответить анонимно:", reply_markup=cancel_menu)
+        bot.send_message(user_id,
+            "🔍 <b>Ручной анонимный ответ</b>\n\n"
+            "Введи <b>ID пользователя</b>, которому хочешь написать:",
+            reply_markup=cancel_menu)
         waiting_message[user_id] = "manual_reply"
+        return
 
     elif text == "❌ Отмена":
         waiting_message.pop(user_id, None)
         bot.send_message(user_id, "❌ <b>Отправка отменена</b>", reply_markup=get_main_menu(is_admin))
+        return
 
-    # === Рассылка от админа ===
+    # === Рассылка ===
     if is_admin and waiting_message.get(user_id) == "broadcast":
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
@@ -293,8 +354,7 @@ def handle_all(message):
         users = [row[0] for row in c.fetchall()]
         conn.close()
 
-        sent = 0
-        failed = 0
+        sent = failed = 0
         for uid in users:
             try:
                 bot.copy_message(uid, user_id, message.message_id)
@@ -307,9 +367,8 @@ def handle_all(message):
         waiting_message.pop(user_id, None)
         return
 
-    # === Поддержка от пользователя ===
-    if waiting_message.get(user_id) == "support":
-        # Сохраняем тикет
+    # === Поддержка (отправка сообщения) ===
+    if waiting_message.get(user_id) == "support" and not is_admin:
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
         c.execute("INSERT INTO support_tickets (user_id, message_id, chat_id, timestamp) VALUES (?, ?, ?, ?)",
@@ -317,7 +376,6 @@ def handle_all(message):
         conn.commit()
         conn.close()
 
-        # Пересылаем админу с кнопками
         markup = InlineKeyboardMarkup()
         markup.row(
             InlineKeyboardButton("✉️ Ответить", callback_data=f"sup_reply_{user_id}"),
@@ -328,27 +386,28 @@ def handle_all(message):
                    f"👤 <b>От пользователя:</b> <a href='tg://user?id={user_id}'>{user_id}</a>\n"
                    f"🆔 <b>ID:</b> <code>{user_id}</code>\n"
                    f"⏰ <b>Время:</b> {time.strftime('%d.%m.%Y %H:%M')}")
+
         try:
             bot.copy_message(ADMIN_ID, user_id, message.message_id, caption=caption, reply_markup=markup)
         except:
             bot.forward_message(ADMIN_ID, user_id, message.message_id)
             bot.send_message(ADMIN_ID, caption, reply_markup=markup)
 
-        bot.send_message(user_id, "✅ <b>Твоё сообщение отправлено в поддержку!</b>\nМы ответим в ближайшее время 🚀", reply_markup=get_main_menu(is_admin))
+        bot.send_message(user_id, "✅ <b>Сообщение отправлено в поддержку!</b>\nМы ответим скоро 🚀", reply_markup=get_main_menu(is_admin))
         waiting_message.pop(user_id, None)
         return
 
-    # === Ручной анонимный ответ ===
+    # === Ручной ввод ID для анонимного ответа ===
     if waiting_message.get(user_id) == "manual_reply":
         if text.isdigit():
             target = int(text)
             waiting_message[user_id] = target
             bot.send_message(user_id, "🕶 <b>Теперь отправь сообщение анонимно</b> (текст, фото, видео...):", reply_markup=cancel_menu)
         else:
-            bot.send_message(user_id, "❌ <b>Введи корректный ID!</b>", reply_markup=cancel_menu)
+            bot.send_message(user_id, "❌ <b>Некорректный ID! Введи только цифры.</b>", reply_markup=cancel_menu)
         return
 
-    # === Ожидание анонимного сообщения (по ссылке / ответу / от админа) ===
+    # === Отправка анонимного сообщения (по ссылке, ответу или вручную) ===
     if user_id in waiting_message:
         target_id = waiting_message.pop(user_id)
 
@@ -359,7 +418,6 @@ def handle_all(message):
         content_type = message.content_type
         content_text = text
 
-        # Сохраняем и обновляем статистику
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
         c.execute("INSERT INTO anon_messages (sender, receiver, content, type, timestamp) VALUES (?, ?, ?, ?, ?)",
@@ -368,9 +426,8 @@ def handle_all(message):
         conn.close()
 
         increment_stat(target_id, "messages_received")
-        log_anon(user_id, target_id, content_type, content_text)
 
-        # Инлайн-кнопки ТОЛЬКО если отправитель НЕ админ
+        # Инлайн-кнопки ВСЕГДА (кроме если отправитель — админ)
         markup = None
         if user_id != ADMIN_ID:
             markup = InlineKeyboardMarkup()
@@ -381,18 +438,18 @@ def handle_all(message):
 
         try:
             if content_type == 'text':
-                bot.send_message(target_id, f"🕶 <b>Анонимное сообщение</b> ✨\n\n{text}", reply_markup=markup)
+                bot.send_message(target_id, f"🕶 <b>Анонимное сообщение</b> ✨\n\n{content_text}", reply_markup=markup)
             else:
                 copied = bot.copy_message(target_id, user_id, message.message_id, reply_markup=markup)
                 if content_type != 'sticker':
                     bot.send_message(target_id, "🕶 <b>Анонимное сообщение</b> ✨", reply_to_message_id=copied.message_id)
-        except Exception as e:
-            bot.send_message(user_id, "❌ <b>Не удалось доставить</b> — возможно, пользователь заблокировал бота.")
+        except:
+            bot.send_message(user_id, "❌ <b>Не удалось доставить</b> — пользователь заблокировал бота или удалил аккаунт.")
 
         bot.send_message(user_id, "✅ <b>Сообщение отправлено анонимно!</b> 🚀", reply_markup=get_main_menu(is_admin))
         return
 
-# ====== Callback от анонимных сообщений ======
+# ====== Callback анонимные сообщения ======
 @bot.callback_query_handler(func=lambda call: call.data.startswith("reply_") or call.data == "ignore")
 def anon_callback(call):
     user_id = call.from_user.id
@@ -414,28 +471,27 @@ def anon_callback(call):
     bot.send_message(user_id, "🕶 <b>Напиши ответ</b> — он уйдёт анонимно! (текст, фото, видео...)", reply_markup=cancel_menu)
     bot.answer_callback_query(call.id, "✉️ Пиши ответ!")
 
-# ====== Callback от поддержки ======
+# ====== Callback поддержка ======
 @bot.callback_query_handler(func=lambda call: call.data.startswith("sup_reply_") or call.data.startswith("sup_ignore_"))
 def support_callback(call):
     if call.from_user.id != ADMIN_ID:
         bot.answer_callback_query(call.id, "❌ Доступ запрещён")
         return
 
+    user_id = int(call.data.split("_")[-1])
+
     if call.data.startswith("sup_ignore_"):
-        user_id = int(call.data.split("_")[2])
         bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
-        bot.answer_callback_query(call.id, "🚫 Обращение проигнорировано")
+        bot.answer_callback_query(call.id, "🚫 Игнорировано")
         return
 
-    if call.data.startswith("sup_reply_"):
-        user_id = int(call.data.split("_")[2])
-        bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
-        bot.send_message(ADMIN_ID,
-            f"✉️ <b>Ответ пользователю</b> <a href='tg://user?id={user_id}'>{user_id}</a>\n\n"
-            f"Напиши сообщение — оно придёт ему от имени бота.",
-            reply_markup=cancel_menu)
-        waiting_message[ADMIN_ID] = f"admin_reply_{user_id}"
-        bot.answer_callback_query(call.id, "Пиши ответ")
+    bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
+    bot.send_message(ADMIN_ID,
+        f"✉️ <b>Ответ пользователю</b> <a href='tg://user?id={user_id}'>{user_id}</a>\n\n"
+        f"Отправь сообщение — оно придёт ему от бота.",
+        reply_markup=cancel_menu)
+    waiting_message[ADMIN_ID] = f"admin_reply_{user_id}"
+    bot.answer_callback_query(call.id, "Пиши ответ")
 
 # ====== Ответ админа в поддержку ======
 @bot.message_handler(func=lambda m: m.from_user.id == ADMIN_ID and str(waiting_message.get(ADMIN_ID, "")).startswith("admin_reply_"))
