@@ -60,9 +60,8 @@ def init_db():
 init_db()
 
 # ====== Память ======
-waiting_message = {}        # только для поддержки и анонимки по ссылке
+waiting_message = {}        # для анонимки по ссылке и поддержки
 admin_reply_mode = {}       # админ отвечает в поддержку
-admin_manual_mode = {}      # админ отправляет анонимку по ID
 blocked_users = set()
 last_message_time = {}
 ANTISPAM_INTERVAL = 30
@@ -78,7 +77,7 @@ def load_blocked():
 
 load_blocked()
 
-# ====== ТЕКСТЫ (очень яркие, с эмодзи и мотивацией) ======
+# ====== Мультиязычные тексты ======
 TEXTS = {
     'ru': {
         'welcome': "🎉 <b>Добро пожаловать в Anony SMS!</b> 🎉\n\n"
@@ -129,6 +128,17 @@ TEXTS = {
                 "🚀 <b>Всё просто, быстро и 100% анонимно!</b>\n\n"
                 "Тайны, признания, вопросы — всё здесь! ✨❤️\n"
                 "Смена языка: /lang",
+        'telegram_info': "🏆 <b>Telegram Messenger — лучший мессенджер в мире!</b> 🚀\n\n"
+                         "🔹 <b>Simple</b>\nTelegram is so simple you already know how to use it.\n\n"
+                         "🔹 <b>Private</b>\nTelegram messages are heavily encrypted and can self-destruct.\n\n"
+                         "🔹 <b>Synced</b>\nTelegram lets you access your chats from multiple devices.\n\n"
+                         "🔹 <b>Fast</b>\nTelegram delivers messages faster than any other application.\n\n"
+                         "🔹 <b>Powerful</b>\nTelegram has no limits on the size of your media and chats.\n\n"
+                         "🔹 <b>Open</b>\nTelegram has an open API and source code free for everyone.\n\n"
+                         "🔹 <b>Secure</b>\nTelegram keeps your messages safe from hacker attacks.\n\n"
+                         "🔹 <b>Social</b>\nTelegram groups can hold up to 200,000 members.\n\n"
+                         "🔹 <b>Expressive</b>\nTelegram lets you completely customize your messenger.\n\n"
+                         "❤️ Anony SMS работает на платформе Telegram — твои сообщения в полной безопасности и приватности!",
         'settings': "⚙️ <b>Настройки приватности Anony SMS</b> 🔒\n\n"
                     "Ты полностью контролируешь приём сообщений!",
         'receive_on': "🔔 <b>Приём анонимных сообщений ВКЛЮЧЁН!</b> ✅\n\n"
@@ -136,12 +146,6 @@ TEXTS = {
         'receive_off': "🔕 <b>Приём анонимных сообщений ОТКЛЮЧЁН!</b> 🔒\n\n"
                        "Полная тишина и безопасность. Включи обратно, когда будешь готов! 😊",
         'cancel': "❌ <b>Действие отменено</b>\n\nВозвращаемся в главное меню! 🏠",
-        'admin_manual_prompt': "🔧 <b>Анонимная отправка от имени бота</b>\n\n"
-                               "Введи <b>ID пользователя</b>, которому хочешь отправить сообщение анонимно.",
-        'admin_manual_accepted': "✅ <b>ID принят!</b>\n\n"
-                                 "Пользователь: <b>{name}</b>\n"
-                                 "ID: <code>{target_id}</code>\n\n"
-                                 "Теперь отправь сообщение — оно уйдёт от имени бота анонимно! 🔥",
         'lang_changed': "✅ <b>Язык успешно изменён!</b> 🌍✨",
     },
     'uk': {
@@ -192,6 +196,17 @@ TEXTS = {
                 "4️⃣ Відповідай анонімно одним натисканням\n\n"
                 "🚀 <b>Просто, швидко і 100% анонімно!</b>\n\n"
                 "Зміна мови: /lang",
+        'telegram_info': "🏆 <b>Telegram Messenger — найкращий месенджер у світі!</b> 🚀\n\n"
+                         "🔹 <b>Simple</b>\nTelegram is so simple you already know how to use it.\n\n"
+                         "🔹 <b>Private</b>\nTelegram messages are heavily encrypted and can self-destruct.\n\n"
+                         "🔹 <b>Synced</b>\nTelegram lets you access your chats from multiple devices.\n\n"
+                         "🔹 <b>Fast</b>\nTelegram delivers messages faster than any other application.\n\n"
+                         "🔹 <b>Powerful</b>\nTelegram has no limits on the size of your media and chats.\n\n"
+                         "🔹 <b>Open</b>\nTelegram has an open API and source code free for everyone.\n\n"
+                         "🔹 <b>Secure</b>\nTelegram keeps your messages safe from hacker attacks.\n\n"
+                         "🔹 <b>Social</b>\nTelegram groups can hold up to 200,000 members.\n\n"
+                         "🔹 <b>Expressive</b>\nTelegram lets you completely customize your messenger.\n\n"
+                         "❤️ Anony SMS працює на платформі Telegram — твої повідомлення в повній безпеці!",
         'settings': "⚙️ <b>Налаштування приватності</b> 🔒\n\n"
                     "Ти контролюєш прийом повідомлень!",
         'receive_on': "🔔 <b>Прийом анонімних повідомлень УВІМКНЕНО!</b> ✅\n\n"
@@ -199,12 +214,6 @@ TEXTS = {
         'receive_off': "🔕 <b>Прийом анонімних повідомлень ВИМКНЕНО!</b> 🔒\n\n"
                        "Тиша і безпека. Увімкни, коли захочеш! 😊",
         'cancel': "❌ <b>Дію скасовано</b>\n\nПовертаємося в меню! 🏠",
-        'admin_manual_prompt': "🔧 <b>Анонімна відправка від імені бота</b>\n\n"
-                               "Введи <b>ID користувача</b>, якому надіслати повідомлення.",
-        'admin_manual_accepted': "✅ <b>ID прийнято!</b>\n\n"
-                                 "Користувач: <b>{name}</b>\n"
-                                 "ID: <code>{target_id}</code>\n\n"
-                                 "Надішли повідомлення — воно піде анонімно від імені бота! 🔥",
         'lang_changed': "✅ <b>Мову змінено!</b> 🌍✨",
     },
     'en': {
@@ -242,7 +251,7 @@ TEXTS = {
                         "Our team is on it 💼\n\n"
                         "Fast reply coming! Thanks for being with us — you're the best! ❤️🌟",
         'support_reply': "✉️ <b>Reply from Anony SMS support</b> 👨‍💻✨\n\n"
-                         "If mistaken — ignore. For questions — write to «📩 Support»! ❤️🚀",
+                         "If mistaken — ignore. For questions — write to «Support»! ❤️🚀",
         'anon_msg': "🕶️ <b>ANONYMOUS MESSAGE ARRIVED!</b> 🔥✨",
         'sent_anon': "✅ <b>Message sent anonymously!</b> 🎉\n\n"
                      "Recipient sees it! Anonymity 100% 🕶️\n"
@@ -254,6 +263,17 @@ TEXTS = {
                 "4️⃣ Reply anonymously with one tap\n\n"
                 "🚀 <b>Simple, fast, 100% anonymous!</b>\n\n"
                 "Change language: /lang",
+        'telegram_info': "🏆 <b>Telegram Messenger — the best messenger in the world!</b> 🚀\n\n"
+                         "🔹 <b>Simple</b>\nTelegram is so simple you already know how to use it.\n\n"
+                         "🔹 <b>Private</b>\nTelegram messages are heavily encrypted and can self-destruct.\n\n"
+                         "🔹 <b>Synced</b>\nTelegram lets you access your chats from multiple devices.\n\n"
+                         "🔹 <b>Fast</b>\nTelegram delivers messages faster than any other application.\n\n"
+                         "🔹 <b>Powerful</b>\nTelegram has no limits on the size of your media and chats.\n\n"
+                         "🔹 <b>Open</b>\nTelegram has an open API and source code free for everyone.\n\n"
+                         "🔹 <b>Secure</b>\nTelegram keeps your messages safe from hacker attacks.\n\n"
+                         "🔹 <b>Social</b>\nTelegram groups can hold up to 200,000 members.\n\n"
+                         "🔹 <b>Expressive</b>\nTelegram lets you completely customize your messenger.\n\n"
+                         "❤️ Anony SMS runs on Telegram platform — your messages are completely safe and private!",
         'settings': "⚙️ <b>Privacy settings</b> 🔒\n\n"
                     "You control message receiving!",
         'receive_on': "🔔 <b>Receiving anonymous messages ENABLED!</b> ✅\n\n"
@@ -261,12 +281,6 @@ TEXTS = {
         'receive_off': "🔕 <b>Receiving anonymous messages DISABLED!</b> 🔒\n\n"
                        "Silence and safety. Enable when ready! 😊",
         'cancel': "❌ <b>Action cancelled</b>\n\nBack to main menu! 🏠",
-        'admin_manual_prompt': "🔧 <b>Send anonymous message as bot</b>\n\n"
-                               "Enter <b>user ID</b> to send to.",
-        'admin_manual_accepted': "✅ <b>ID accepted!</b>\n\n"
-                                 "User: <b>{name}</b>\n"
-                                 "ID: <code>{target_id}</code>\n\n"
-                                 "Send message — it will be sent anonymously from the bot! 🔥",
         'lang_changed': "✅ <b>Language changed!</b> 🌍✨",
     }
 }
@@ -279,24 +293,29 @@ def t(user_id, key, **kwargs):
 def main_menu(user_id, is_admin=False):
     lang = user_language.get(user_id, 'ru')
     markup = ReplyKeyboardMarkup(resize_keyboard=True)
-    markup.row(KeyboardButton("📩 Моя ссылка" if lang in ['ru', 'uk'] else "My link"),
-               KeyboardButton("📱 QR-код" if lang in ['ru', 'uk'] else "QR code"))
-    markup.row(KeyboardButton("⚙️ Настройки" if lang in ['ru', 'uk'] else "Settings"))
-    markup.row(KeyboardButton("📌 Профиль" if lang in ['ru', 'uk'] else "Profile"))
-    markup.row(KeyboardButton("📩 Поддержка" if lang == 'ru' else "📩 Підтримка" if lang == 'uk' else "Support"),
-               KeyboardButton("ℹ️ Помощь" if lang == 'ru' else "ℹ️ Допомога" if lang == 'uk' else "Help"))
+    markup.row(KeyboardButton("📩 Моя ссылка" if lang in ['ru', 'uk'] else "📩 My link"),
+               KeyboardButton("📱 QR-код" if lang in ['ru', 'uk'] else "📱 QR code"))
+    markup.row(KeyboardButton("⚙️ Настройки" if lang in ['ru', 'uk'] else "⚙️ Settings"))
+    markup.row(KeyboardButton("📌 Профиль" if lang in ['ru', 'uk'] else "📌 Profile"))
+    markup.row(KeyboardButton("📩 Поддержка" if lang == 'ru' else "📩 Підтримка" if lang == 'uk' else "📩 Support"),
+               KeyboardButton("ℹ️ Помощь" if lang == 'ru' else "ℹ️ Допомога" if lang == 'uk' else "ℹ️ Help"))
+    markup.row(KeyboardButton("ℹ️ О Telegram" if lang == 'ru' else "ℹ️ Про Telegram" if lang == 'uk' else "ℹ️ About Telegram"))
     if is_admin:
-        markup.add(KeyboardButton("🔧 Админ-панель" if lang == 'ru' else "🔧 Адмін-панель" if lang == 'uk' else "Admin panel"))
+        markup.add(KeyboardButton("🔧 Админ-панель" if lang == 'ru' else "🔧 Адмін-панель" if lang == 'uk' else "🔧 Admin panel"))
     return markup
 
-admin_menu = ReplyKeyboardMarkup(resize_keyboard=True)
-admin_menu.row(KeyboardButton("📊 Статистика бота"), KeyboardButton("📨 Рассылка"))
-admin_menu.row(KeyboardButton("🔥 Топ-10 пользователей"), KeyboardButton("✉️ Анонимка по ID"))
-admin_menu.row(KeyboardButton("🚫 Заблокировать"), KeyboardButton("✅ Разблокировать"))
-admin_menu.add(KeyboardButton("⬅️ Назад в главное меню"))
+settings_menu = ReplyKeyboardMarkup(resize_keyboard=True)
+settings_menu.row(KeyboardButton("🔕 Отключить приём"), KeyboardButton("🔔 Включить приём"))
+settings_menu.add(KeyboardButton("⬅️ Назад в меню"))
 
 cancel_menu = ReplyKeyboardMarkup(resize_keyboard=True)
 cancel_menu.add(KeyboardButton("❌ Отмена"))
+
+admin_menu = ReplyKeyboardMarkup(resize_keyboard=True)
+admin_menu.row(KeyboardButton("📊 Статистика бота"), KeyboardButton("📨 Рассылка"))
+admin_menu.row(KeyboardButton("🔥 Топ-10 пользователей"))
+admin_menu.row(KeyboardButton("🚫 Заблокировать"), KeyboardButton("✅ Разблокировать"))
+admin_menu.add(KeyboardButton("⬅️ Назад в главное меню"))
 
 # ====== Утилиты ======
 def update_user(user):
@@ -331,12 +350,11 @@ def get_user_info(user_id):
         return name, username, clicks, received, sent
     return "Аноним 🕶️", "<i>скрыт 😶</i>", 0, 0, 0
 
-# ====== Команда /lang ======
+# ====== Команда смены языка ======
 @bot.message_handler(commands=['lang'])
 def lang_command(message):
     user_id = message.from_user.id
-    markup = InlineKeyboardMarkup()
-    markup.row_width = 1
+    markup = InlineKeyboardMarkup(row_width=1)
     markup.add(
         InlineKeyboardButton("🇷🇺 Русский", callback_data="lang_ru"),
         InlineKeyboardButton("🇺🇦 Українська", callback_data="lang_uk"),
@@ -351,27 +369,28 @@ def lang_callback(call):
     user_language[user_id] = lang
     bot.answer_callback_query(call.id)
     bot.edit_message_text(chat_id=user_id, message_id=call.message.message_id, text=t(user_id, 'lang_changed'))
-    bot.send_message(user_id, "🏠 <b>Меню обновлено!</b>", reply_markup=main_menu(user_id, user_id == ADMIN_ID))
+    bot.send_message(user_id, "🏠 Меню обновлено!", reply_markup=main_menu(user_id, user_id == ADMIN_ID))
 
 # ====== Основные обработчики ======
 @bot.message_handler(commands=['start'])
 def start(message):
     user_id = message.from_user.id
     if user_id in blocked_users:
-        bot.send_message(user_id, "🚫 <b>Доступ ограничен</b>")
+        bot.send_message(user_id, "🚫 <b>Доступ ограничен</b> 🔒")
         return
 
     update_user(message.from_user)
     is_admin = user_id == ADMIN_ID
-    lang = user_language.get(user_id, 'ru')
 
     args = message.text.split()
     if len(args) > 1 and args[1].isdigit():
         sender_id = int(args[1])
         increment_stat(sender_id, "link_clicks")
+
         if time.time() - last_message_time.get(user_id, 0) < ANTISPAM_INTERVAL:
             bot.send_message(user_id, "⏳ Подожди немного перед отправкой.")
             return
+
         waiting_message[user_id] = sender_id
         last_message_time[user_id] = time.time()
         bot.send_message(user_id, "🕶️ <b>Готов отправить анонимное сообщение?</b> 🔥", reply_markup=cancel_menu)
@@ -387,7 +406,6 @@ def handle_all(message):
         return
 
     is_admin = user_id == ADMIN_ID
-    lang = user_language.get(user_id, 'ru')
     text = message.text or message.caption or ""
 
     update_user(message.from_user)
@@ -396,12 +414,15 @@ def handle_all(message):
     if text == "❌ Отмена":
         waiting_message.pop(user_id, None)
         admin_reply_mode.pop(user_id, None)
-        admin_manual_mode.pop(user_id, None)
-        bot.send_message(user_id, t(user_id, 'cancel'), reply_markup=main_menu(user_id, is_admin) if not is_admin else admin_menu)
+        bot.send_message(user_id, t(user_id, 'cancel'), reply_markup=main_menu(user_id, is_admin))
+
+    # О Telegram
+    elif text in ["ℹ️ О Telegram", "ℹ️ Про Telegram", "ℹ️ About Telegram"]:
+        bot.send_message(user_id, t(user_id, 'telegram_info'), reply_markup=main_menu(user_id, is_admin))
         return
 
     # Поддержка
-    if text in ["📩 Поддержка", "📩 Підтримка", "Support"]:
+    elif text in ["📩 Поддержка", "📩 Підтримка", "📩 Support"]:
         bot.send_message(user_id, t(user_id, 'support_entry'), reply_markup=cancel_menu)
         waiting_message[user_id] = "support"
         return
@@ -428,41 +449,9 @@ def handle_all(message):
             else:
                 sent = bot.copy_message(target_id, user_id, message.message_id)
             bot.send_message(target_id, t(target_id, 'support_reply'), reply_to_message_id=sent.message_id)
-            bot.send_message(user_id, "✅ Ответ отправлен пользователю!", reply_markup=admin_menu)
+            bot.send_message(user_id, "✅ Ответ отправлен!", reply_markup=admin_menu)
         except:
-            bot.send_message(user_id, "❌ Ошибка доставки (пользователь заблокировал бота)", reply_markup=admin_menu)
-        return
-
-    # Админ: анонимка по ID
-    if is_admin and text == "✉️ Анонимка по ID":
-        bot.send_message(user_id, t(user_id, 'admin_manual_prompt'), reply_markup=cancel_menu)
-        admin_manual_mode[user_id] = "waiting_id"
-        return
-
-    if is_admin and admin_manual_mode.get(user_id) == "waiting_id" and text.isdigit():
-        target_id = int(text)
-        name, _, _, _, _ = get_user_info(target_id)
-        bot.send_message(user_id, t(user_id, 'admin_manual_accepted', name=name, target_id=target_id), reply_markup=cancel_menu)
-        admin_manual_mode[user_id] = target_id
-        return
-
-    if is_admin and user_id in admin_manual_mode and isinstance(admin_manual_mode[user_id], int):
-        target_id = admin_manual_mode.pop(user_id)
-        markup = InlineKeyboardMarkup().add(
-            InlineKeyboardButton("✉️ Ответить анонимно", callback_data=f"reply_{ADMIN_ID}"),
-            InlineKeyboardButton("🚫 Игнор", callback_data="ignore")
-        )
-        try:
-            if message.content_type == 'text':
-                bot.send_message(target_id, t(target_id, 'anon_msg') + ("\n\n" + text if text else ""), reply_markup=markup)
-            else:
-                copied = bot.copy_message(target_id, user_id, message.message_id)
-                bot.send_message(target_id, t(target_id, 'anon_msg'), reply_to_message_id=copied.message_id, reply_markup=markup)
-            increment_stat(target_id, "messages_received")
-        except:
-            bot.send_message(user_id, "❌ Не удалось доставить", reply_markup=admin_menu)
-            return
-        bot.send_message(user_id, "✅ Анонимное сообщение отправлено от имени бота!", reply_markup=admin_menu)
+            bot.send_message(user_id, "❌ Ошибка доставки", reply_markup=admin_menu)
         return
 
     # Анонимная отправка по ссылке
@@ -489,12 +478,12 @@ def handle_all(message):
         bot.send_message(user_id, t(user_id, 'sent_anon'), reply_markup=main_menu(user_id, is_admin))
         return
 
-    # Обычные команды
-    if text in ["📩 Моя ссылка", "My link"]:
+    # Основные кнопки
+    if text in ["📩 Моя ссылка", "📩 My link"]:
         link = f"https://t.me/{BOT_USERNAME}?start={user_id}"
         bot.send_message(user_id, t(user_id, 'my_link', link=link), reply_markup=main_menu(user_id, is_admin))
 
-    elif text in ["📱 QR-код", "QR code"]:
+    elif text in ["📱 QR-код", "📱 QR code"]:
         link = f"https://t.me/{BOT_USERNAME}?start={user_id}"
         qr = qrcode.QRCode(box_size=10, border=4)
         qr.add_data(link)
@@ -506,19 +495,22 @@ def handle_all(message):
         bio.seek(0)
         bot.send_photo(user_id, bio, caption=t(user_id, 'qr_caption', link=link), reply_markup=main_menu(user_id, is_admin))
 
-    elif text in ["📌 Профиль", "Profile"]:
+    elif text in ["📌 Профиль", "📌 Profile"]:
         name, username, clicks, received, sent = get_user_info(user_id)
         link = f"https://t.me/{BOT_USERNAME}?start={user_id}"
-        bot.send_message(user_id, t(user_id, 'profile', name=name, username=username, user_id=user_id, received=received, sent=sent, clicks=clicks, link=link), reply_markup=main_menu(user_id, is_admin))
+        bot.send_message(user_id, t(user_id, 'profile', name=name, username=username, user_id=user_id,
+                                    received=received, sent=sent, clicks=clicks, link=link),
+                         reply_markup=main_menu(user_id, is_admin))
 
-    elif text in ["⚙️ Настройки", "Settings"]:
+    elif text in ["⚙️ Настройки", "⚙️ Settings"]:
         bot.send_message(user_id, t(user_id, 'settings'), reply_markup=settings_menu)
 
     elif text in ["🔕 Отключить приём", "🔔 Включить приём"]:
         status = 'off' if "Отключить" in text else 'on'
-        bot.send_message(user_id, t(user_id, 'receive_off' if status == 'off' else 'receive_on'), reply_markup=main_menu(user_id, is_admin))
+        bot.send_message(user_id, t(user_id, 'receive_off' if status == 'off' else 'receive_on'),
+                         reply_markup=main_menu(user_id, is_admin))
 
-    elif text in ["ℹ️ Помощь", "Help"]:
+    elif text in ["ℹ️ Помощь", "ℹ️ Допомога", "ℹ️ Help"]:
         bot.send_message(user_id, t(user_id, 'help'), reply_markup=main_menu(user_id, is_admin))
 
     elif is_admin and text == "⬅️ Назад в главное меню":
@@ -531,14 +523,14 @@ def handle_all(message):
         rows = c.fetchall()
         conn.close()
         if not rows:
-            bot.send_message(user_id, "ТОП пуст")
+            bot.send_message(user_id, "ТОП-10 пока пуст")
             return
-        text = "🏆 <b>ТОП-10 пользователей</b>\n\n"
+        top_text = "🏆 <b>ТОП-10 пользователей</b>\n\n"
         for i, (uid, rec, clk) in enumerate(rows, 1):
             name, _, _, _, _ = get_user_info(uid)
             medal = ["🥇", "🥈", "🥉"][i-1] if i <= 3 else f"{i}."
-            text += f"{medal} <b>{name}</b> — 💌 {rec} | 👀 {clk}\n\n"
-        bot.send_message(user_id, text, reply_markup=admin_menu)
+            top_text += f"{medal} <b>{name}</b> — 💌 {rec} | 👀 {clk}\n"
+        bot.send_message(user_id, top_text, reply_markup=admin_menu)
 
 # ====== Callbacks ======
 @bot.callback_query_handler(func=lambda call: True)
