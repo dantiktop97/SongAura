@@ -127,14 +127,14 @@ def get_user_info(user_id):
     row = c.fetchone()
     conn.close()
     if row:
-        username = f"@{row[0]}" if row[0] else "<i>скрыт</i>"
-        name = row[1] or "Аноним"
+        username = f"@{row[0]}" if row[0] else "<i>скрыт 😶</i>"
+        name = row[1] or "Аноним 🕶️"
         clicks = row[2] or 0
         received = row[3] or 0
         sent = row[4] or 0
-        last = time.strftime("%d.%m.%Y в %H:%M", time.localtime(row[5])) if row[5] else "давно"
+        last = time.strftime("%d.%m.%Y в %H:%M", time.localtime(row[5])) if row[5] else "давно не был(а) онлайн ⏳"
         return name, username, clicks, received, sent, last
-    return "Аноним", "<i>скрыт</i>", 0, 0, 0, "неизвестно"
+    return "Аноним 🕶️", "<i>скрыт 😶</i>", 0, 0, 0, "неизвестно"
 
 def is_blocked(user_id):
     return user_id in blocked_users
@@ -157,38 +157,6 @@ def unblock_user(user_id):
         conn.commit()
         conn.close()
 
-def get_top_words(user_id, limit=5):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT content FROM anon_messages WHERE sender = ? AND type = 'text'", (user_id,))
-    texts = [row[0] for row in c.fetchall() if row[0]]
-    conn.close()
-
-    all_words = []
-    for text in texts:
-        words = re.findall(r'\b\w+\b', text.lower())
-        all_words.extend(words)
-    
-    if not all_words:
-        return "😶 <i>Нет текстовых анонимок</i>"
-    
-    counter = Counter(all_words)
-    top = counter.most_common(limit)
-    return "\n".join([f"🔹 <b>{word}</b> — <code>{count}</code> раз" for word, count in top])
-
-def resolve_user_id(text):
-    if text.isdigit():
-        return int(text)
-    if text.startswith("@"):
-        username = text[1:]
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-        c.execute("SELECT user_id FROM users WHERE username = ?", (username,))
-        row = c.fetchone()
-        conn.close()
-        return row[0] if row else None
-    return None
-
 def show_top10(chat_id, is_admin=False):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
@@ -200,45 +168,36 @@ def show_top10(chat_id, is_admin=False):
     conn.close()
 
     if not rows:
-        bot.send_message(chat_id, "🔥 <b>Топ-10 пока пуст</b> 😔\n\nАктивнее распространяйте ссылки — скоро здесь будут лидеры! 🚀")
+        bot.send_message(chat_id, 
+            "🔥 <b>ТОП-10 ПОКА ПУСТОЙ</b> 😔\n\n"
+            "Активность ещё не набрала обороты!\n"
+            "Будьте первыми — распространяйте ссылки, получайте анонимки и поднимайтесь на вершину! 🏔️\n\n"
+            "Скоро здесь будут настоящие звёзды Anony SMS! ⭐✨")
         return
 
-    text = "🏆 <b>ТОП-10 ПОЛЬЗОВАТЕЛЕЙ ANONY SMS</b> 🔥\n\n"
-    text += "Самые популярные и активные участники! 🌟\n\n"
+    text = "🏆 <b>ТОП-10 САМЫХ ПОПУЛЯРНЫХ ПОЛЬЗОВАТЕЛЕЙ ANONY SMS</b> 🔥🔥🔥\n\n"
+    text += "Эти легенды получают тонны анонимных сообщений и переходов по ссылке! 🌟💥\n"
+    text += "Восхищаемся их активностью и ждём новых чемпионов! 👑\n\n"
     for i, (uid, msgs, clicks) in enumerate(rows, 1):
         name, _, _, _, _, _ = get_user_info(uid)
-        medal = ["🥇", "🥈", "🥉"][i-1] if i <= 3 else f"<b>{i}</b>."
-        text += f"{medal} <b>{name}</b>\n"
-        text += f"   💌 Получено анонимок: <b><code>{msgs}</code></b>\n"
-        text += f"   👀 Переходов по ссылке: <b><code>{clicks}</code></b>\n\n"
-    text += "🚀 <i>Распространяй ссылку — поднимайся в топ!</i> ✨"
+        medal = ["🥇 ПЕРВОЕ МЕСТО!", "🥈 ВТОРОЕ МЕСТО!", "🥉 ТРЕТЬЕ МЕСТО!"][i-1] if i <= 3 else f"<b>{i}-е место</b>"
+        text += f"{medal}\n"
+        text += f"<b>{name}</b> 👤\n"
+        text += f"💌 Получено анонимок: <b><code>{msgs}</code></b>\n"
+        text += f"👀 Переходов по ссылке: <b><code>{clicks}</code></b>\n\n"
+    text += "🚀 <i>Хочешь в этот топ? Распространяй ссылку как можно шире — и ты здесь будешь сиять!</i> ✨⭐"
     bot.send_message(chat_id, text, reply_markup=admin_menu if is_admin else get_main_menu(is_admin))
-
-def show_user_profile(admin_id, target_id):
-    name, username, clicks, received, sent, last = get_user_info(target_id)
-    top_words = get_top_words(target_id)
-    blocked = "✅ Заблокирован" if is_blocked(target_id) else "❌ Не заблокирован"
-
-    text = f"🔍 <b>ДЕТАЛЬНЫЙ ПРОФИЛЬ ПОЛЬЗОВАТЕЛЯ</b> 👤\n\n"
-    text += f"📛 <b>Имя:</b> {name}\n"
-    text += f"🌀 <b>Username:</b> {username}\n"
-    text += f"🆔 <b>ID:</b> <code>{target_id}</code>\n"
-    text += f"⏰ <b>Последняя активность:</b> {last}\n"
-    text += f"🚫 <b>Блокировка:</b> {blocked}\n\n"
-    text += f"📊 <b>СТАТИСТИКА</b>\n"
-    text += f"💌 Получено анонимок: <code>{received}</code>\n"
-    text += f"📤 Отправлено анонимок: <code>{sent}</code>\n"
-    text += f"👀 Переходов по ссылке: <code>{clicks}</code>\n\n"
-    text += f"🧠 <b>ТОП СЛОВ В АНОНИМКАХ</b>\n{top_words}"
-
-    bot.send_message(admin_id, text, reply_markup=admin_menu)
 
 # ====== Обработчики ======
 @bot.message_handler(commands=["start"])
 def start(message):
     user_id = message.from_user.id
     if is_blocked(user_id):
-        bot.send_message(user_id, "🚫 <b>Доступ к боту ограничен</b>")
+        bot.send_message(user_id, 
+            "🚫 <b>ДОСТУП К БОТУ ОГРАНИЧЕН</b> 🔒\n\n"
+            "К сожалению, ваш аккаунт временно заблокирован.\n"
+            "Если это ошибка — напиши в поддержку, мы разберёмся! ❤️\n\n"
+            "Мы ценим каждого пользователя! 🌟")
         return
 
     update_user(message.from_user)
@@ -247,32 +206,42 @@ def start(message):
     args = message.text.split()
     if len(args) > 1 and args[1].isdigit():
         sender_id = int(args[1])
-        increment_stat(sender_id, "link_clicks")  # Мгновенный учёт перехода
+        increment_stat(sender_id, "link_clicks")
 
         now = time.time()
         if last_message_time.get(user_id, 0) + ANTISPAM_INTERVAL > now:
-            bot.send_message(user_id, f"⏳ <b>Подожди {ANTISPAM_INTERVAL} секунд</b>")
+            bot.send_message(user_id, 
+                "⏳ <b>ПОДОЖДИ НЕМНОГО!</b> 😊\n\n"
+                f"Чтобы избежать спама, можно отправлять сообщение раз в <code>{ANTISPAM_INTERVAL}</code> секунд.\n"
+                "Ещё чуть-чуть — и ты снова в деле! 🚀")
             return
 
         waiting_message[user_id] = sender_id
         last_message_time[user_id] = now
-        bot.send_message(user_id, "🕶️ <b>Отправь анонимное сообщение</b> ✨", reply_markup=cancel_menu)
+        bot.send_message(user_id, 
+            "🕶️ <b>ГОТОВ(А) ОТПРАВИТЬ АНОНИМНОЕ СООБЩЕНИЕ?</b> 🔥\n\n"
+            "Пиши текст, присылай фото 🎥, видео 📹, голосовое 🎤 или стикер — всё уйдёт <b>полностью анонимно</b>!\n\n"
+            "Получатель никогда не узнает, от кого это пришло... Магия Anony SMS в действии! ✨💥",
+            reply_markup=cancel_menu)
         return
 
     link = f"https://t.me/{BOT_USERNAME}?start={user_id}"
     bot.send_message(user_id,
-                     f"🎉 <b>Добро пожаловать в Anony SMS!</b> 🎉\n\n"
-                     f"🔗 <b>Твоя личная анонимная ссылка:</b>\n<code>{link}</code>\n\n"
-                     f"📢 Распространи её — и получай сообщения от всех!\n"
-                     f"💬 Отвечай анонимно одним нажатием 🚀\n\n"
-                     f"Начни прямо сейчас — мир ждёт твоих анонимок! 🌍✨",
+                     f"🎉 <b>ДОБРО ПОЖАЛОВАТЬ В ANONY SMS!</b> 🎉\n\n"
+                     f"🌟 Это место, где можно получать и отправлять сообщения <b>полностью анонимно</b>!\n\n"
+                     f"🔗 <b>ТВОЯ ЛИЧНАЯ АНОНИМНАЯ ССЫЛКА:</b>\n"
+                     f"<code>{link}</code>\n\n"
+                     f"📢 Распространи её в сторис, био, чатах, среди друзей — и люди начнут писать тебе анонимно!\n"
+                     f"💬 Под каждым сообщением — возможность ответить анонимно одним нажатием\n"
+                     f"🏆 Чем больше переходов и сообщений — тем выше ты в топе популярности!\n\n"
+                     f"Всё просто, безопасно и невероятно захватывающе! Начни прямо сейчас — мир ждёт твоих анонимных историй! 🚀✨❤️",
                      reply_markup=get_main_menu(is_admin))
 
 @bot.message_handler(content_types=['text', 'photo', 'video', 'audio', 'document', 'sticker', 'voice', 'animation', 'video_note'])
 def handle_all(message):
     user_id = message.from_user.id
     if is_blocked(user_id):
-        bot.send_message(user_id, "🚫 <b>Доступ ограничен</b>")
+        bot.send_message(user_id, "🚫 <b>ДОСТУП ОГРАНИЧЕН</b> 🔒")
         return
 
     is_admin = (user_id == ADMIN_ID)
@@ -280,9 +249,19 @@ def handle_all(message):
 
     update_user(message.from_user)
 
-    # Поддержка
+    # === Поддержка ===
     if text == "📩 Поддержка":
-        bot.send_message(user_id, "📩 <b>Поддержка Anony SMS</b>\n\nНапиши вопрос или пришли медиа — ответим быстро! 🚀", reply_markup=cancel_menu)
+        bot.send_message(user_id, 
+            "📩 <b>СЛУЖБА ПОДДЕРЖКИ ANONY SMS</b> 👨‍💻✨\n\n"
+            "Мы всегда на связи и готовы помочь тебе в любой ситуации! ❤️\n\n"
+            "🔥 Напиши свой вопрос\n"
+            "📸 Пришли скриншот\n"
+            "🎥 Отправь видео\n"
+            "🎤 Запиши голосовое сообщение\n\n"
+            "Мы разберёмся во всём максимально быстро и подробно!\n"
+            "Ты — важная часть нашего сообщества, и мы ценим каждого пользователя! 🌟\n\n"
+            "Ждём твоё сообщение! 🚀",
+            reply_markup=cancel_menu)
         waiting_message[user_id] = "support"
         return
 
@@ -296,25 +275,39 @@ def handle_all(message):
         )
 
         info_text = (
-            f"📩 <b>НОВОЕ ОБРАЩЕНИЕ</b>\n\n"
-            f"👤 {name}\n"
-            f"🌀 {username}\n"
-            f"🆔 <code>{user_id}</code>\n"
-            f"⏰ {last}\n"
-            f"🕐 {time.strftime('%d.%m.%Y %H:%M')}"
+            f"📩 <b>НОВОЕ ОБРАЩЕНИЕ В ПОДДЕРЖКУ</b> ❗🔥\n\n"
+            f"👤 <b>Имя:</b> {name}\n"
+            f"🌀 <b>Username:</b> {username}\n"
+            f"🆔 <b>ID:</b> <code>{user_id}</code>\n"
+            f"⏰ <b>Последняя активность:</b> {last}\n"
+            f"🕐 <b>Время обращения:</b> {time.strftime('%d.%m.%Y в %H:%M')}\n\n"
+            f"✨ Пользователь ждёт твоего ответа! Будь на высоте! 🚀"
         )
 
         forwarded = bot.forward_message(ADMIN_ID, user_id, message.message_id)
         bot.send_message(ADMIN_ID, info_text, reply_to_message_id=forwarded.message_id, reply_markup=markup)
 
-        bot.send_message(user_id, "✅ <b>Обращение отправлено!</b> Скоро ответим 🚀", reply_markup=get_main_menu(is_admin))
+        bot.send_message(user_id, 
+            "✅ <b>ОБРАЩЕНИЕ УСПЕШНО ОТПРАВЛЕНО!</b> 🎉\n\n"
+            "Мы получили всё: текст, фото, видео, голосовое — всё в порядке! 👍\n"
+            "Наша команда уже занимается твоим вопросом 💼\n\n"
+            "Ответим максимально быстро и подробно!\n"
+            "Спасибо, что ты с нами — ты лучший пользователь! ❤️🌟\n\n"
+            "Ожидай ответа — скоро напишем! 🚀✨",
+            reply_markup=get_main_menu(is_admin))
         waiting_message.pop(user_id, None)
         return
 
-    # Меню
+    # === Меню команды ===
     if text == "📩 Моя ссылка":
         link = f"https://t.me/{BOT_USERNAME}?start={user_id}"
-        bot.send_message(user_id, f"🔗 <b>Твоя ссылка</b>\n<code>{link}</code>", reply_markup=get_main_menu(is_admin))
+        bot.send_message(user_id, 
+            "🔗 <b>ТВОЯ ЛИЧНАЯ АНОНИМНАЯ ССЫЛКА</b> 🔥\n\n"
+            f"<code>{link}</code>\n\n"
+            "📢 Распространяй её везде: сторис, био, чаты, соцсети!\n"
+            "Каждый переход — это новая анонимка для тебя! 💌\n"
+            "Чем больше людей перейдут — тем выше ты взлетишь в топе! 🏆✨",
+            reply_markup=get_main_menu(is_admin))
 
     elif text == "📱 QR-код":
         link = f"https://t.me/{BOT_USERNAME}?start={user_id}"
@@ -326,54 +319,100 @@ def handle_all(message):
         bio.name = "qrcode.png"
         img.save(bio, "PNG")
         bio.seek(0)
-        bot.send_photo(user_id, bio, caption=f"📱 <b>QR-код</b>\n<i>{link}</i>", reply_markup=get_main_menu(is_admin))
+        bot.send_photo(user_id, bio, 
+                       caption="📱 <b>ТВОЙ ЭКСКЛЮЗИВНЫЙ QR-КОД ANONY SMS</b> 🌟\n\n"
+                               "Сканируй — и сразу переходи к анонимному общению!\n"
+                               "Покажи друзьям, размести в сторис, на визитке или в профиле!\n\n"
+                               f"<i>Ссылка внутри: {link}</i>",
+                       reply_markup=get_main_menu(is_admin))
 
     elif text == "📌 Профиль":
         name, username, clicks, received, sent, last = get_user_info(user_id)
         link = f"https://t.me/{BOT_USERNAME}?start={user_id}"
-        bot.send_message(user_id, f"📌 <b>Профиль</b>\n\n{name} | {username}\n<code>{user_id}</code>\n{last}\n\nПолучено: <code>{received}</code>\nОтправлено: <code>{sent}</code>\nПереходы: <code>{clicks}</code>\n\n{link}", reply_markup=get_main_menu(is_admin))
+        bot.send_message(user_id,
+                         f"📌 <b>ТВОЙ ПОЛНЫЙ ПРОФИЛЬ В ANONY SMS</b> 👤✨\n\n"
+                         f"📛 <b>Имя:</b> {name}\n"
+                         f"🌀 <b>Username:</b> {username}\n"
+                         f"🆔 <b>ID:</b> <code>{user_id}</code>\n"
+                         f"⏰ <b>Последняя активность:</b> {last}\n\n"
+                         f"📊 <b>ТВОЯ ВНУШИТЕЛЬНАЯ СТАТИСТИКА</b> 📈🔥\n"
+                         f"💌 <b>Получено анонимных сообщений:</b> <code>{received}</code>\n"
+                         f"📤 <b>Отправлено анонимных сообщений:</b> <code>{sent}</code>\n"
+                         f"👀 <b>Переходов по твоей ссылке:</b> <code>{clicks}</code>\n\n"
+                         f"🔗 <b>Твоя ссылка:</b> {link}\n\n"
+                         f"🚀 <i>Ты — настоящая звезда анонимного общения! Продолжай сиять!</i> ⭐❤️",
+                         reply_markup=get_main_menu(is_admin))
 
     elif text == "🔥 Топ-10":
         show_top10(user_id, is_admin)
 
     elif text == "⚙️ Настройки":
-        bot.send_message(user_id, "⚙️ <b>Настройки</b>", reply_markup=settings_menu)
+        bot.send_message(user_id, 
+            "⚙️ <b>НАСТРОЙКИ ПРИВАТНОСТИ ANONY SMS</b> 🔒\n\n"
+            "Ты полностью контролируешь свою анонимность и приём сообщений!\n\n"
+            "🔕 <b>Отключить приём</b> — полная тишина, никто не напишет\n"
+            "🔔 <b>Включить приём</b> — открыты для всех анонимок!\n\n"
+            "Выбирай то, что тебе комфортно прямо сейчас! 😊",
+            reply_markup=settings_menu)
 
     elif text == "🔕 Отключить приём":
-        bot.send_message(user_id, "🔕 Приём отключён 🔒", reply_markup=get_main_menu(is_admin))
+        bot.send_message(user_id, 
+            "🔕 <b>ПРИЁМ АНОНИМНЫХ СООБЩЕНИЙ ОТКЛЮЧЁН</b> 🔒\n\n"
+            "Теперь ты в полной безопасности и тишине!\n"
+            "Никто не сможет отправить тебе анонимку.\n\n"
+            "Включи обратно, когда захочешь новых сообщений! 🚀✨",
+            reply_markup=get_main_menu(is_admin))
 
     elif text == "🔔 Включить приём":
-        bot.send_message(user_id, "🔔 Приём включён ✅", reply_markup=get_main_menu(is_admin))
+        bot.send_message(user_id, 
+            "🔔 <b>ПРИЁМ АНОНИМНЫХ СООБЩЕНИЙ ВКЛЮЧЁН</b> ✅\n\n"
+            "Готов(а) к новым анонимкам?\n"
+            "Теперь все смогут писать тебе тайно!\n\n"
+            "Жди интересных признаний, вопросов и секретов! 🔥❤️",
+            reply_markup=get_main_menu(is_admin))
 
     elif text == "⬅️ Назад в меню":
-        bot.send_message(user_id, "🏠 Главное меню", reply_markup=get_main_menu(is_admin))
+        bot.send_message(user_id, "🏠 <b>ВОЗВРАЩАЕМСЯ В ГЛАВНОЕ МЕНЮ</b> 🚪", reply_markup=get_main_menu(is_admin))
 
     elif text == "ℹ️ Помощь":
         bot.send_message(user_id,
-                         "ℹ️ <b>Как работает Anony SMS?</b>\n\n"
-                         "1️⃣ Получи свою ссылку или QR-код\n"
-                         "2️⃣ Распространи её где угодно (сторис, био, чаты)\n"
-                         "3️⃣ Получай анонимные сообщения от всех!\n"
-                         "4️⃣ Отвечай анонимно одним нажатием\n"
-                         "5️⃣ Поднимайся в топ по активности!\n\n"
-                         "🚀 Всё просто, быстро и полностью анонимно!\n\n"
-                         "По всем вопросам — жми <b>Поддержка</b> 👨‍💻",
+                         "ℹ️ <b>КАК РАБОТАЕТ ANONY SMS?</b> ❓\n\n"
+                         "1️⃣ Получи свою уникальную ссылку или QR-код\n"
+                         "2️⃣ Распространи её где угодно: сторис, био, чаты, соцсети\n"
+                         "3️⃣ Люди начнут отправлять тебе анонимные сообщения!\n"
+                         "4️⃣ Отвечай анонимно — одним нажатием\n"
+                         "5️⃣ Собирай переходы и сообщения — поднимайся в топ-10!\n\n"
+                         "🚀 <b>Всё просто, быстро и полностью анонимно!</b>\n\n"
+                         "Это место, где можно быть собой, не раскрывая имени 🌟\n"
+                         "Тайны, признания, вопросы — всё здесь!\n\n"
+                         "По любым вопросам — жми <b>Поддержка</b> 👨‍💻❤️",
                          reply_markup=get_main_menu(is_admin))
 
     elif text == "✉️ Ответить анонимно":
-        bot.send_message(user_id, "🔍 Введи ID:", reply_markup=cancel_menu)
+        bot.send_message(user_id, 
+            "🔍 <b>РУЧНОЙ АНОНИМНЫЙ ОТВЕТ</b> ✉️\n\n"
+            "Введи <b>ID пользователя</b>, которому хочешь написать анонимно:\n"
+            "(ID можно увидеть в своём профиле или в топ-10)\n\n"
+            "После ввода — отправляй любое сообщение: текст, фото, видео — всё уйдёт анонимно! 🔥",
+            reply_markup=cancel_menu)
         waiting_message[user_id] = "manual_reply"
         return
 
     elif text == "❌ Отмена":
         waiting_message.pop(user_id, None)
-        bot.send_message(user_id, "❌ Отменено", reply_markup=get_main_menu(is_admin))
+        bot.send_message(user_id, "❌ <b>ДЕЙСТВИЕ ОТМЕНЕНО</b>\n\nВозвращаемся в главное меню! 🏠", reply_markup=get_main_menu(is_admin))
         return
 
-    # Админ-панель
+    # === Админ-панель ===
     if is_admin:
         if text == "🔧 Админ-панель":
-            bot.send_message(user_id, "🔧 Админ-панель", reply_markup=admin_menu)
+            bot.send_message(user_id, 
+                "🔧 <b>АДМИН-ПАНЕЛЬ ANONY SMS ОТКРЫТА</b> ⚡🔥\n\n"
+                "Привет, повелитель анонимности! 👑\n"
+                "Здесь ты можешь управлять всем ботом!\n"
+                "Статистика, рассылка, блокировка, проверка — всё под твоим контролем! 🚀\n\n"
+                "Используй силу с умом! ✨",
+                reply_markup=admin_menu)
             return
 
         if text == "📊 Статистика бота":
@@ -383,11 +422,21 @@ def handle_all(message):
             c.execute("SELECT COUNT(*) FROM anon_messages"); msgs = c.fetchone()[0]
             c.execute("SELECT COUNT(*) FROM blocked_users"); blocked = c.fetchone()[0]
             conn.close()
-            bot.send_message(user_id, f"📊 <b>Статистика</b>\n\nПользователей: <code>{total}</code>\nСообщений: <code>{msgs}</code>\nЗаблокировано: <code>{blocked}</code>", reply_markup=admin_menu)
+            bot.send_message(user_id, 
+                f"📊 <b>ГЛОБАЛЬНАЯ СТАТИСТИКА ANONY SMS</b> 📈🔥\n\n"
+                f"👥 <b>Всего пользователей:</b> <code>{total}</code>\n"
+                f"💬 <b>Всего анонимных сообщений:</b> <code>{msgs}</code>\n"
+                f"🚫 <b>Заблокированных:</b> <code>{blocked}</code>\n\n"
+                f"✨ <i>Бот живёт, растёт и развивается благодаря тебе!</i> 🚀❤️",
+                reply_markup=admin_menu)
             return
 
         if text == "📨 Рассылка":
-            bot.send_message(user_id, "📨 Отправь сообщение для рассылки:", reply_markup=cancel_menu)
+            bot.send_message(user_id, 
+                "📨 <b>РАССЫЛКА ПО ВСЕМ ПОЛЬЗОВАТЕЛЯМ</b> 📬\n\n"
+                "Отправь любое сообщение (текст, фото, видео, стикер...) — оно уйдёт каждому пользователю!\n\n"
+                "Будь осторожен — это мощный инструмент! ⚡",
+                reply_markup=cancel_menu)
             waiting_message[user_id] = "broadcast"
             return
 
@@ -396,44 +445,69 @@ def handle_all(message):
             return
 
         if text == "🔍 Проверка пользователя":
-            bot.send_message(user_id, "🔍 Введи ID или @username:", reply_markup=cancel_menu)
+            bot.send_message(user_id, 
+                "🔍 <b>ПРОВЕРКА ПОЛЬЗОВАТЕЛЯ</b> 🕵️‍♂️\n\n"
+                "Введи <b>ID</b> или <b>@username</b> — и получишь полную информацию!\n\n"
+                "Узнай всё: активность, статистику, топ слов в анонимках! 🔥",
+                reply_markup=cancel_menu)
             waiting_message[user_id] = "check_user"
             return
 
         if text == "🚫 Заблокировать":
-            bot.send_message(user_id, "🚫 Введи ID:", reply_markup=cancel_menu)
+            bot.send_message(user_id, "🚫 <b>БЛОКИРОВКА ПОЛЬЗОВАТЕЛЯ</b>\n\nВведи <b>ID</b>:", reply_markup=cancel_menu)
             waiting_message[user_id] = "block_user"
             return
 
         if text == "✅ Разблокировать":
-            bot.send_message(user_id, "✅ Введи ID:", reply_markup=cancel_menu)
+            bot.send_message(user_id, "✅ <b>РАЗБЛОКИРОВКА ПОЛЬЗОВАТЕЛЯ</b>\n\nВведи <b>ID</b>:", reply_markup=cancel_menu)
             waiting_message[user_id] = "unblock_user"
             return
 
         if text == "⬅️ Назад в главное меню":
-            bot.send_message(user_id, "🏠 Главное меню", reply_markup=get_main_menu(True))
+            bot.send_message(user_id, "🏠 <b>ВОЗВРАЩАЕМСЯ В ГЛАВНОЕ МЕНЮ</b>", reply_markup=get_main_menu(True))
             return
 
+        # Админ действия
         if waiting_message.get(user_id) == "check_user":
             target = resolve_user_id(text)
             if target:
-                show_user_profile(user_id, target)
+                name, username, clicks, received, sent, last = get_user_info(target)
+                top_words = get_top_words(target)
+                blocked = "✅ Заблокирован" if is_blocked(target) else "❌ Не заблокирован"
+                bot.send_message(user_id, 
+                    f"🔍 <b>ПОЛНАЯ ИНФОРМАЦИЯ О ПОЛЬЗОВАТЕЛЕ</b> 🕵️‍♂️\n\n"
+                    f"📛 <b>Имя:</b> {name}\n"
+                    f"🌀 <b>Username:</b> {username}\n"
+                    f"🆔 <b>ID:</b> <code>{target}</code>\n"
+                    f"⏰ <b>Последняя активность:</b> {last}\n"
+                    f"🚫 <b>Статус:</b> {blocked}\n\n"
+                    f"📊 <b>СТАТИСТИКА</b>\n"
+                    f"💌 Получено: <code>{received}</code>\n"
+                    f"📤 Отправлено: <code>{sent}</code>\n"
+                    f"👀 Переходы: <code>{clicks}</code>\n\n"
+                    f"🧠 <b>ТОП СЛОВ В АНОНИМКАХ</b>\n{top_words}\n\n"
+                    f"✨ <i>Полный контроль в твоих руках!</i> 🔥",
+                    reply_markup=admin_menu)
             else:
-                bot.send_message(user_id, "❌ Не найден")
+                bot.send_message(user_id, "❌ <b>ПОЛЬЗОВАТЕЛЬ НЕ НАЙДЕН</b>\nПроверь правильность ID или username")
             waiting_message.pop(user_id, None)
             return
 
         if waiting_message.get(user_id) == "block_user":
             if text.isdigit():
                 block_user(int(text))
-                bot.send_message(user_id, f"🚫 Заблокирован <code>{text}</code>", reply_markup=admin_menu)
+                bot.send_message(user_id, f"🚫 <b>ПОЛЬЗОВАТЕЛЬ ЗАБЛОКИРОВАН</b>\n<code>{text}</code>", reply_markup=admin_menu)
+            else:
+                bot.send_message(user_id, "❌ Введи только цифры ID")
             waiting_message.pop(user_id, None)
             return
 
         if waiting_message.get(user_id) == "unblock_user":
             if text.isdigit():
                 unblock_user(int(text))
-                bot.send_message(user_id, f"✅ Разблокирован <code>{text}</code>", reply_markup=admin_menu)
+                bot.send_message(user_id, f"✅ <b>ПОЛЬЗОВАТЕЛЬ РАЗБЛОКИРОВАН</b>\n<code>{text}</code>", reply_markup=admin_menu)
+            else:
+                bot.send_message(user_id, "❌ Введи только цифры ID")
             waiting_message.pop(user_id, None)
             return
 
@@ -451,18 +525,29 @@ def handle_all(message):
                 except:
                     failed += 1
                 time.sleep(0.05)
-            bot.send_message(user_id, f"📨 Рассылка завершена\n✅ {sent}\n❌ {failed}", reply_markup=admin_menu)
+            bot.send_message(user_id, 
+                f"📨 <b>РАССЫЛКА ЗАВЕРШЕНА</b> 🎉\n\n"
+                f"✅ Успешно доставлено: <code>{sent}</code>\n"
+                f"❌ Не доставлено: <code>{failed}</code>\n\n"
+                f"🔥 <i>Все пользователи получили твоё сообщение!</i> 🚀",
+                reply_markup=admin_menu)
             waiting_message.pop(user_id, None)
             return
 
-    # Ручной ответ
+    # === Ручной ответ ===
     if waiting_message.get(user_id) == "manual_reply":
         if text.isdigit():
             waiting_message[user_id] = int(text)
-            bot.send_message(user_id, "🕶 Отправь сообщение:", reply_markup=cancel_menu)
+            bot.send_message(user_id, 
+                "🕶️ <b>ОТПРАВЬ АНОНИМНОЕ СООБЩЕНИЕ</b> 🔥\n\n"
+                "Текст, фото, видео, голосовое — всё уйдёт мгновенно и анонимно!\n"
+                "Получатель получит его сразу! ✨",
+                reply_markup=cancel_menu)
+        else:
+            bot.send_message(user_id, "❌ <b>Ошибка:</b> введи только цифры ID")
         return
 
-    # Анонимная отправка
+    # === Анонимная отправка ===
     if user_id in waiting_message and isinstance(waiting_message[user_id], int):
         target_id = waiting_message.pop(user_id)
 
@@ -487,14 +572,19 @@ def handle_all(message):
 
         try:
             if content_type == 'text':
-                bot.send_message(target_id, f"🕶️ <b>Анонимное сообщение</b>\n\n{content_text}", reply_markup=markup)
+                bot.send_message(target_id, f"🕶️ <b>АНОНИМНОЕ СООБЩЕНИЕ ПРИШЛО!</b> ✨🔥\n\n{content_text}", reply_markup=markup)
             else:
                 copied = bot.copy_message(target_id, user_id, message.message_id)
-                bot.send_message(target_id, "🕶️ <b>Анонимное сообщение</b>", reply_to_message_id=copied.message_id, reply_markup=markup)
+                bot.send_message(target_id, "🕶️ <b>АНОНИМНОЕ СООБЩЕНИЕ ПРИШЛО!</b> ✨🔥", reply_to_message_id=copied.message_id, reply_markup=markup)
         except:
-            bot.send_message(user_id, "❌ Не доставлено")
+            bot.send_message(user_id, "❌ <b>НЕ УДАЛОСЬ ДОСТАВИТЬ</b>\nПользователь мог заблокировать бота")
 
-        bot.send_message(user_id, "✅ Отправлено!", reply_markup=get_main_menu(is_admin))
+        bot.send_message(user_id, 
+            "✅ <b>СООБЩЕНИЕ УСПЕШНО ОТПРАВЛЕНО АНОНИМНО!</b> 🎉\n\n"
+            "Получатель уже видит его!\n"
+            "Твоя анонимность сохранена на 100% 🕶️\n\n"
+            "Продолжай — это невероятно круто! 🔥🚀❤️",
+            reply_markup=get_main_menu(is_admin))
         return
 
 # ====== Callback ======
@@ -512,7 +602,11 @@ def callbacks(call):
         waiting_message[user_id] = sender_id
         last_message_time[user_id] = time.time()
         bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
-        bot.send_message(user_id, "🕶 Напиши ответ:", reply_markup=cancel_menu)
+        bot.send_message(user_id, 
+            "🕶️ <b>НАПИШИ СВОЙ АНОНИМНЫЙ ОТВЕТ</b> 🔥\n\n"
+            "Он уйдёт мгновенно — получатель получит его сразу!\n"
+            "Текст, фото, видео — всё подойдёт! ✨",
+            reply_markup=cancel_menu)
 
     elif call.data.startswith("sup_") and user_id == ADMIN_ID:
         target = int(call.data.split("_")[-1])
@@ -520,7 +614,13 @@ def callbacks(call):
             bot.edit_message_reply_markup(ADMIN_ID, call.message.message_id, reply_markup=None)
         elif call.data.startswith("sup_reply_"):
             bot.edit_message_reply_markup(ADMIN_ID, call.message.message_id, reply_markup=None)
-            bot.send_message(ADMIN_ID, f"✉️ Ответ <code>{target}</code>:", reply_markup=cancel_menu)
+            bot.send_message(ADMIN_ID, 
+                             f"✉️ <b>ОТВЕТ ПОЛЬЗОВАТЕЛЮ</b>\n\n"
+                             f"🆔 ID: <code>{target}</code>\n\n"
+                             "Отправь любое сообщение: текст, фото, видео, голосовое, документ...\n"
+                             "Оно уйдёт от имени бота мгновенно! 🚀\n"
+                             "Будь доброжелательным — пользователь ждёт ответа! ❤️",
+                             reply_markup=cancel_menu)
             waiting_message[ADMIN_ID] = f"admin_reply_{target}"
 
 @bot.message_handler(func=lambda m: m.from_user.id == ADMIN_ID and str(waiting_message.get(ADMIN_ID, "")).startswith("admin_reply_"))
@@ -528,9 +628,13 @@ def admin_support_reply(message):
     target_id = int(waiting_message.pop(ADMIN_ID).split("_")[2])
     try:
         bot.copy_message(target_id, ADMIN_ID, message.message_id)
-        bot.send_message(ADMIN_ID, "✅ Ответ отправлен!", reply_markup=admin_menu)
+        bot.send_message(ADMIN_ID, 
+                         "✅ <b>ОТВЕТ УСПЕШНО ОТПРАВЛЕН ПОЛЬЗОВАТЕЛЮ!</b> 🎉\n\n"
+                         "Всё прошло идеально — пользователь получил сообщение!\n"
+                         "Ты — лучший админ! 🔥🚀❤️",
+                         reply_markup=admin_menu)
     except:
-        bot.send_message(ADMIN_ID, "❌ Не удалось")
+        bot.send_message(ADMIN_ID, "❌ <b>НЕ УДАЛОСЬ ОТПРАВИТЬ</b>\nВозможно, пользователь заблокировал бота")
 
 # ====== Webhook ======
 @app.route(f"/{PLAY}", methods=["POST"])
@@ -541,7 +645,7 @@ def webhook():
 
 @app.route("/", methods=["GET"])
 def index():
-    return "Bot running!"
+    return "Bot is running!"
 
 def setup_webhook():
     bot.remove_webhook()
