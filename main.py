@@ -298,7 +298,7 @@ def handle_all(message):
         waiting_message.pop(user_id, None)
         return
 
-    # === Меню команды ===
+    # === Меню команды (все с большим текстом, как в предыдущей версии) ===
     if text == "📩 Моя ссылка":
         link = f"https://t.me/{BOT_USERNAME}?start={user_id}"
         bot.send_message(user_id, 
@@ -403,150 +403,6 @@ def handle_all(message):
         bot.send_message(user_id, "❌ <b>ДЕЙСТВИЕ ОТМЕНЕНО</b>\n\nВозвращаемся в главное меню! 🏠", reply_markup=get_main_menu(is_admin))
         return
 
-    # === Админ-панель ===
-    if is_admin:
-        if text == "🔧 Админ-панель":
-            bot.send_message(user_id, 
-                "🔧 <b>АДМИН-ПАНЕЛЬ ANONY SMS ОТКРЫТА</b> ⚡🔥\n\n"
-                "Привет, повелитель анонимности! 👑\n"
-                "Здесь ты можешь управлять всем ботом!\n"
-                "Статистика, рассылка, блокировка, проверка — всё под твоим контролем! 🚀\n\n"
-                "Используй силу с умом! ✨",
-                reply_markup=admin_menu)
-            return
-
-        if text == "📊 Статистика бота":
-            conn = sqlite3.connect(DB_PATH)
-            c = conn.cursor()
-            c.execute("SELECT COUNT(*) FROM users"); total = c.fetchone()[0]
-            c.execute("SELECT COUNT(*) FROM anon_messages"); msgs = c.fetchone()[0]
-            c.execute("SELECT COUNT(*) FROM blocked_users"); blocked = c.fetchone()[0]
-            conn.close()
-            bot.send_message(user_id, 
-                f"📊 <b>ГЛОБАЛЬНАЯ СТАТИСТИКА ANONY SMS</b> 📈🔥\n\n"
-                f"👥 <b>Всего пользователей:</b> <code>{total}</code>\n"
-                f"💬 <b>Всего анонимных сообщений:</b> <code>{msgs}</code>\n"
-                f"🚫 <b>Заблокированных:</b> <code>{blocked}</code>\n\n"
-                f"✨ <i>Бот живёт, растёт и развивается благодаря тебе!</i> 🚀❤️",
-                reply_markup=admin_menu)
-            return
-
-        if text == "📨 Рассылка":
-            bot.send_message(user_id, 
-                "📨 <b>РАССЫЛКА ПО ВСЕМ ПОЛЬЗОВАТЕЛЯМ</b> 📬\n\n"
-                "Отправь любое сообщение (текст, фото, видео, стикер...) — оно уйдёт каждому пользователю!\n\n"
-                "Будь осторожен — это мощный инструмент! ⚡",
-                reply_markup=cancel_menu)
-            waiting_message[user_id] = "broadcast"
-            return
-
-        if text in ["🔥 Топ-10 пользователей", "🔥 Топ-10"]:
-            show_top10(user_id, True)
-            return
-
-        if text == "🔍 Проверка пользователя":
-            bot.send_message(user_id, 
-                "🔍 <b>ПРОВЕРКА ПОЛЬЗОВАТЕЛЯ</b> 🕵️‍♂️\n\n"
-                "Введи <b>ID</b> или <b>@username</b> — и получишь полную информацию!\n\n"
-                "Узнай всё: активность, статистику, топ слов в анонимках! 🔥",
-                reply_markup=cancel_menu)
-            waiting_message[user_id] = "check_user"
-            return
-
-        if text == "🚫 Заблокировать":
-            bot.send_message(user_id, "🚫 <b>БЛОКИРОВКА ПОЛЬЗОВАТЕЛЯ</b>\n\nВведи <b>ID</b>:", reply_markup=cancel_menu)
-            waiting_message[user_id] = "block_user"
-            return
-
-        if text == "✅ Разблокировать":
-            bot.send_message(user_id, "✅ <b>РАЗБЛОКИРОВКА ПОЛЬЗОВАТЕЛЯ</b>\n\nВведи <b>ID</b>:", reply_markup=cancel_menu)
-            waiting_message[user_id] = "unblock_user"
-            return
-
-        if text == "⬅️ Назад в главное меню":
-            bot.send_message(user_id, "🏠 <b>ВОЗВРАЩАЕМСЯ В ГЛАВНОЕ МЕНЮ</b>", reply_markup=get_main_menu(True))
-            return
-
-        # Админ действия
-        if waiting_message.get(user_id) == "check_user":
-            target = resolve_user_id(text)
-            if target:
-                name, username, clicks, received, sent, last = get_user_info(target)
-                top_words = get_top_words(target)
-                blocked = "✅ Заблокирован" if is_blocked(target) else "❌ Не заблокирован"
-                bot.send_message(user_id, 
-                    f"🔍 <b>ПОЛНАЯ ИНФОРМАЦИЯ О ПОЛЬЗОВАТЕЛЕ</b> 🕵️‍♂️\n\n"
-                    f"📛 <b>Имя:</b> {name}\n"
-                    f"🌀 <b>Username:</b> {username}\n"
-                    f"🆔 <b>ID:</b> <code>{target}</code>\n"
-                    f"⏰ <b>Последняя активность:</b> {last}\n"
-                    f"🚫 <b>Статус:</b> {blocked}\n\n"
-                    f"📊 <b>СТАТИСТИКА</b>\n"
-                    f"💌 Получено: <code>{received}</code>\n"
-                    f"📤 Отправлено: <code>{sent}</code>\n"
-                    f"👀 Переходы: <code>{clicks}</code>\n\n"
-                    f"🧠 <b>ТОП СЛОВ В АНОНИМКАХ</b>\n{top_words}\n\n"
-                    f"✨ <i>Полный контроль в твоих руках!</i> 🔥",
-                    reply_markup=admin_menu)
-            else:
-                bot.send_message(user_id, "❌ <b>ПОЛЬЗОВАТЕЛЬ НЕ НАЙДЕН</b>\nПроверь правильность ID или username")
-            waiting_message.pop(user_id, None)
-            return
-
-        if waiting_message.get(user_id) == "block_user":
-            if text.isdigit():
-                block_user(int(text))
-                bot.send_message(user_id, f"🚫 <b>ПОЛЬЗОВАТЕЛЬ ЗАБЛОКИРОВАН</b>\n<code>{text}</code>", reply_markup=admin_menu)
-            else:
-                bot.send_message(user_id, "❌ Введи только цифры ID")
-            waiting_message.pop(user_id, None)
-            return
-
-        if waiting_message.get(user_id) == "unblock_user":
-            if text.isdigit():
-                unblock_user(int(text))
-                bot.send_message(user_id, f"✅ <b>ПОЛЬЗОВАТЕЛЬ РАЗБЛОКИРОВАН</b>\n<code>{text}</code>", reply_markup=admin_menu)
-            else:
-                bot.send_message(user_id, "❌ Введи только цифры ID")
-            waiting_message.pop(user_id, None)
-            return
-
-        if waiting_message.get(user_id) == "broadcast":
-            conn = sqlite3.connect(DB_PATH)
-            c = conn.cursor()
-            c.execute("SELECT user_id FROM users")
-            users = [r[0] for r in c.fetchall()]
-            conn.close()
-            sent = failed = 0
-            for uid in users:
-                try:
-                    bot.copy_message(uid, user_id, message.message_id)
-                    sent += 1
-                except:
-                    failed += 1
-                time.sleep(0.05)
-            bot.send_message(user_id, 
-                f"📨 <b>РАССЫЛКА ЗАВЕРШЕНА</b> 🎉\n\n"
-                f"✅ Успешно доставлено: <code>{sent}</code>\n"
-                f"❌ Не доставлено: <code>{failed}</code>\n\n"
-                f"🔥 <i>Все пользователи получили твоё сообщение!</i> 🚀",
-                reply_markup=admin_menu)
-            waiting_message.pop(user_id, None)
-            return
-
-    # === Ручной ответ ===
-    if waiting_message.get(user_id) == "manual_reply":
-        if text.isdigit():
-            waiting_message[user_id] = int(text)
-            bot.send_message(user_id, 
-                "🕶️ <b>ОТПРАВЬ АНОНИМНОЕ СООБЩЕНИЕ</b> 🔥\n\n"
-                "Текст, фото, видео, голосовое — всё уйдёт мгновенно и анонимно!\n"
-                "Получатель получит его сразу! ✨",
-                reply_markup=cancel_menu)
-        else:
-            bot.send_message(user_id, "❌ <b>Ошибка:</b> введи только цифры ID")
-        return
-
     # === Анонимная отправка ===
     if user_id in waiting_message and isinstance(waiting_message[user_id], int):
         target_id = waiting_message.pop(user_id)
@@ -623,18 +479,29 @@ def callbacks(call):
                              reply_markup=cancel_menu)
             waiting_message[ADMIN_ID] = f"admin_reply_{target}"
 
+# ====== ИСПРАВЛЕННЫЙ ОТВЕТ В ПОДДЕРЖКУ ======
 @bot.message_handler(func=lambda m: m.from_user.id == ADMIN_ID and str(waiting_message.get(ADMIN_ID, "")).startswith("admin_reply_"))
 def admin_support_reply(message):
     target_id = int(waiting_message.pop(ADMIN_ID).split("_")[2])
     try:
-        bot.copy_message(target_id, ADMIN_ID, message.message_id)
+        # Копируем сообщение — работает для текста, фото, видео, голосового, документов и т.д.
+        sent = bot.copy_message(chat_id=target_id, from_chat_id=ADMIN_ID, message_id=message.message_id)
+        # Добавляем подпись от имени поддержки
+        bot.send_message(target_id, 
+                         "✉️ <b>ОТВЕТ ОТ ПОДДЕРЖКИ ANONY SMS</b> 👨‍💻\n\n"
+                         "Мы получили ваше обращение и вот наш ответ:\n\n"
+                         "Если остались вопросы — пишите ещё, всегда поможем! ❤️🚀",
+                         reply_to_message_id=sent.message_id)
         bot.send_message(ADMIN_ID, 
                          "✅ <b>ОТВЕТ УСПЕШНО ОТПРАВЛЕН ПОЛЬЗОВАТЕЛЮ!</b> 🎉\n\n"
                          "Всё прошло идеально — пользователь получил сообщение!\n"
                          "Ты — лучший админ! 🔥🚀❤️",
                          reply_markup=admin_menu)
-    except:
-        bot.send_message(ADMIN_ID, "❌ <b>НЕ УДАЛОСЬ ОТПРАВИТЬ</b>\nВозможно, пользователь заблокировал бота")
+    except Exception as e:
+        bot.send_message(ADMIN_ID, 
+                         "❌ <b>НЕ УДАЛОСЬ ОТПРАВИТЬ ОТВЕТ</b>\n\n"
+                         "Возможно, пользователь заблокировал бота или удалил аккаунт.\n"
+                         "Попробуй позже или проверь ID.")
 
 # ====== Webhook ======
 @app.route(f"/{PLAY}", methods=["POST"])
