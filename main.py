@@ -9,14 +9,13 @@ from telebot.types import (
     ReplyKeyboardMarkup, KeyboardButton, Update,
     InlineKeyboardMarkup, InlineKeyboardButton
 )
-from collections import Counter
 import re
 
 # ====== Конфигурация ======
 PLAY = os.getenv("PLAY") or "YOUR_BOT_TOKEN_HERE"
 WEBHOOK_HOST = os.getenv("WEBHOOK_HOST", "https://songaura.onrender.com")
 PORT = int(os.getenv("PORT", "8000"))
-ADMIN_ID = 7549204023
+ADMIN_ID = 7549204023  # Твой ID
 DB_PATH = os.getenv("DB_PATH", "data.db")
 
 BOT_USERNAME = "anonysms_bot"
@@ -63,7 +62,7 @@ def init_db():
 init_db()
 
 # ====== Память ======
-waiting_message = {}
+waiting_message = {}      # Кто куда пишет (анонимно или в поддержку)
 blocked_users = set()
 last_message_time = {}
 ANTISPAM_INTERVAL = 30
@@ -249,7 +248,7 @@ def handle_all(message):
 
     update_user(message.from_user)
 
-    # === Поддержка ===
+    # === Поддержка (обычный пользователь) ===
     if text == "📩 Поддержка":
         bot.send_message(user_id, 
             "📩 <b>СЛУЖБА ПОДДЕРЖКИ ANONY SMS</b> 👨‍💻✨\n\n"
@@ -265,6 +264,7 @@ def handle_all(message):
         waiting_message[user_id] = "support"
         return
 
+    # Пользователь пишет в поддержку
     if waiting_message.get(user_id) == "support":
         name, username, _, _, _, last = get_user_info(user_id)
 
@@ -298,7 +298,7 @@ def handle_all(message):
         waiting_message.pop(user_id, None)
         return
 
-    # === Меню команды (все с большим текстом, как в предыдущей версии) ===
+    # === Остальные команды меню ===
     if text == "📩 Моя ссылка":
         link = f"https://t.me/{BOT_USERNAME}?start={user_id}"
         bot.send_message(user_id, 
@@ -355,20 +355,13 @@ def handle_all(message):
             "Выбирай то, что тебе комфортно прямо сейчас! 😊",
             reply_markup=settings_menu)
 
-    elif text == "🔕 Отключить приём":
+    elif text in ["🔕 Отключить приём", "🔔 Включить приём"]:
+        status = "ОТКЛЮЧЁН" if text == "🔕 Отключить приём" else "ВКЛЮЧЁН"
+        emoji = "🔕" if text == "🔕 Отключить приём" else "🔔"
         bot.send_message(user_id, 
-            "🔕 <b>ПРИЁМ АНОНИМНЫХ СООБЩЕНИЙ ОТКЛЮЧЁН</b> 🔒\n\n"
-            "Теперь ты в полной безопасности и тишине!\n"
-            "Никто не сможет отправить тебе анонимку.\n\n"
-            "Включи обратно, когда захочешь новых сообщений! 🚀✨",
-            reply_markup=get_main_menu(is_admin))
-
-    elif text == "🔔 Включить приём":
-        bot.send_message(user_id, 
-            "🔔 <b>ПРИЁМ АНОНИМНЫХ СООБЩЕНИЙ ВКЛЮЧЁН</b> ✅\n\n"
-            "Готов(а) к новым анонимкам?\n"
-            "Теперь все смогут писать тебе тайно!\n\n"
-            "Жди интересных признаний, вопросов и секретов! 🔥❤️",
+            f"{emoji} <b>ПРИЁМ АНОНИМНЫХ СООБЩЕНИЙ {status}</b> {'🔒' if status == 'ОТКЛЮЧЁН' else '✅'}\n\n"
+            f"{'Теперь ты в полной безопасности и тишине!' if status == 'ОТКЛЮЧЁН' else 'Готов(а) к новым анонимкам? Теперь все смогут писать тебе тайно!'}\n\n"
+            f"{'Включи обратно, когда захочешь новых сообщений! 🚀✨' if status == 'ОТКЛЮЧЁН' else 'Жди интересных признаний, вопросов и секретов! 🔥❤️'}",
             reply_markup=get_main_menu(is_admin))
 
     elif text == "⬅️ Назад в меню":
@@ -403,7 +396,7 @@ def handle_all(message):
         bot.send_message(user_id, "❌ <b>ДЕЙСТВИЕ ОТМЕНЕНО</b>\n\nВозвращаемся в главное меню! 🏠", reply_markup=get_main_menu(is_admin))
         return
 
-    # === Анонимная отправка ===
+    # === Анонимная отправка по ссылке ===
     if user_id in waiting_message and isinstance(waiting_message[user_id], int):
         target_id = waiting_message.pop(user_id)
 
@@ -432,8 +425,8 @@ def handle_all(message):
             else:
                 copied = bot.copy_message(target_id, user_id, message.message_id)
                 bot.send_message(target_id, "🕶️ <b>АНОНИМНОЕ СООБЩЕНИЕ ПРИШЛО!</b> ✨🔥", reply_to_message_id=copied.message_id, reply_markup=markup)
-        except:
-            bot.send_message(user_id, "❌ <b>НЕ УДАЛОСЬ ДОСТАВИТЬ</b>\nПользователь мог заблокировать бота")
+        except Exception as e:
+            bot.send_message(user_id, "❌ <b>НЕ УДАЛОСЬ ДОСТАВИТЬ</b>\nПользователь мог заблокировать бота или ограничить сообщения.")
 
         bot.send_message(user_id, 
             "✅ <b>СООБЩЕНИЕ УСПЕШНО ОТПРАВЛЕНО АНОНИМНО!</b> 🎉\n\n"
@@ -443,18 +436,21 @@ def handle_all(message):
             reply_markup=get_main_menu(is_admin))
         return
 
-# ====== Callback ======
+# ====== Callback обработка ======
 @bot.callback_query_handler(func=lambda call: True)
 def callbacks(call):
     user_id = call.from_user.id
     if is_blocked(user_id):
         return
 
-    if call.data == "ignore":
-        bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
+    data = call.data
 
-    elif call.data.startswith("reply_"):
-        sender_id = int(call.data.split("_")[1])
+    if data == "ignore":
+        bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
+        return
+
+    if data.startswith("reply_"):
+        sender_id = int(data.split("_")[1])
         waiting_message[user_id] = sender_id
         last_message_time[user_id] = time.time()
         bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
@@ -463,45 +459,63 @@ def callbacks(call):
             "Он уйдёт мгновенно — получатель получит его сразу!\n"
             "Текст, фото, видео — всё подойдёт! ✨",
             reply_markup=cancel_menu)
+        return
 
-    elif call.data.startswith("sup_") and user_id == ADMIN_ID:
-        target = int(call.data.split("_")[-1])
-        if call.data.startswith("sup_ignore_"):
-            bot.edit_message_reply_markup(ADMIN_ID, call.message.message_id, reply_markup=None)
-        elif call.data.startswith("sup_reply_"):
-            bot.edit_message_reply_markup(ADMIN_ID, call.message.message_id, reply_markup=None)
-            bot.send_message(ADMIN_ID, 
-                             f"✉️ <b>ОТВЕТ ПОЛЬЗОВАТЕЛЮ</b>\n\n"
-                             f"🆔 ID: <code>{target}</code>\n\n"
-                             "Отправь любое сообщение: текст, фото, видео, голосовое, документ...\n"
-                             "Оно уйдёт от имени бота мгновенно! 🚀\n"
-                             "Будь доброжелательным — пользователь ждёт ответа! ❤️",
-                             reply_markup=cancel_menu)
-            waiting_message[ADMIN_ID] = f"admin_reply_{target}"
+    # === Обработка кнопок поддержки (только админ) ===
+    if user_id == ADMIN_ID and data.startswith("sup_"):
+        target_id = int(data.split("_")[-1])
 
-# ====== ИСПРАВЛЕННЫЙ ОТВЕТ В ПОДДЕРЖКУ ======
-@bot.message_handler(func=lambda m: m.from_user.id == ADMIN_ID and str(waiting_message.get(ADMIN_ID, "")).startswith("admin_reply_"))
-def admin_support_reply(message):
-    target_id = int(waiting_message.pop(ADMIN_ID).split("_")[2])
+        if data.startswith("sup_ignore_"):
+            bot.edit_message_reply_markup(ADMIN_ID, call.message.message_id, reply_markup=None)
+            bot.answer_callback_query(call.id, "Обращение проигнорировано")
+            return
+
+        if data.startswith("sup_reply_"):
+            bot.edit_message_reply_markup(ADMIN_ID, call.message.message_id, reply_markup=None)
+            bot.send_message(ADMIN_ID,
+                f"✉️ <b>ОТПРАВЬ ОТВЕТ ПОЛЬЗОВАТЕЛЮ</b>\n\n"
+                f"🆔 ID: <code>{target_id}</code>\n"
+                f"👤 Имя: {get_user_info(target_id)[0]}\n\n"
+                "Отправь любое сообщение (текст, фото, видео, голосовое и т.д.)\n"
+                "Оно будет отправлено пользователю от имени бота с подписью поддержки 🚀",
+                reply_markup=cancel_menu)
+            waiting_message[ADMIN_ID] = f"support_reply_to_{target_id}"
+            bot.answer_callback_query(call.id, "Режим ответа активирован")
+            return
+
+# ====== ОТВЕТ АДМИНА В ПОДДЕРЖКУ (ИСПРАВЛЕННЫЙ И НАДЁЖНЫЙ) ======
+@bot.message_handler(func=lambda m: m.from_user.id == ADMIN_ID and str(waiting_message.get(ADMIN_ID, "")).startswith("support_reply_to_"))
+def admin_reply_to_support(message):
     try:
-        # Копируем сообщение — работает для текста, фото, видео, голосового, документов и т.д.
-        sent = bot.copy_message(chat_id=target_id, from_chat_id=ADMIN_ID, message_id=message.message_id)
-        # Добавляем подпись от имени поддержки
-        bot.send_message(target_id, 
-                         "✉️ <b>ОТВЕТ ОТ ПОДДЕРЖКИ ANONY SMS</b> 👨‍💻\n\n"
-                         "Мы получили ваше обращение и вот наш ответ:\n\n"
-                         "Если остались вопросы — пишите ещё, всегда поможем! ❤️🚀",
-                         reply_to_message_id=sent.message_id)
-        bot.send_message(ADMIN_ID, 
-                         "✅ <b>ОТВЕТ УСПЕШНО ОТПРАВЛЕН ПОЛЬЗОВАТЕЛЮ!</b> 🎉\n\n"
-                         "Всё прошло идеально — пользователь получил сообщение!\n"
-                         "Ты — лучший админ! 🔥🚀❤️",
-                         reply_markup=admin_menu)
+        target_str = waiting_message.pop(ADMIN_ID)
+        target_id = int(target_str.split("_")[-1])
+
+        # Отправляем сообщение пользователю ОТ ИМЕНИ БОТА
+        if message.content_type == 'text':
+            sent_msg = bot.send_message(target_id, message.text)
+        else:
+            sent_msg = bot.copy_message(target_id, ADMIN_ID, message.message_id)
+
+        # Добавляем красивую подпись
+        bot.send_message(target_id,
+            "✉️ <b>Вам ответил оператор поддержки Anony SMS</b> 👨‍💻✨\n\n"
+            "Если это сообщение пришло по ошибке или не относится к вашему вопросу — просто проигнорируйте его.\n"
+            "По всем вопросам всегда пишите в раздел «📩 Поддержка» — мы на связи 24/7! ❤️🚀",
+            reply_to_message_id=sent_msg.message_id)
+
+        # Подтверждение админу
+        bot.send_message(ADMIN_ID,
+            "✅ <b>ОТВЕТ УСПЕШНО ОТПРАВЛЕН ПОЛЬЗОВАТЕЛЮ!</b> 🎉\n\n"
+            f"Пользователь <code>{target_id}</code> получил сообщение.\n"
+            "Ты лучший админ! 🔥❤️",
+            reply_markup=admin_menu)
+
     except Exception as e:
-        bot.send_message(ADMIN_ID, 
-                         "❌ <b>НЕ УДАЛОСЬ ОТПРАВИТЬ ОТВЕТ</b>\n\n"
-                         "Возможно, пользователь заблокировал бота или удалил аккаунт.\n"
-                         "Попробуй позже или проверь ID.")
+        bot.send_message(ADMIN_ID,
+            f"❌ <b>ОШИБКА ПРИ ОТПРАВКЕ ОТВЕТА</b>\n\n"
+            f"Пользователь, вероятно, заблокировал бота или ограничил личные сообщения.\n"
+            f"ID: <code>{target_id}</code>\n"
+            f"Ошибка: {str(e)}")
 
 # ====== Webhook ======
 @app.route(f"/{PLAY}", methods=["POST"])
