@@ -85,7 +85,7 @@ TEXTS = {
                    "🔗 <b>Твоя личная ссылка:</b>\n<code>{link}</code>\n\n"
                    "Распространи её — и получай тайные сообщения! 💌❤️\n"
                    "Жми кнопки ниже! 🚀",
-        'my_link': "🔗 <b>Твоя анонимная ссылка</b>\n\n<code>{link}</code>\n\nРаспространяй — получай больше анонимок!",
+        'my_link': "🔗 <b>Твоя личная анонимная ссылка</b>\n\n<code>{link}</code>\n\nРаспространяй — получай больше анонимок!",
         'qr_caption': "📱 <b>Твой QR-код</b>\n\nСканируй или покажи друзьям!\n\n<i>Ссылка: {link}</i>",
         'profile': "📌 <b>ТВОЙ ПОЛНЫЙ ПРОФИЛЬ В ANONY SMS</b> 👤✨\n\n"
                    "📛 <b>Имя:</b> {name}\n"
@@ -105,12 +105,10 @@ TEXTS = {
         'sent_anon': "✅ <b>Отправлено анонимно!</b>\n\nПолучатель видит сообщение. Анонимность 100% 🕶️",
         'help': "ℹ️ <b>Как работает бот?</b>\n\n1. Получи ссылку\n2. Распространи\n3. Получай анонимки\n4. Отвечай одним нажатием\n\n🌍 Сменить язык — кнопка ниже",
         'settings': "⚙️ <b>Настройки приватности</b>\n\nКонтролируй приём сообщений.",
-        'receive_on': "🔔 <b>Приём включён!</b>\n\nГотов к анонимкам! 🔥",
+        'receive_on': "🔔 <b>Приём включён!</b>\n\nГотов к новым анонимкам! 🔥",
         'receive_off': "🔕 <b>Приём отключён!</b>\n\nТишина.",
         'cancel': "❌ <b>Отменено</b>\n\nВозвращаемся в меню",
         'lang_changed': "✅ <b>Язык изменён!</b> 🌍",
-        'admin_stats': "📊 <b>Статистика бота</b>\n\nПользователей: {users}\nСообщений: {messages}",
-        'top10': "🏆 <b>ТОП-10 пользователей</b>\n\n{top_list}",
         'buttons': {
             'my_link': "📩 Моя ссылка",
             'qr': "📱 QR-код",
@@ -122,9 +120,51 @@ TEXTS = {
             'admin': "🔧 Админ-панель",
             'receive_on': "🔔 Включить приём",
             'receive_off': "🔕 Отключить приём",
-            'back': "⬅️ Назад",
-            'stats': "📊 Статистика",
-            'top10': "🔥 Топ-10"
+            'back': "⬅️ Назад"
+        }
+    },
+    'uk': {
+        'welcome': "🎉 <b>Ласкаво просимо!</b> 🎉\n\n"
+                   "🔥 Отримуй та надсилай повідомлення <b>анонімно</b>! 🕶️\n\n"
+                   "🔗 <b>Твоє посилання:</b>\n<code>{link}</code>\n\n"
+                   "Поширюй — отримуй таємні повідомлення! 💌❤️\n"
+                   "Тисни кнопки! 🚀",
+        'my_link': "🔗 <b>Твоє анонімне посилання</b>\n\n<code>{link}</code>\n\nПоширюй!",
+        'qr_caption': "📱 <b>Твій QR-код</b>\n\nСкануй або покажи друзям!\n\n<i>Посилання: {link}</i>",
+        'profile': "📌 <b>ТВІЙ ПОВНИЙ ПРОФІЛЬ В ANONY SMS</b> 👤✨\n\n"
+                   "📛 <b>Ім'я:</b> {name}\n"
+                   "🌀 <b>Username:</b> {username}\n"
+                   "🆔 <b>ID:</b> <code>{user_id}</code>\n"
+                   "⏰ <b>Остання активність:</b> {last_active}\n\n"
+                   "📊 <b>ТВОЯ СТАТИСТИКА</b> 📈🔥\n"
+                   "💌 Отримано: <code>{received}</code>\n"
+                   "📤 Надіслано: <code>{sent}</code>\n"
+                   "👀 Переходів: <code>{clicks}</code>\n\n"
+                   "🔗 Посилання: {link}\n\n"
+                   "🚀 Ти — зірка анонімності! Сяй! ⭐❤️",
+        'support_entry': "📩 <b>Підтримка</b>\n\nНапиши питання або медіа — відповімо швидко!",
+        'support_sent': "✅ <b>Надіслано!</b>\n\nСкоро відповімо.",
+        'support_reply_header': "✉️ <b>Відповідь від підтримки</b> 👨‍💻\n\nЯкщо не ваше питання — ігноруйте.",
+        'anon_msg': "🕶️ <b>АНОНІМНЕ ПОВІДОМЛЕННЯ!</b> 🔥✨",
+        'sent_anon': "✅ <b>Надіслано анонімно!</b>\n\n100% анонімність 🕶️",
+        'help': "ℹ️ <b>Як працює</b>\n\n1. Отримай посилання\n2. Поширюй\n3. Отримуй повідомлення\n4. Відповідай\n\n🌍 Змінити мову — кнопка нижче",
+        'settings': "⚙️ <b>Налаштування</b>\n\nКонтролюй прийом.",
+        'receive_on': "🔔 <b>Прийом увімкнено!</b>",
+        'receive_off': "🔕 <b>Прийом вимкнено!</b>",
+        'cancel': "❌ <b>Скасовано</b>",
+        'lang_changed': "✅ <b>Мову змінено!</b> 🌍",
+        'buttons': {
+            'my_link': "📩 Моє посилання",
+            'qr': "📱 QR-код",
+            'settings': "⚙️ Налаштування",
+            'profile': "📌 Профіль",
+            'support': "📩 Підтримка",
+            'help': "ℹ️ Допомога",
+            'language': "🌍 Мова",
+            'admin': "🔧 Адмін-панель",
+            'receive_on': "🔔 Увімкнути прийом",
+            'receive_off': "🔕 Вимкнути прийом",
+            'back': "⬅️ Назад"
         }
     },
     'en': {
@@ -157,8 +197,6 @@ TEXTS = {
         'receive_off': "🔕 <b>Receiving disabled!</b>",
         'cancel': "❌ <b>Cancelled</b>",
         'lang_changed': "✅ <b>Language changed!</b> 🌍",
-        'admin_stats': "📊 <b>Bot stats</b>\n\nUsers: {users}\nMessages: {messages}",
-        'top10': "🏆 <b>Top-10 users</b>\n\n{top_list}",
         'buttons': {
             'my_link': "📩 My link",
             'qr': "📱 QR code",
@@ -170,12 +208,9 @@ TEXTS = {
             'admin': "🔧 Admin panel",
             'receive_on': "🔔 Enable receiving",
             'receive_off': "🔕 Disable receiving",
-            'back': "⬅️ Back",
-            'stats': "📊 Stats",
-            'top10': "🔥 Top-10"
+            'back': "⬅️ Back"
         }
     }
-    # Добавь 'uk' если нужно — по аналогии с 'ru'
 }
 
 def t(user_id, key, **kwargs):
@@ -201,12 +236,6 @@ def main_menu(user_id, is_admin=False):
 def settings_menu(user_id):
     m = ReplyKeyboardMarkup(resize_keyboard=True)
     m.add(btn(user_id, 'receive_on'), btn(user_id, 'receive_off'))
-    m.add(btn(user_id, 'back'))
-    return m
-
-def admin_menu(user_id):
-    m = ReplyKeyboardMarkup(resize_keyboard=True)
-    m.add(btn(user_id, 'stats'), btn(user_id, 'top10'))
     m.add(btn(user_id, 'back'))
     return m
 
@@ -244,29 +273,6 @@ def get_user_info(user_id):
         last_active = time.strftime("%d.%m.%Y в %H:%M", time.localtime(row[5])) if row[5] else "сейчас"
         return name, username, clicks, received, sent, last_active
     return "Аноним 🕶️", "<i>скрыт 😶</i>", 0, 0, 0, "сейчас"
-
-def get_bot_stats():
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT COUNT(*) FROM users")
-    users = c.fetchone()[0]
-    c.execute("SELECT COUNT(*) FROM anon_messages")
-    messages = c.fetchone()[0]
-    conn.close()
-    return users, messages
-
-def get_top10():
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT user_id, messages_received, link_clicks FROM users ORDER BY messages_received DESC, link_clicks DESC LIMIT 10")
-    rows = c.fetchall()
-    conn.close()
-    top_list = ""
-    for i, (uid, rec, clk) in enumerate(rows, 1):
-        name, _, _, _, _, _ = get_user_info(uid)
-        medal = ["🥇", "🥈", "🥉"][i-1] if i <= 3 else f"{i}."
-        top_list += f"{medal} <b>{name}</b> — 💌 {rec} | 👀 {clk}\n"
-    return top_list or "Пока пусто"
 
 # ====== Обработчики ======
 @bot.message_handler(commands=['start'])
@@ -323,23 +329,6 @@ def handle_all(message):
         bot.send_message(user_id, "Выберите язык:", reply_markup=markup)
         return
 
-    # Админ-панель
-    if is_admin and text == btn(user_id, 'admin'):
-        bot.send_message(user_id, "Админ-панель", reply_markup=admin_menu(user_id))
-        return
-
-    if is_admin and text == btn(user_id, 'stats'):
-        users, messages = get_bot_stats()
-        bot.send_message(user_id, t(user_id, 'admin_stats', users=users, messages=messages), reply_markup=admin_menu(user_id))
-
-    if is_admin and text == btn(user_id, 'top10'):
-        top_list = get_top10()
-        bot.send_message(user_id, t(user_id, 'top10', top_list=top_list), reply_markup=admin_menu(user_id))
-
-    if is_admin and text == btn(user_id, 'back'):
-        bot.send_message(user_id, "Главное меню", reply_markup=main_menu(user_id, True))
-        return
-
     # Поддержка
     if text == btn(user_id, 'support'):
         bot.send_message(user_id, t(user_id, 'support_entry'), reply_markup=cancel_menu)
@@ -354,7 +343,7 @@ def handle_all(message):
             InlineKeyboardButton("Игнор", callback_data=f"sup_ignore_{user_id}")
         )
         forwarded = bot.forward_message(ADMIN_ID, user_id, message.message_id)
-        bot.send_message(ADMIN_ID, f"Новое обращение от {name} (@{username or 'скрыт'}) ID: {user_id}", reply_to_message_id=forwarded.message_id, reply_markup=kb)
+        bot.send_message(ADMIN_ID, f"Новое обращение от {name} ({username})\nID: {user_id}", reply_to_message_id=forwarded.message_id, reply_markup=kb)
         bot.send_message(user_id, t(user_id, 'support_sent'), reply_markup=main_menu(user_id, is_admin))
         return
 
@@ -394,7 +383,7 @@ def handle_all(message):
         bot.send_message(user_id, t(user_id, 'sent_anon'), reply_markup=main_menu(user_id, is_admin))
         return
 
-    # Основные кнопки
+    # Основные команды — теперь профиль работает на всех языках
     if text == btn(user_id, 'my_link'):
         link = f"https://t.me/{BOT_USERNAME}?start={user_id}"
         bot.send_message(user_id, t(user_id, 'my_link', link=link), reply_markup=main_menu(user_id, is_admin))
