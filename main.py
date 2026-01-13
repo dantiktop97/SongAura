@@ -1,29 +1,30 @@
 #!/usr/bin/env python3
 """
 Anony SMS Bot - Бот для анонимных сообщений
-Полная версия в одном файле для деплоя на Render
+Версия для деплоя на Render с PostgreSQL
 """
 
 import os
 import sys
 import time
 import json
-import sqlite3
 import logging
 import qrcode
-from datetime import datetime, timedelta
+from datetime import datetime
 from io import BytesIO
 from contextlib import contextmanager
+import psycopg2
+from psycopg2.extras import RealDictCursor
 
 from flask import Flask, request, jsonify
 from telebot import TeleBot, types
 
 # ====== КОНФИГУРАЦИЯ ======
-TOKEN = os.getenv("TELEGRAM_TOKEN", "ВАШ_ТОКЕН_ЗДЕСЬ")
+TOKEN = os.getenv("PLAY", "ВАШ_ТОКЕН_ЗДЕСЬ")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "7549204023"))
 WEBHOOK_HOST = os.getenv("RENDER_EXTERNAL_URL", "")
 PORT = int(os.getenv("PORT", "10000"))
-DB_PATH = os.getenv("DB_PATH", "data.db")
+DATABASE_URL = os.getenv("DATABASE_URL")
 
 # Настройки безопасности
 ANTISPAM_INTERVAL = 10  # секунд между сообщениями
@@ -45,16 +46,15 @@ app = Flask(__name__)
 # Кэш для антиспама
 last_message_time = {}
 
-# ====== БАЗА ДАННЫХ (ВСТРОЕННАЯ) ======
+# ====== БАЗА ДАННЫХ (PostgreSQL) ======
 class Database:
-    def __init__(self, db_path="data.db"):
-        self.db_path = db_path
-        self.init_database()
+    def __init__(self):
+        self.conn_params = DATABASE_URL
     
     @contextmanager
     def get_connection(self):
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
+        conn = psycopg2.connect(self.conn_params, sslmode='require')
+        conn.autocommit = False
         try:
             yield conn
             conn.commit()
@@ -71,7 +71,7 @@ class Database:
             # Таблица пользователей
             c.execute('''
                 CREATE TABLE IF NOT EXISTS users (
-                    user_id INTEGER PRIMARY KEY,
+                    user_id BIGINT PRIMARY KEY,
                     username TEXT,
                     first_name TEXT,
                     created_at INTEGER,
@@ -86,9 +86,9 @@ class Database:
             # Таблица сообщений
             c.execute('''
                 CREATE TABLE IF NOT EXISTS messages (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    sender_id INTEGER,
-                    receiver_id INTEGER,
+                    id SERIAL PRIMARY KEY,
+                    sender_id BIGINT,
+                    receiver_id BIGINT,
                     message_type TEXT,
                     text TEXT,
                     file_id TEXT,
@@ -99,7 +99,7 @@ class Database:
             # Таблица блокировок
             c.execute('''
                 CREATE TABLE IF NOT EXISTS blocked_users (
-                    user_id INTEGER PRIMARY KEY,
+                    user_id BIGINT PRIMARY KEY,
                     blocked_at INTEGER
                 )
             ''')
@@ -107,8 +107,8 @@ class Database:
             # Таблица ожидания (временная)
             c.execute('''
                 CREATE TABLE IF NOT EXISTS waiting_messages (
-                    user_id INTEGER PRIMARY KEY,
-                    target_id INTEGER,
+                    user_id BIGINT PRIMARY KEY,
+                    target_id BIGINT,
                     created_at INTEGER
                 )
             ''')
@@ -121,49 +121,47 @@ class Database:
             now = int(time.time())
             
             c.execute('''
-                INSERT OR IGNORE INTO users 
+                INSERT INTO users 
                 (user_id, username, first_name, created_at, last_active) 
-                VALUES (?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (user_id) DO UPDATE SET
+                username = EXCLUDED.username,
+                first_name = EXCLUDED.first_name,
+                last_active = EXCLUDED.last_active
             ''', (user_id, username, first_name, now, now))
-            
-            c.execute('''
-                UPDATE users SET 
-                username = ?, 
-                first_name = ?,
-                last_active = ?
-                WHERE user_id = ?
-            ''', (username, first_name, now, user_id))
     
     def get_user(self, user_id):
         with self.get_connection() as conn:
-            c = conn.cursor()
-            c.execute('SELECT * FROM users WHERE user_id = ?', (user_id,))
+            c = conn.cursor(cursor_factory=RealDictCursor)
+            c.execute('SELECT * FROM users WHERE user_id = %s', (user_id,))
             row = c.fetchone()
-            return dict(row) if row else None
+            return row if row else None
     
     def is_user_blocked(self, user_id):
         with self.get_connection() as conn:
             c = conn.cursor()
-            c.execute('SELECT 1 FROM blocked_users WHERE user_id = ?', (user_id,))
+            c.execute('SELECT 1 FROM blocked_users WHERE user_id = %s', (user_id,))
             return c.fetchone() is not None
     
     def block_user(self, user_id):
         with self.get_connection() as conn:
             c = conn.cursor()
             c.execute('''
-                INSERT OR REPLACE INTO blocked_users (user_id, blocked_at) 
-                VALUES (?, ?)
+                INSERT INTO blocked_users (user_id, blocked_at) 
+                VALUES (%s, %s)
+                ON CONFLICT (user_id) DO UPDATE SET
+                blocked_at = EXCLUDED.blocked_at
             ''', (user_id, int(time.time())))
     
     def unblock_user(self, user_id):
         with self.get_connection() as conn:
             c = conn.cursor()
-            c.execute('DELETE FROM blocked_users WHERE user_id = ?', (user_id,))
+            c.execute('DELETE FROM blocked_users WHERE user_id = %s', (user_id,))
     
     def update_last_active(self, user_id):
         with self.get_connection() as conn:
             c = conn.cursor()
-            c.execute('UPDATE users SET last_active = ? WHERE user_id = ?', 
+            c.execute('UPDATE users SET last_active = %s WHERE user_id = %s', 
                      (int(time.time()), user_id))
     
     def increment_stat(self, user_id, field):
@@ -172,29 +170,32 @@ class Database:
         
         with self.get_connection() as conn:
             c = conn.cursor()
-            c.execute(f'UPDATE users SET {field} = {field} + 1 WHERE user_id = ?', 
+            c.execute(f'UPDATE users SET {field} = {field} + 1 WHERE user_id = %s', 
                      (user_id,))
     
     def set_waiting(self, user_id, target_id):
         with self.get_connection() as conn:
             c = conn.cursor()
             c.execute('''
-                INSERT OR REPLACE INTO waiting_messages 
+                INSERT INTO waiting_messages 
                 (user_id, target_id, created_at) 
-                VALUES (?, ?, ?)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (user_id) DO UPDATE SET
+                target_id = EXCLUDED.target_id,
+                created_at = EXCLUDED.created_at
             ''', (user_id, target_id, int(time.time())))
     
     def get_waiting(self, user_id):
         with self.get_connection() as conn:
-            c = conn.cursor()
-            c.execute('SELECT * FROM waiting_messages WHERE user_id = ?', (user_id,))
+            c = conn.cursor(cursor_factory=RealDictCursor)
+            c.execute('SELECT * FROM waiting_messages WHERE user_id = %s', (user_id,))
             row = c.fetchone()
-            return dict(row) if row else None
+            return row if row else None
     
     def clear_waiting(self, user_id):
         with self.get_connection() as conn:
             c = conn.cursor()
-            c.execute('DELETE FROM waiting_messages WHERE user_id = ?', (user_id,))
+            c.execute('DELETE FROM waiting_messages WHERE user_id = %s', (user_id,))
     
     def save_message(self, sender_id, receiver_id, message_type, text="", file_id=None):
         with self.get_connection() as conn:
@@ -202,8 +203,10 @@ class Database:
             c.execute('''
                 INSERT INTO messages 
                 (sender_id, receiver_id, message_type, text, file_id, timestamp) 
-                VALUES (?, ?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                RETURNING id
             ''', (sender_id, receiver_id, message_type, text, file_id, int(time.time())))
+            return c.fetchone()[0]
     
     def get_user_stats(self, user_id):
         user = self.get_user(user_id)
@@ -236,12 +239,12 @@ class Database:
             blocked_users = c.fetchone()[0]
             
             # Новые пользователи за 24 часа
-            c.execute('SELECT COUNT(*) FROM users WHERE created_at > ?', 
+            c.execute('SELECT COUNT(*) FROM users WHERE created_at > %s', 
                      (int(time.time()) - 86400,))
             new_users_24h = c.fetchone()[0]
             
             # Сообщения за 24 часа
-            c.execute('SELECT COUNT(*) FROM messages WHERE timestamp > ?', 
+            c.execute('SELECT COUNT(*) FROM messages WHERE timestamp > %s', 
                      (int(time.time()) - 86400,))
             messages_24h = c.fetchone()[0]
             
@@ -255,18 +258,18 @@ class Database:
     
     def get_all_users(self, limit=50):
         with self.get_connection() as conn:
-            c = conn.cursor()
-            c.execute('SELECT * FROM users ORDER BY created_at DESC LIMIT ?', (limit,))
-            return [dict(row) for row in c.fetchall()]
+            c = conn.cursor(cursor_factory=RealDictCursor)
+            c.execute('SELECT * FROM users ORDER BY created_at DESC LIMIT %s', (limit,))
+            return [row for row in c.fetchall()]
     
     def set_receive_messages(self, user_id, status):
         with self.get_connection() as conn:
             c = conn.cursor()
-            c.execute('UPDATE users SET receive_messages = ? WHERE user_id = ?',
+            c.execute('UPDATE users SET receive_messages = %s WHERE user_id = %s',
                      (1 if status else 0, user_id))
 
 # Инициализируем базу данных
-db = Database(DB_PATH)
+db = Database()
 
 # ====== УТИЛИТЫ ======
 def format_time(timestamp):
@@ -365,6 +368,12 @@ def start_command(message):
     first_name = message.from_user.first_name or ""
     
     logger.info(f"START: user_id={user_id}, username=@{username}")
+    
+    # Инициализация БД при первом запуске
+    try:
+        db.init_database()
+    except:
+        pass
     
     # Проверка блокировки
     if db.is_user_blocked(user_id):
@@ -572,7 +581,7 @@ def send_anonymous_message(sender_id, receiver_id, message):
         elif message.content_type == 'document':
             file_id = message.document.file_id
         
-        db.save_message(
+        message_id = db.save_message(
             sender_id, receiver_id, 
             message.content_type, 
             message.text or message.caption or "", 
@@ -624,7 +633,7 @@ def send_anonymous_message(sender_id, receiver_id, message):
         )
         
         # Логируем
-        logger.info(f"ANON_MSG: from={sender_id}, to={receiver_id}, type={message.content_type}")
+        logger.info(f"ANON_MSG: from={sender_id}, to={receiver_id}, type={message.content_type}, id={message_id}")
         
         # Очищаем ожидание
         db.clear_waiting(sender_id)
@@ -936,8 +945,19 @@ def index():
     return "Anony SMS Bot is running! ✅"
 
 # ====== ЗАПУСК ======
+def create_tables():
+    """Создание таблиц при запуске"""
+    try:
+        db.init_database()
+        logger.info("✅ Таблицы созданы/проверены")
+    except Exception as e:
+        logger.error(f"Ошибка создания таблиц: {e}")
+
 if __name__ == '__main__':
     logger.info("=== Бот запущен ===")
+    
+    # Создаем таблицы при запуске
+    create_tables()
     
     try:
         # Настройка вебхука для Render
