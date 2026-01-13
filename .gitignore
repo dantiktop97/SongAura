@@ -1,2 +1,10 @@
-#!/bin/bash
-python main.py
+__pycache__/
+*.pyc
+*.db
+*.log
+.env
+logs/
+venv/
+.DS_Store
+data.db
+config.py
