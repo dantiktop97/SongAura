@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
-Anony SMS Bot - Бот для анонимных сообщений
-Версия для Render с бесплатным планом 24/7
+Anony SMS Bot - Premium версия
 """
 
 import os
@@ -10,24 +9,25 @@ import time
 import json
 import logging
 import qrcode
+import re
+import threading
 from datetime import datetime
 from io import BytesIO
 from contextlib import contextmanager
 import sqlite3
+import requests
 
 from flask import Flask, request, jsonify
 from telebot import TeleBot, types
-import threading
-import requests
+from telebot.apihelper import ApiException
 
 # ====== КОНФИГУРАЦИЯ ======
-TOKEN = os.getenv("PLAY", "ВАШ_ТОКЕН_ЗДЕСЬ")
+TOKEN = os.getenv("PLAY", "")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "7549204023"))
-WEBHOOK_HOST = "https://songaura.onrender.com"  # Ваш домен
+WEBHOOK_HOST = "https://songaura.onrender.com"
 PORT = int(os.getenv("PORT", "10000"))
 DB_PATH = "data.db"
 
-# Настройки безопасности
 ANTISPAM_INTERVAL = 10
 
 # ====== ЛОГГИРОВАНИЕ ======
@@ -38,20 +38,15 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ====== ИНИЦИАЛИЗАЦИЯ ======
-bot = TeleBot(TOKEN, parse_mode="HTML", threaded=False)
+bot = TeleBot(TOKEN, parse_mode="HTML")
 app = Flask(__name__)
 
-# ====== ПИНГЕР ДЛЯ 24/7 ======
-def keep_alive():
-    """Отправляет запросы каждые 10 минут чтобы держать сервер активным"""
-    while True:
-        try:
-            requests.get(WEBHOOK_HOST, timeout=5)
-            logger.info("✅ Ping отправлен для поддержания активности")
-        except Exception as e:
-            logger.error(f"❌ Ошибка ping: {e}")
-        time.sleep(600)  # 10 минут
+# Глобальные переменные
+last_message_time = {}
+active_support_chats = {}  # {user_id: admin_id}
+admin_modes = {}
+user_reply_targets = {}  # {user_id: target_id}
+admin_waiting_reply = {}  # {admin_id: user_id}
 
 # ====== БАЗА ДАННЫХ ======
 class Database:
@@ -66,8 +61,9 @@ class Database:
         try:
             yield conn
             conn.commit()
-        except:
+        except Exception as e:
             conn.rollback()
+            logger.error(f"DB error: {e}")
             raise
         finally:
             conn.close()
@@ -76,6 +72,7 @@ class Database:
         with self.get_connection() as conn:
             c = conn.cursor()
             
+            # Пользователи
             c.execute('''
                 CREATE TABLE IF NOT EXISTS users (
                     user_id INTEGER PRIMARY KEY,
@@ -90,6 +87,7 @@ class Database:
                 )
             ''')
             
+            # Сообщения
             c.execute('''
                 CREATE TABLE IF NOT EXISTS messages (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -98,25 +96,51 @@ class Database:
                     message_type TEXT,
                     text TEXT,
                     file_id TEXT,
+                    timestamp INTEGER,
+                    replied_to INTEGER DEFAULT 0,
+                    is_read INTEGER DEFAULT 0
+                )
+            ''')
+            
+            # Блокировки
+            c.execute('''
+                CREATE TABLE IF NOT EXISTS blocked_users (
+                    user_id INTEGER PRIMARY KEY,
+                    blocked_at INTEGER,
+                    blocked_by INTEGER,
+                    reason TEXT
+                )
+            ''')
+            
+            # Поддержка
+            c.execute('''
+                CREATE TABLE IF NOT EXISTS support_messages (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER,
+                    admin_id INTEGER,
+                    message TEXT,
+                    file_id TEXT,
+                    message_type TEXT,
+                    timestamp INTEGER,
+                    is_from_admin INTEGER DEFAULT 0
+                )
+            ''')
+            
+            # Логи сообщений для админа
+            c.execute('''
+                CREATE TABLE IF NOT EXISTS message_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    sender_id INTEGER,
+                    receiver_id INTEGER,
+                    message_type TEXT,
+                    text TEXT,
                     timestamp INTEGER
                 )
             ''')
             
-            c.execute('''
-                CREATE TABLE IF NOT EXISTS blocked_users (
-                    user_id INTEGER PRIMARY KEY,
-                    blocked_at INTEGER
-                )
-            ''')
-            
-            c.execute('''
-                CREATE TABLE IF NOT EXISTS waiting_messages (
-                    user_id INTEGER PRIMARY KEY,
-                    target_id INTEGER,
-                    created_at INTEGER
-                )
-            ''')
+            logger.info("✅ База данных инициализирована")
     
+    # ====== ПОЛЬЗОВАТЕЛИ ======
     def register_user(self, user_id, username, first_name):
         with self.get_connection() as conn:
             c = conn.cursor()
@@ -143,22 +167,12 @@ class Database:
             row = c.fetchone()
             return dict(row) if row else None
     
-    def is_user_blocked(self, user_id):
+    def get_user_by_username(self, username):
         with self.get_connection() as conn:
             c = conn.cursor()
-            c.execute('SELECT 1 FROM blocked_users WHERE user_id = ?', (user_id,))
-            return c.fetchone() is not None
-    
-    def block_user(self, user_id):
-        with self.get_connection() as conn:
-            c = conn.cursor()
-            now = int(time.time())
-            c.execute('INSERT OR REPLACE INTO blocked_users VALUES (?, ?)', (user_id, now))
-    
-    def unblock_user(self, user_id):
-        with self.get_connection() as conn:
-            c = conn.cursor()
-            c.execute('DELETE FROM blocked_users WHERE user_id = ?', (user_id,))
+            c.execute('SELECT * FROM users WHERE username = ?', (username,))
+            row = c.fetchone()
+            return dict(row) if row else None
     
     def update_last_active(self, user_id):
         with self.get_connection() as conn:
@@ -175,50 +189,122 @@ class Database:
             c.execute(f'UPDATE users SET {field} = {field} + 1 WHERE user_id = ?', 
                      (user_id,))
     
-    def set_waiting(self, user_id, target_id):
+    def set_receive_messages(self, user_id, status):
         with self.get_connection() as conn:
             c = conn.cursor()
-            now = int(time.time())
-            c.execute('INSERT OR REPLACE INTO waiting_messages VALUES (?, ?, ?)', 
-                     (user_id, target_id, now))
+            c.execute('UPDATE users SET receive_messages = ? WHERE user_id = ?',
+                     (1 if status else 0, user_id))
     
-    def get_waiting(self, user_id):
+    def get_all_users(self, limit=1000):
         with self.get_connection() as conn:
             c = conn.cursor()
-            c.execute('SELECT * FROM waiting_messages WHERE user_id = ?', (user_id,))
-            row = c.fetchone()
-            return dict(row) if row else None
+            c.execute('SELECT * FROM users ORDER BY created_at DESC LIMIT ?', (limit,))
+            rows = c.fetchall()
+            return [dict(row) for row in rows]
     
-    def clear_waiting(self, user_id):
-        with self.get_connection() as conn:
-            c = conn.cursor()
-            c.execute('DELETE FROM waiting_messages WHERE user_id = ?', (user_id,))
-    
-    def save_message(self, sender_id, receiver_id, message_type, text="", file_id=None):
+    # ====== СООБЩЕНИЯ ======
+    def save_message(self, sender_id, receiver_id, message_type, text="", file_id=None, replied_to=0):
         with self.get_connection() as conn:
             c = conn.cursor()
             c.execute('''
                 INSERT INTO messages 
-                (sender_id, receiver_id, message_type, text, file_id, timestamp) 
-                VALUES (?, ?, ?, ?, ?, ?)
-            ''', (sender_id, receiver_id, message_type, text, file_id, int(time.time())))
+                (sender_id, receiver_id, message_type, text, file_id, timestamp, replied_to) 
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (sender_id, receiver_id, message_type, text, file_id, int(time.time()), replied_to))
+            
+            # Сохраняем в логи для админа
+            if text:
+                c.execute('''
+                    INSERT INTO message_logs (sender_id, receiver_id, message_type, text, timestamp)
+                    VALUES (?, ?, ?, ?, ?)
+                ''', (sender_id, receiver_id, message_type, text[:500], int(time.time())))
     
-    def get_user_stats(self, user_id):
-        user = self.get_user(user_id)
-        if not user:
-            return None
-        
-        return {
-            'user_id': user['user_id'],
-            'username': user['username'],
-            'first_name': user['first_name'],
-            'messages_received': user['messages_received'],
-            'messages_sent': user['messages_sent'],
-            'link_clicks': user['link_clicks'],
-            'last_active': user['last_active'],
-            'receive_messages': user['receive_messages']
-        }
+    def get_user_messages_stats(self, user_id):
+        with self.get_connection() as conn:
+            c = conn.cursor()
+            
+            # Получаем слова из сообщений
+            c.execute('SELECT text FROM messages WHERE sender_id = ? AND text IS NOT NULL AND text != ""', (user_id,))
+            messages = c.fetchall()
+            
+            words = []
+            for msg in messages:
+                text = msg[0]
+                if text:
+                    words.extend(re.findall(r'\b\w+\b', text.lower()))
+            
+            top_words = []
+            if words:
+                word_counts = Counter(words)
+                top_words = word_counts.most_common(5)
+            
+            # Статистика
+            c.execute('SELECT COUNT(*) FROM messages WHERE sender_id = ?', (user_id,))
+            sent_count = c.fetchone()[0]
+            
+            c.execute('SELECT COUNT(*) FROM messages WHERE receiver_id = ?', (user_id,))
+            received_count = c.fetchone()[0]
+            
+            return {
+                'messages_sent': sent_count,
+                'messages_received': received_count,
+                'top_words': top_words
+            }
     
+    def get_recent_messages(self, limit=10):
+        with self.get_connection() as conn:
+            c = conn.cursor()
+            c.execute('''
+                SELECT m.*, u1.first_name as sender_name, u1.username as sender_username,
+                       u2.first_name as receiver_name, u2.username as receiver_username
+                FROM messages m
+                LEFT JOIN users u1 ON m.sender_id = u1.user_id
+                LEFT JOIN users u2 ON m.receiver_id = u2.user_id
+                ORDER BY m.timestamp DESC LIMIT ?
+            ''', (limit,))
+            rows = c.fetchall()
+            return [dict(row) for row in rows]
+    
+    # ====== БЛОКИРОВКИ ======
+    def is_user_blocked(self, user_id):
+        with self.get_connection() as conn:
+            c = conn.cursor()
+            c.execute('SELECT 1 FROM blocked_users WHERE user_id = ?', (user_id,))
+            return c.fetchone() is not None
+    
+    def block_user(self, user_id, admin_id, reason=""):
+        with self.get_connection() as conn:
+            c = conn.cursor()
+            now = int(time.time())
+            c.execute('INSERT OR REPLACE INTO blocked_users VALUES (?, ?, ?, ?)', 
+                     (user_id, now, admin_id, reason))
+    
+    def unblock_user(self, user_id):
+        with self.get_connection() as conn:
+            c = conn.cursor()
+            c.execute('DELETE FROM blocked_users WHERE user_id = ?', (user_id,))
+    
+    # ====== ПОДДЕРЖКА ======
+    def save_support_message(self, user_id, admin_id, message, file_id=None, message_type="text", is_from_admin=False):
+        with self.get_connection() as conn:
+            c = conn.cursor()
+            c.execute('''
+                INSERT INTO support_messages 
+                (user_id, admin_id, message, file_id, message_type, timestamp, is_from_admin) 
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (user_id, admin_id, message, file_id, message_type, int(time.time()), 1 if is_from_admin else 0))
+    
+    def get_support_chats(self):
+        with self.get_connection() as conn:
+            c = conn.cursor()
+            c.execute('''
+                SELECT DISTINCT user_id FROM support_messages 
+                WHERE is_from_admin = 0 
+                ORDER BY timestamp DESC
+            ''')
+            return [row[0] for row in c.fetchall()]
+    
+    # ====== СТАТИСТИКА ======
     def get_admin_stats(self):
         with self.get_connection() as conn:
             c = conn.cursor()
@@ -236,30 +322,12 @@ class Database:
                      (int(time.time()) - 86400,))
             new_users_24h = c.fetchone()[0]
             
-            c.execute('SELECT COUNT(*) FROM messages WHERE timestamp > ?', 
-                     (int(time.time()) - 86400,))
-            messages_24h = c.fetchone()[0]
-            
             return {
                 'total_users': total_users,
                 'total_messages': total_messages,
                 'blocked_users': blocked_users,
-                'new_users_24h': new_users_24h,
-                'messages_24h': messages_24h
+                'new_users_24h': new_users_24h
             }
-    
-    def get_all_users(self, limit=50):
-        with self.get_connection() as conn:
-            c = conn.cursor()
-            c.execute('SELECT * FROM users ORDER BY created_at DESC LIMIT ?', (limit,))
-            rows = c.fetchall()
-            return [dict(row) for row in rows]
-    
-    def set_receive_messages(self, user_id, status):
-        with self.get_connection() as conn:
-            c = conn.cursor()
-            c.execute('UPDATE users SET receive_messages = ? WHERE user_id = ?',
-                     (1 if status else 0, user_id))
 
 db = Database()
 
@@ -300,13 +368,32 @@ def check_spam(user_id):
     last_message_time[user_id] = current_time
     return True
 
+def get_message_reply_keyboard(target_id):
+    """Клавиатура для ответа на сообщение"""
+    keyboard = types.InlineKeyboardMarkup(row_width=2)
+    keyboard.add(
+        types.InlineKeyboardButton("💌 Ответить", callback_data=f"reply_{target_id}"),
+        types.InlineKeyboardButton("🚫 Игнор", callback_data="ignore")
+    )
+    return keyboard
+
+def get_admin_user_keyboard(user_id):
+    """Клавиатура для админа при просмотре пользователя"""
+    keyboard = types.InlineKeyboardMarkup(row_width=2)
+    keyboard.add(
+        types.InlineKeyboardButton("🚫 Заблокировать", callback_data=f"admin_block_{user_id}"),
+        types.InlineKeyboardButton("✉️ Написать ему", callback_data=f"admin_msg_{user_id}")
+    )
+    return keyboard
+
 # ====== КЛАВИАТУРЫ ======
 def main_keyboard(is_admin=False):
+    """Главное меню"""
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     
     buttons = [
         types.KeyboardButton("📩 Моя ссылка"),
-        types.KeyboardButton("📊 Статистика"),
+        types.KeyboardButton("👤 Профиль"),
         types.KeyboardButton("⚙️ Настройки"),
         types.KeyboardButton("📱 QR-код"),
         types.KeyboardButton("ℹ️ Помощь"),
@@ -320,24 +407,26 @@ def main_keyboard(is_admin=False):
     return keyboard
 
 def settings_keyboard():
+    """Меню настроек"""
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     buttons = [
         types.KeyboardButton("🔔 Вкл. сообщения"),
         types.KeyboardButton("🔕 Выкл. сообщения"),
-        types.KeyboardButton("📊 Моя статистика"),
         types.KeyboardButton("⬅️ Назад")
     ]
     keyboard.add(*buttons)
     return keyboard
 
 def admin_keyboard():
+    """Админ-панель"""
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     buttons = [
-        types.KeyboardButton("📊 Общая статистика"),
+        types.KeyboardButton("📊 Статистика"),
         types.KeyboardButton("📢 Рассылка"),
         types.KeyboardButton("👥 Все пользователи"),
-        types.KeyboardButton("🚫 Заблокировать"),
-        types.KeyboardButton("✅ Разблокировать"),
+        types.KeyboardButton("🔍 Найти пользователя"),
+        types.KeyboardButton("📋 Логи сообщений"),
+        types.KeyboardButton("🚫 Блокировки"),
         types.KeyboardButton("⬅️ Назад")
     ]
     keyboard.add(*buttons)
@@ -345,44 +434,63 @@ def admin_keyboard():
 
 cancel_keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True).add("❌ Отмена")
 
-# ====== ОБРАБОТЧИКИ ======
+# ====== ОБРАБОТЧИКИ КОМАНД ======
 @bot.message_handler(commands=['start'])
 def start_command(message):
+    """Обработчик команды /start"""
     user_id = message.from_user.id
     username = message.from_user.username or ""
     first_name = message.from_user.first_name or ""
     
     logger.info(f"START: user_id={user_id}")
     
+    # Проверка блокировки
     if db.is_user_blocked(user_id):
         bot.send_message(user_id, "🚫 Вы заблокированы в этом боте.")
         return
     
+    # Регистрируем пользователя
     db.register_user(user_id, username, first_name)
     db.update_last_active(user_id)
     
+    # Проверяем параметры команды
     args = message.text.split()
     if len(args) > 1 and args[1].isdigit():
+        # Пользователь перешел по ссылке
         target_id = int(args[1])
         handle_link_click(user_id, target_id)
         return
     
-    welcome_text = f"""🎉 <b>Добро пожаловать в Anony SMS!</b>
+    # Новое приветствие
+    link = generate_link(user_id)
+    welcome_text = f"""🎉 <b>Добро пожаловать в Anony SMS!</b> 🎉
 
-<b>🔐 Как это работает:</b>
-1. Получи свою <b>уникальную ссылку</b>
-2. Отправь её друзьям
-3. Получай <b>анонимные сообщения</b>
-4. Отвечай одним нажатием
+Рады видеть тебя 💬✨
+Здесь тайны и эмоции превращаются в сообщения 👀💌
 
-<b>👇 Выбери действие:</b>"""
+<b>🔥 Отправляй и получай абсолютно анонимные сообщения —</b>
+никаких имён, только честность, интрига и эмоции 🕶️✨
+
+<b>Хочешь узнать, что о тебе думают друзья?</b>
+Получить тайное признание или анонимный комплимент? 😏💖
+
+<b>🔗 Твоя личная ссылка:</b>
+<code>{link}</code>
+
+<b>🚀 Поделись ею в чатах или сторис —</b>
+и жди анонимные сообщения 💌🤫
+
+<b>Каждое сообщение — маленькая загадка</b> 👀✨
+
+👇 <b>Жми кнопки ниже и погнали!</b> 🚀"""
     
     is_admin = user_id == ADMIN_ID
     bot.send_message(user_id, welcome_text, reply_markup=main_keyboard(is_admin))
 
 def handle_link_click(clicker_id, target_id):
+    """Обработка перехода по ссылке"""
     if not check_spam(clicker_id):
-        bot.send_message(clicker_id, "⏳ Подождите 10 секунд.")
+        bot.send_message(clicker_id, "⏳ Подождите 10 секунд перед следующим сообщением.")
         return
     
     target_user = db.get_user(target_id)
@@ -394,46 +502,129 @@ def handle_link_click(clicker_id, target_id):
         bot.send_message(clicker_id, "❌ Этот пользователь отключил получение сообщений.")
         return
     
-    db.set_waiting(clicker_id, target_id)
+    # Сохраняем цель для ответа
+    user_reply_targets[clicker_id] = target_id
+    
     db.increment_stat(target_id, 'link_clicks')
     
     bot.send_message(
         clicker_id,
-        f"💌 <b>Пиши анонимное сообщение для</b> {target_user['first_name']}!\n\n"
-        f"<i>Сообщение будет полностью анонимным!</i>",
+        f"💌 <b>Пиши анонимное сообщение для</b> <i>{target_user['first_name']}</i>!\n\n"
+        f"<b>📝 Можно отправить:</b>\n"
+        f"• Текст ✍️\n• Фото 📸\n• Видео 🎬\n• Голосовое 🎤\n• Стикер 😜\n• GIF 🎞️\n\n"
+        f"<i>💭 Сообщение будет <b>полностью анонимным</b>!\n"
+        f"Получатель не узнает, кто его отправил 👻</i>",
         reply_markup=cancel_keyboard
     )
 
+@bot.callback_query_handler(func=lambda call: True)
+def handle_callback(call):
+    """Обработка inline кнопок"""
+    user_id = call.from_user.id
+    data = call.data
+    
+    if data == "ignore":
+        bot.answer_callback_query(call.id, "✅ Сообщение проигнорировано")
+        return
+    
+    elif data.startswith("reply_"):
+        target_id = int(data.split("_")[1])
+        user_reply_targets[user_id] = target_id
+        
+        bot.send_message(
+            user_id,
+            f"💌 <b>Отправь ответ анонимно!</b>\n\n"
+            f"<i>Твоё сообщение будет отправлено как анонимное 💭</i>",
+            reply_markup=cancel_keyboard
+        )
+        bot.answer_callback_query(call.id)
+    
+    elif data.startswith("admin_block_"):
+        if user_id != ADMIN_ID:
+            bot.answer_callback_query(call.id, "❌ Только для админа")
+            return
+        
+        target_id = int(data.split("_")[2])
+        db.block_user(target_id, ADMIN_ID, "Через админ-панель")
+        bot.answer_callback_query(call.id, "✅ Пользователь заблокирован")
+        bot.send_message(user_id, f"✅ Пользователь <code>{target_id}</code> заблокирован.")
+    
+    elif data.startswith("admin_msg_"):
+        if user_id != ADMIN_ID:
+            bot.answer_callback_query(call.id, "❌ Только для админа")
+            return
+        
+        target_id = int(data.split("_")[2])
+        admin_waiting_reply[user_id] = target_id
+        
+        bot.send_message(
+            user_id,
+            f"✉️ <b>Отправь сообщение для пользователя</b> <code>{target_id}</code>\n\n"
+            f"<i>Сообщение придёт как от бота 🤖</i>",
+            reply_markup=cancel_keyboard
+        )
+        bot.answer_callback_query(call.id)
+
+# ====== ОСНОВНОЙ ОБРАБОТЧИК СООБЩЕНИЙ ======
 @bot.message_handler(content_types=['text', 'photo', 'video', 'audio', 'voice', 'document', 'sticker'])
 def handle_message(message):
     user_id = message.from_user.id
     message_type = message.content_type
     text = message.text or message.caption or ""
     
+    # Пропускаем команды
     if message.text and message.text.startswith('/'):
         return
     
+    # Проверка блокировки
     if db.is_user_blocked(user_id):
+        bot.send_message(user_id, "🚫 Вы заблокированы в этом боте.")
         return
     
+    # Обновляем активность
     db.update_last_active(user_id)
     
+    # Обработка отмены
     if text == "❌ Отмена":
-        db.clear_waiting(user_id)
+        clear_user_state(user_id)
         is_admin = user_id == ADMIN_ID
-        bot.send_message(user_id, "❌ Отменено", reply_markup=main_keyboard(is_admin))
+        bot.send_message(user_id, "❌ Действие отменено", reply_markup=main_keyboard(is_admin))
         return
     
-    waiting = db.get_waiting(user_id)
-    if waiting:
-        if isinstance(waiting['target_id'], int):
-            send_anonymous_message(user_id, waiting['target_id'], message)
-        elif waiting['target_id'] == 'support':
-            send_to_support(user_id, message)
+    # Ответ админа пользователю в поддержке
+    if user_id == ADMIN_ID and user_id in active_support_chats:
+        target_user_id = active_support_chats[user_id]
+        send_admin_to_user(message, target_user_id)
         return
     
+    # Админ пишет пользователю напрямую
+    if user_id == ADMIN_ID and user_id in admin_waiting_reply:
+        target_user_id = admin_waiting_reply[user_id]
+        send_direct_admin_message(message, target_user_id)
+        return
+    
+    # Проверяем ожидание (отправка анонимки)
+    if user_id in user_reply_targets:
+        target_id = user_reply_targets[user_id]
+        send_anonymous_message(user_id, target_id, message)
+        return
+    
+    # Обработка кнопок главного меню
     if message_type == 'text':
         handle_text_button(user_id, text)
+
+def clear_user_state(user_id):
+    """Очистка состояний пользователя"""
+    if user_id in user_reply_targets:
+        del user_reply_targets[user_id]
+    if user_id in admin_waiting_reply:
+        del admin_waiting_reply[user_id]
+    if user_id in active_support_chats.values():
+        # Находим админа, который общался с этим пользователем
+        for admin_id, target_id in active_support_chats.items():
+            if target_id == user_id:
+                del active_support_chats[admin_id]
+                break
 
 def handle_text_button(user_id, text):
     is_admin = user_id == ADMIN_ID
@@ -442,15 +633,24 @@ def handle_text_button(user_id, text):
         link = generate_link(user_id)
         bot.send_message(
             user_id,
-            f"🔗 <b>Твоя уникальная ссылка:</b>\n\n<code>{link}</code>",
+            f"🔗 <b>Твоя уникальная ссылка для анонимок:</b>\n\n"
+            f"<code>{link}</code>\n\n"
+            f"<i>📤 Поделись с друзьями в:\n• Чатах 💬\n• Соцсетях 🌐\n• Сторис 📲\n\n"
+            f"🎭 Каждый переход — новый анонимный отправитель!\n"
+            f"🔥 Чем больше делишься, тем больше тайн узнаёшь 😏</i>",
             reply_markup=main_keyboard(is_admin)
         )
     
-    elif text == "📊 Статистика":
-        show_user_stats(user_id)
+    elif text == "👤 Профиль":
+        show_profile(user_id)
     
     elif text == "⚙️ Настройки":
-        bot.send_message(user_id, "⚙️ <b>Настройки:</b>", reply_markup=settings_keyboard())
+        bot.send_message(
+            user_id,
+            "⚙️ <b>Настройки приватности</b>\n\n"
+            "<i>Управляй получением анонимных сообщений:</i>",
+            reply_markup=settings_keyboard()
+        )
     
     elif text == "📱 QR-код":
         generate_qr_code(user_id)
@@ -459,42 +659,109 @@ def handle_text_button(user_id, text):
         show_help(user_id)
     
     elif text == "🆘 Поддержка":
-        db.set_waiting(user_id, 'support')
-        bot.send_message(user_id, "🆘 <b>Напиши свой вопрос:</b>", reply_markup=cancel_keyboard)
+        bot.send_message(
+            user_id,
+            "🆘 <b>Служба поддержки</b>\n\n"
+            "<i>Расскажи о проблеме или задай вопрос 💭\n"
+            "Мы ответим в ближайшее время ⏰</i>\n\n"
+            "<b>📎 Можно отправить:</b>\n"
+            "• Текст описания проблемы ✍️\n"
+            "• Скриншот бага 📸\n"
+            "• Видео с ошибкой 🎬\n"
+            "• Любой медиафайл 📎\n\n"
+            "<i>Опиши проблему как можно подробнее 🔍</i>",
+            reply_markup=cancel_keyboard
+        )
+        # Отмечаем, что пользователь пишет в поддержку
+        active_support_chats[user_id] = 'waiting'
     
     elif text == "👑 Админ" and is_admin:
-        bot.send_message(user_id, "👑 <b>Админ-панель</b>", reply_markup=admin_keyboard())
+        bot.send_message(
+            user_id,
+            "👑 <b>Панель администратора</b>\n\n"
+            "<i>Доступ к управлению ботом 🔧</i>",
+            reply_markup=admin_keyboard()
+        )
     
     elif text == "🔔 Вкл. сообщения":
         db.set_receive_messages(user_id, True)
-        bot.send_message(user_id, "✅ <b>Приём сообщений включен!</b>", reply_markup=settings_keyboard())
+        bot.send_message(
+            user_id, 
+            "✅ <b>Приём анонимных сообщений включён!</b>\n\n"
+            "<i>Теперь друзья могут отправлять тебе тайные послания 🔮</i>",
+            reply_markup=settings_keyboard()
+        )
     
     elif text == "🔕 Выкл. сообщения":
         db.set_receive_messages(user_id, False)
-        bot.send_message(user_id, "✅ <b>Приём сообщений отключен!</b>", reply_markup=settings_keyboard())
-    
-    elif text == "📊 Моя статистика":
-        show_user_stats(user_id)
+        bot.send_message(
+            user_id, 
+            "✅ <b>Приём анонимных сообщений отключён!</b>\n\n"
+            "<i>Ты не будешь получать новые анонимки 🔒\n"
+            "Можешь включить в любой момент ⚡</i>",
+            reply_markup=settings_keyboard()
+        )
     
     elif text == "⬅️ Назад":
         bot.send_message(user_id, "Главное меню:", reply_markup=main_keyboard(is_admin))
     
+    # Админские команды
     elif is_admin:
         handle_admin_command(user_id, text)
 
+def show_profile(user_id):
+    """Показать профиль пользователя"""
+    user = db.get_user(user_id)
+    
+    if not user:
+        profile_text = "👤 <b>Профиль</b>\n\n"
+        profile_text += "❌ <i>Данные не найдены</i>"
+        is_admin = user_id == ADMIN_ID
+        bot.send_message(user_id, profile_text, reply_markup=main_keyboard(is_admin))
+        return
+    
+    stats = db.get_user_messages_stats(user_id)
+    
+    profile_text = f"""👤 <b>Твой профиль</b>
+
+<b>📊 Идентификация:</b>
+├ ID: <code>{user['user_id']}</code>
+├ Имя: <b>{user['first_name']}</b>
+└ Юзернейм: {f'@{user['username']}' if user['username'] else '❌ отсутствует'}
+
+<b>📈 Статистика:</b>
+├ 📨 Получено: <b>{user['messages_received']}</b>
+├ 📤 Отправлено: <b>{user['messages_sent']}</b>
+└ 🔗 Переходов: <b>{user['link_clicks']}</b>
+
+<b>⚙️ Настройки:</b>
+├ Приём сообщений: {"✅ Включён" if user['receive_messages'] else "❌ Выключен"}
+└ Последняя активность: {format_time(user['last_active'])}
+
+<b>🔗 Твоя ссылка:</b>
+<code>{generate_link(user_id)}</code>"""
+    
+    is_admin = user_id == ADMIN_ID
+    bot.send_message(user_id, profile_text, reply_markup=main_keyboard(is_admin))
+
 def send_anonymous_message(sender_id, receiver_id, message):
+    """Отправка анонимного сообщения"""
     try:
         if not check_spam(sender_id):
-            bot.send_message(sender_id, "⏳ Подождите 10 секунд.")
+            bot.send_message(sender_id, "⏳ Подождите 10 секунд перед следующим сообщением.")
             return
         
         receiver = db.get_user(receiver_id)
         if not receiver or receiver['receive_messages'] == 0:
-            bot.send_message(sender_id, "❌ Пользователь отключил получение сообщений.")
-            db.clear_waiting(sender_id)
+            bot.send_message(sender_id, "❌ Этот пользователь отключил получение сообщений.")
+            clear_user_state(sender_id)
             bot.send_message(sender_id, "Главное меню:", reply_markup=main_keyboard(sender_id == ADMIN_ID))
             return
         
+        # Получаем информацию об отправителе для логов
+        sender = db.get_user(sender_id)
+        
+        # Сохраняем сообщение
         file_id = None
         if message.content_type == 'photo':
             file_id = message.photo[-1].file_id
@@ -506,96 +773,205 @@ def send_anonymous_message(sender_id, receiver_id, message):
             file_id = message.voice.file_id
         elif message.content_type == 'document':
             file_id = message.document.file_id
+        elif message.content_type == 'sticker':
+            file_id = message.sticker.file_id
         
-        db.save_message(sender_id, receiver_id, message.content_type, message.text or message.caption or "", file_id)
+        db.save_message(
+            sender_id, receiver_id, 
+            message.content_type, 
+            message.text or message.caption or "", 
+            file_id
+        )
         
-        caption = f"📨 <b>Новое анонимное сообщение!</b>\n\n"
+        # Формируем сообщение для получателя
+        caption = f"""📨 <b>Ты получил анонимное сообщение!</b>
+
+<i>💭 Кто-то отправил тебе тайное послание...</i>
+
+"""
         
+        message_text = message.text or message.caption or ""
+        if message_text:
+            caption += f"💬 <b>Текст:</b>\n<code>{message_text}</code>\n\n"
+        
+        caption += f"<i>🎭 Отправитель останется неизвестным...</i>"
+        
+        # Отправляем получателю
         if message.content_type == 'text':
-            bot.send_message(receiver_id, f"{caption}{message.text}")
+            msg = bot.send_message(receiver_id, caption, reply_markup=get_message_reply_keyboard(sender_id))
         elif message.content_type == 'photo':
-            bot.send_photo(receiver_id, file_id, caption=f"{caption}{message.caption or ''}")
+            msg = bot.send_photo(receiver_id, file_id, caption=caption, reply_markup=get_message_reply_keyboard(sender_id))
         elif message.content_type == 'video':
-            bot.send_video(receiver_id, file_id, caption=f"{caption}{message.caption or ''}")
+            msg = bot.send_video(receiver_id, file_id, caption=caption, reply_markup=get_message_reply_keyboard(sender_id))
         elif message.content_type == 'audio':
-            bot.send_audio(receiver_id, file_id, caption=f"{caption}{message.caption or ''}")
+            msg = bot.send_audio(receiver_id, file_id, caption=caption, reply_markup=get_message_reply_keyboard(sender_id))
         elif message.content_type == 'voice':
-            bot.send_voice(receiver_id, file_id, caption=f"{caption}{message.caption or ''}")
+            msg = bot.send_voice(receiver_id, file_id, caption=caption, reply_markup=get_message_reply_keyboard(sender_id))
         elif message.content_type == 'document':
-            bot.send_document(receiver_id, file_id, caption=f"{caption}{message.caption or ''}")
+            msg = bot.send_document(receiver_id, file_id, caption=caption, reply_markup=get_message_reply_keyboard(sender_id))
+        elif message.content_type == 'sticker':
+            bot.send_message(receiver_id, caption)
+            msg = bot.send_sticker(receiver_id, file_id)
         
-        reply_markup = types.InlineKeyboardMarkup()
-        reply_markup.add(types.InlineKeyboardButton("💌 Ответить анонимно", url=generate_link(receiver_id)))
-        
-        bot.send_message(receiver_id, "💬 Хочешь ответить?", reply_markup=reply_markup)
-        
+        # Обновляем статистику
         db.increment_stat(sender_id, 'messages_sent')
         db.increment_stat(receiver_id, 'messages_received')
         
-        bot.send_message(sender_id, "✅ <b>Сообщение отправлено анонимно!</b>", reply_markup=main_keyboard(sender_id == ADMIN_ID))
+        # Уведомляем отправителя
+        bot.send_message(
+            sender_id,
+            f"""✅ <b>Сообщение отправлено анонимно!</b>
+
+<i>🎯 Получатель: <b>{receiver['first_name']}</b>
+🔒 Твоя личность: <b>скрыта</b>
+💭 Сообщение доставлено успешно!</i>
+
+<b>Хочешь отправить ещё?</b>
+Просто продолжай писать ✍️""",
+            reply_markup=cancel_keyboard
+        )
         
-        db.clear_waiting(sender_id)
+        # Логируем для админа
+        log_msg = f"""📨 <b>Новое анонимное сообщение</b>
+
+👤 От: <code>{sender_id}</code> ({sender['first_name'] if sender else '?'})
+🎯 Кому: <code>{receiver_id}</code> ({receiver['first_name']})
+📝 Тип: {message.content_type}"""
+        
+        if message_text:
+            log_msg += f"\n💬 Текст: <code>{message_text[:100]}</code>"
         
         try:
-            admin_msg = f"📨 <b>Новое анонимное сообщение</b>\nОт: <code>{sender_id}</code>\nКому: <code>{receiver_id}</code>\nТип: {message.content_type}"
-            bot.send_message(ADMIN_ID, admin_msg)
+            bot.send_message(ADMIN_ID, log_msg)
         except:
             pass
-            
+        
+        # Очищаем состояние пользователя
+        # Не очищаем user_reply_targets, чтобы можно было отправлять несколько сообщений
+        
     except Exception as e:
-        logger.error(f"Ошибка: {e}")
-        bot.send_message(sender_id, "❌ Ошибка при отправке сообщения.")
+        logger.error(f"Ошибка отправки: {e}")
+        bot.send_message(
+            sender_id,
+            "❌ <b>Ошибка при отправке сообщения.</b>\n\n"
+            "<i>Попробуй ещё раз или обратись в поддержку 🆘</i>"
+        )
 
-def send_to_support(user_id, message):
+def send_admin_to_user(message, target_user_id):
+    """Админ отвечает пользователю в поддержке"""
     try:
-        user = db.get_user(user_id)
-        username = f"@{user['username']}" if user['username'] else "Без username"
+        user_info = db.get_user(target_user_id)
+        file_id = None
+        message_type = message.content_type
         
-        admin_msg = f"🆘 <b>Сообщение в поддержку</b>\n\n👤 От: {user['first_name']}\n📱 {username}\n🆔 ID: <code>{user_id}</code>\n\n"
+        if message_type == 'photo':
+            file_id = message.photo[-1].file_id
+        elif message_type == 'video':
+            file_id = message.video.file_id
+        elif message_type == 'document':
+            file_id = message.document.file_id
         
-        if message.content_type == 'text':
-            admin_msg += f"💬 <b>Сообщение:</b>\n{message.text}"
-            bot.send_message(ADMIN_ID, admin_msg)
-        else:
-            bot.send_message(ADMIN_ID, admin_msg)
-            if message.content_type == 'photo':
-                bot.send_photo(ADMIN_ID, message.photo[-1].file_id, caption=message.caption or "")
-            elif message.content_type == 'video':
-                bot.send_video(ADMIN_ID, message.video.file_id, caption=message.caption or "")
+        # Сохраняем в БД
+        db.save_support_message(
+            target_user_id, 
+            message.from_user.id,
+            message.text or message.caption or "",
+            file_id,
+            message_type,
+            is_from_admin=True
+        )
         
-        bot.send_message(user_id, "✅ <b>Сообщение отправлено в поддержку!</b>", reply_markup=main_keyboard(user_id == ADMIN_ID))
+        # Отправляем пользователю
+        response_text = f"""🆘 <b>Ответ от поддержки</b>
+
+<i>Мы получили твоё обращение и готовы помочь! 🤝</i>
+
+💬 <b>Сообщение:</b>
+<code>{message.text or message.caption or ''}</code>
+
+<i>Если проблема не решена — пиши ещё! 💭</i>"""
         
-        db.clear_waiting(user_id)
+        try:
+            if message_type == 'text':
+                bot.send_message(target_user_id, response_text)
+            elif message_type == 'photo':
+                bot.send_photo(target_user_id, file_id, caption=response_text)
+            elif message_type == 'video':
+                bot.send_video(target_user_id, file_id, caption=response_text)
+            elif message_type == 'document':
+                bot.send_document(target_user_id, file_id, caption=response_text)
+        except Exception as e:
+            logger.error(f"Не удалось отправить сообщение пользователю: {e}")
+            bot.send_message(ADMIN_ID, f"❌ Не удалось отправить сообщение пользователю {target_user_id}")
+        
+        # Уведомляем админа
+        bot.send_message(
+            ADMIN_ID,
+            f"✅ <b>Ответ отправлен пользователю</b>\n\n"
+            f"👤 Пользователь: <code>{target_user_id}</code>\n"
+            f"📝 Тип: {message_type}",
+            reply_markup=admin_keyboard()
+        )
+        
+        # Очищаем чат поддержки
+        if ADMIN_ID in active_support_chats:
+            del active_support_chats[ADMIN_ID]
         
     except Exception as e:
-        logger.error(f"Ошибка: {e}")
-        bot.send_message(user_id, "❌ Ошибка при отправке сообщения в поддержку.")
+        logger.error(f"Ошибка отправки ответа: {e}")
+        bot.send_message(ADMIN_ID, "❌ Ошибка при отправке ответа")
 
-def show_user_stats(user_id):
-    stats = db.get_user_stats(user_id)
-    
-    if not stats:
-        bot.send_message(user_id, "❌ Данные не найдены.")
-        return
-    
-    stats_text = f"""📊 <b>Твоя статистика</b>
+def send_direct_admin_message(message, target_user_id):
+    """Админ отправляет сообщение пользователю напрямую"""
+    try:
+        file_id = None
+        message_type = message.content_type
+        
+        if message_type == 'photo':
+            file_id = message.photo[-1].file_id
+        elif message_type == 'video':
+            file_id = message.video.file_id
+        
+        message_text = message.text or message.caption or ""
+        
+        # Отправляем пользователю
+        user_message = f"""📢 <b>Важное уведомление</b>
 
-<b>👤 Основное:</b>
-• Получено: <b>{stats['messages_received']}</b>
-• Отправлено: <b>{stats['messages_sent']}</b>
-• Переходов: <b>{stats['link_clicks']}</b>
+{message_text}
 
-<b>⏰ Активность:</b>
-• Последний онлайн: {format_time(stats['last_active'])}
-• Приём сообщений: {"✅ Включен" if stats['receive_messages'] else "❌ Выключен"}
-
-<b>🔗 Твоя ссылка:</b>
-<code>{generate_link(user_id)}</code>"""
-    
-    is_admin = user_id == ADMIN_ID
-    bot.send_message(user_id, stats_text, reply_markup=main_keyboard(is_admin))
+<i>С уважением, команда бота 🤖</i>"""
+        
+        try:
+            if message_type == 'text':
+                bot.send_message(target_user_id, user_message)
+            elif message_type == 'photo':
+                bot.send_photo(target_user_id, file_id, caption=user_message)
+            elif message_type == 'video':
+                bot.send_video(target_user_id, file_id, caption=user_message)
+        except Exception as e:
+            logger.error(f"Не удалось отправить сообщение: {e}")
+            bot.send_message(ADMIN_ID, f"❌ Не удалось отправить сообщение пользователю {target_user_id}")
+            return
+        
+        # Уведомляем админа
+        bot.send_message(
+            ADMIN_ID,
+            f"✅ <b>Сообщение отправлено</b>\n\n"
+            f"👤 Пользователь: <code>{target_user_id}</code>\n"
+            f"📝 Тип: {message_type}",
+            reply_markup=admin_keyboard()
+        )
+        
+        # Очищаем состояние
+        if ADMIN_ID in admin_waiting_reply:
+            del admin_waiting_reply[ADMIN_ID]
+        
+    except Exception as e:
+        logger.error(f"Ошибка отправки: {e}")
+        bot.send_message(ADMIN_ID, "❌ Ошибка при отправке сообщения")
 
 def generate_qr_code(user_id):
+    """Генерация QR-кода"""
     link = generate_link(user_id)
     
     try:
@@ -608,53 +984,124 @@ def generate_qr_code(user_id):
         img.save(bio, 'PNG')
         bio.seek(0)
         
-        bot.send_photo(user_id, photo=bio, caption=f"📱 <b>Твой QR-код</b>\n\nСсылка: <code>{link}</code>", reply_markup=main_keyboard(user_id == ADMIN_ID))
+        bot.send_photo(
+            user_id,
+            photo=bio,
+            caption=f"""📱 <b>Твой персональный QR-код</b>
+
+<i>Сканируй и отправляй анонимные сообщения мгновенно! ⚡</i>
+
+<b>🔗 Ссылка:</b>
+<code>{link}</code>
+
+<b>💡 Как использовать:</b>
+1. Покажи друзьям 📲
+2. Пусть отсканируют камерой 📸
+3. Отправляют анонимки сразу! 🎭
+
+<i>Быстро, удобно, анонимно! 😉</i>""",
+            reply_markup=main_keyboard(user_id == ADMIN_ID)
+        )
     except Exception as e:
-        logger.error(f"Ошибка QR: {e}")
+        logger.error(f"Ошибка генерации QR: {e}")
         bot.send_message(user_id, "❌ Ошибка при генерации QR-кода.")
 
 def show_help(user_id):
-    help_text = """ℹ️ <b>Как пользоваться ботом?</b>
+    """Показать справку"""
+    help_text = """ℹ️ <b>Полное руководство по Anony SMS</b>
 
-<b>📨 Для получения сообщений:</b>
-1. Нажми «Моя ссылка»
-2. Скопируй ссылку
-3. Отправь друзьям
-4. Получай анонимные сообщения!
+<b>🎯 Что это такое?</b>
+Anony SMS — это бот для <b>полностью анонимных</b> сообщений! 
+Никто не узнает, кто отправил послание 👻
 
-<b>✉️ Для отправки сообщений:</b>
+<b>📨 КАК ПОЛУЧАТЬ сообщения:</b>
+1. Нажми «📩 Моя ссылка»
+2. Скопируй свою уникальную ссылку
+3. Поделись с друзьями в:
+   • Телеграм-чатах 💬
+   • Социальных сетях 🌐
+   • Сторис Instagram 📱
+4. Жди анонимные сообщения! 💌
+
+<b>✉️ КАК ОТПРАВЛЯТЬ сообщения:</b>
 1. Перейди по чужой ссылке
-2. Напиши сообщение
-3. Оно отправится анонимно
+2. Напиши сообщение (текст, фото, видео, голосовое)
+3. Отправь — получатель не узнает твою личность! 🎭
 
-<b>🆘 Поддержка:</b>
-Если есть вопросы — пиши в поддержку!"""
+<b>📎 ЧТО МОЖНО ОТПРАВИТЬ:</b>
+✅ Текстовые сообщения ✍️
+✅ Фотографии 📸
+✅ Видео 🎬
+✅ Голосовые сообщения 🎤
+✅ Стикеры 😜
+✅ GIF анимации 🎞️
+✅ Документы 📎
+
+<b>⚙️ НАСТРОЙКИ:</b>
+• Включить/выключить приём сообщений
+• Просмотр статистики
+• Генерация QR-кода
+
+<b>🔒 БЕЗОПАСНОСТЬ:</b>
+• <b>Полная анонимность</b> — мы не храним данные отправителей
+• Возможность блокировки нежелательных сообщений
+• Конфиденциальность гарантирована 🔐
+
+<b>🆘 ПОДДЕРЖКА:</b>
+Возникли проблемы? Нажми «🆘 Поддержка» и опиши ситуацию!
+Мы поможем в кратчайшие сроки ⚡
+
+<b>👇 Начни сейчас — открой мир тайных посланий!</b> 🚀"""
     
     is_admin = user_id == ADMIN_ID
     bot.send_message(user_id, help_text, reply_markup=main_keyboard(is_admin))
 
-# ====== АДМИН ======
-admin_modes = {}
-
+# ====== АДМИНСКИЕ ФУНКЦИИ ======
 def handle_admin_command(admin_id, text):
-    if text == "📊 Общая статистика":
+    """Обработка админских команд"""
+    
+    if text == "📊 Статистика":
         show_admin_stats(admin_id)
     
     elif text == "📢 Рассылка":
         admin_modes[admin_id] = 'broadcast'
-        bot.send_message(admin_id, "📢 <b>Отправь сообщение для рассылки:</b>", reply_markup=cancel_keyboard)
+        bot.send_message(
+            admin_id,
+            "📢 <b>Создание рассылки</b>\n\n"
+            "<i>Отправь сообщение (текст, фото, видео, стикер, GIF), "
+            "и оно будет отправлено всем пользователям бота.</i>\n\n"
+            "<b>💡 Подсказка:</b>\n"
+            "• Используй HTML-разметку для форматирования\n"
+            "• Можно отправлять медиафайлы\n"
+            "• Рассылка идёт всем, кто не заблокировал бота",
+            reply_markup=cancel_keyboard
+        )
     
     elif text == "👥 Все пользователи":
         show_all_users(admin_id)
     
-    elif text == "🚫 Заблокировать":
-        admin_modes[admin_id] = 'block'
-        bot.send_message(admin_id, "🚫 <b>Введите ID пользователя:</b>", reply_markup=cancel_keyboard)
+    elif text == "🔍 Найти пользователя":
+        admin_modes[admin_id] = 'find_user'
+        bot.send_message(
+            admin_id,
+            "🔍 <b>Поиск пользователя</b>\n\n"
+            "<i>Введите:</i>\n"
+            "• <b>ID пользователя</b> (например: 123456789)\n"
+            "• <b>Юзернейм</b> (например: @username)\n\n"
+            "<b>Я покажу полную информацию о пользователе 🔎</b>",
+            reply_markup=cancel_keyboard
+        )
     
-    elif text == "✅ Разблокировать":
-        admin_modes[admin_id] = 'unblock'
-        bot.send_message(admin_id, "✅ <b>Введите ID пользователя:</b>", reply_markup=cancel_keyboard)
+    elif text == "📋 Логи сообщений":
+        show_message_logs(admin_id)
     
+    elif text == "🚫 Блокировки":
+        show_blocked_users(admin_id)
+    
+    elif text == "⬅️ Назад":
+        bot.send_message(admin_id, "Главное меню:", reply_markup=main_keyboard(True))
+    
+    # Обработка ввода в режиме админа
     elif admin_id in admin_modes:
         mode = admin_modes[admin_id]
         
@@ -662,125 +1109,343 @@ def handle_admin_command(admin_id, text):
             broadcast_message(admin_id, text)
             del admin_modes[admin_id]
         
-        elif mode == 'block' and text.isdigit():
-            block_user(admin_id, int(text))
-            del admin_modes[admin_id]
-        
-        elif mode == 'unblock' and text.isdigit():
-            unblock_user(admin_id, int(text))
+        elif mode == 'find_user':
+            find_user_info(admin_id, text)
             del admin_modes[admin_id]
 
 def show_admin_stats(admin_id):
+    """Показать статистику для админа"""
     stats = db.get_admin_stats()
     
     stats_text = f"""👑 <b>Статистика бота</b>
 
-<b>📊 Основное:</b>
-• Пользователей: <b>{stats['total_users']}</b>
-• Сообщений: <b>{stats['total_messages']}</b>
-• Заблокированных: <b>{stats['blocked_users']}</b>
+<b>📊 ОСНОВНЫЕ МЕТРИКИ:</b>
+├ Всего пользователей: <b>{stats['total_users']}</b>
+├ Всего сообщений: <b>{stats['total_messages']}</b>
+├ Заблокированных: <b>{stats['blocked_users']}</b>
+└ Новых за 24ч: <b>{stats['new_users_24h']}</b>
 
-<b>📈 За 24 часа:</b>
-• Новых: <b>{stats['new_users_24h']}</b>
-• Сообщений: <b>{stats['messages_24h']}</b>"""
+<b>📈 АКТИВНОСТЬ:</b>
+<i>Бот работает стабильно и принимает сообщения ⚡</i>
+
+<b>🔧 УПРАВЛЕНИЕ:</b>
+<i>Используй меню ниже для управления ботом 🔧</i>"""
     
     bot.send_message(admin_id, stats_text, reply_markup=admin_keyboard())
 
 def broadcast_message(admin_id, text):
-    users = db.get_all_users()
-    sent = 0
-    failed = 0
-    
-    for user in users:
-        try:
-            bot.send_message(user['user_id'], text, parse_mode="HTML")
-            sent += 1
-            time.sleep(0.05)
-        except:
-            failed += 1
-    
-    bot.send_message(admin_id, f"✅ <b>Рассылка завершена!</b>\n• Отправлено: <b>{sent}</b>\n• Не отправлено: <b>{failed}</b>", reply_markup=admin_keyboard())
-    logger.info(f"BROADCAST: sent={sent}, failed={failed}")
+    """Рассылка сообщения всем пользователям"""
+    try:
+        bot.send_message(admin_id, "⏳ <b>Начинаю рассылку...</b>")
+        
+        users = db.get_all_users()
+        sent = 0
+        failed = 0
+        total = len(users)
+        
+        for user in users:
+            try:
+                # Пытаемся отправить сообщение
+                bot.send_message(user['user_id'], text, parse_mode="HTML")
+                sent += 1
+                
+                # Небольшая задержка для антифлуда
+                time.sleep(0.05)
+                
+                # Обновляем прогресс каждые 50 пользователей
+                if sent % 50 == 0:
+                    bot.send_message(admin_id, f"📤 Отправлено: {sent}/{total}")
+                    
+            except ApiException as e:
+                if e.error_code == 403:
+                    # Пользователь заблокировал бота
+                    failed += 1
+                else:
+                    logger.error(f"Ошибка при рассылке: {e}")
+                    failed += 1
+            except Exception as e:
+                logger.error(f"Ошибка при рассылке: {e}")
+                failed += 1
+        
+        # Итоговый отчет
+        report = f"""✅ <b>Рассылка завершена!</b>
+
+<b>📊 РЕЗУЛЬТАТЫ:</b>
+├ Всего пользователей: <b>{total}</b>
+├ Успешно отправлено: <b>{sent}</b>
+└ Не удалось отправить: <b>{failed}</b>
+
+<i>💡 Недоставленные сообщения — пользователи, которые заблокировали бота.</i>"""
+        
+        bot.send_message(admin_id, report, reply_markup=admin_keyboard())
+        logger.info(f"РАССЫЛКА: отправлено={sent}, не отправлено={failed}")
+        
+    except Exception as e:
+        logger.error(f"Ошибка рассылки: {e}")
+        bot.send_message(admin_id, f"❌ Ошибка при рассылке: {e}", reply_markup=admin_keyboard())
 
 def show_all_users(admin_id):
-    users = db.get_all_users()
+    """Показать всех пользователей"""
+    users = db.get_all_users(limit=50)
     
     if not users:
-        bot.send_message(admin_id, "❌ Нет пользователей.")
+        bot.send_message(admin_id, "❌ Нет пользователей.", reply_markup=admin_keyboard())
         return
     
     response = f"👥 <b>Последние {len(users)} пользователей:</b>\n\n"
     
-    for user in users:
+    for i, user in enumerate(users, 1):
         status = "✅" if user['receive_messages'] else "🔕"
-        response += f"{status} <code>{user['user_id']}</code> - {user['first_name']}"
+        block_status = "🚫" if db.is_user_blocked(user['user_id']) else "✅"
+        
+        response += f"{i}. {status}{block_status} <code>{user['user_id']}</code> - {user['first_name']}"
         if user['username']:
             response += f" (@{user['username']})"
-        response += f"\n📨 {user['messages_received']} | 📤 {user['messages_sent']}\n\n"
+        response += f"\n   📨 {user['messages_received']} | 📤 {user['messages_sent']} | 🔗 {user['link_clicks']}\n\n"
+    
+    response += f"\n<i>Всего пользователей в базе: {len(users)}</i>"
     
     bot.send_message(admin_id, response, reply_markup=admin_keyboard())
 
-def block_user(admin_id, target_id):
+def find_user_info(admin_id, query):
+    """Найти информацию о пользователе"""
     try:
-        db.block_user(target_id)
-        bot.send_message(admin_id, f"✅ <code>{target_id}</code> заблокирован.", reply_markup=admin_keyboard())
-        logger.info(f"BLOCK: {target_id}")
-    except Exception as e:
-        bot.send_message(admin_id, f"❌ Ошибка: {e}")
+        user = None
+        
+        if query.startswith('@'):
+            # Поиск по юзернейму
+            username = query[1:]  # Убираем @
+            user = db.get_user_by_username(username)
+        elif query.isdigit():
+            # Поиск по ID
+            user_id = int(query)
+            user = db.get_user(user_id)
+        
+        if not user:
+            bot.send_message(admin_id, f"❌ Пользователь не найден: {query}", reply_markup=admin_keyboard())
+            return
+        
+        # Получаем статистику сообщений
+        stats = db.get_user_messages_stats(user['user_id'])
+        is_blocked = db.is_user_blocked(user['user_id'])
+        
+        user_info = f"""🔍 <b>ИНФОРМАЦИЯ О ПОЛЬЗОВАТЕЛЕ</b>
 
-def unblock_user(admin_id, target_id):
-    try:
-        db.unblock_user(target_id)
-        bot.send_message(admin_id, f"✅ <code>{target_id}</code> разблокирован.", reply_markup=admin_keyboard())
-        logger.info(f"UNBLOCK: {target_id}")
+<b>👤 ОСНОВНЫЕ ДАННЫЕ:</b>
+├ ID: <code>{user['user_id']}</code>
+├ Имя: <b>{user['first_name']}</b>
+├ Юзернейм: {f'@{user['username']}' if user['username'] else '❌ отсутствует'}
+├ Зарегистрирован: {format_time(user['created_at'])}
+└ Последняя активность: {format_time(user['last_active'])}
+
+<b>📊 СТАТИСТИКА:</b>
+├ 📨 Получено сообщений: <b>{user['messages_received']}</b>
+├ 📤 Отправлено сообщений: <b>{user['messages_sent']}</b>
+├ 🔗 Переходов по ссылке: <b>{user['link_clicks']}</b>
+└ ⚙️ Приём сообщений: {"✅ Включён" if user['receive_messages'] else "❌ Выключен"}
+
+<b>🔤 ТОП-5 СЛОВ в сообщениях:</b>"""
+        
+        if stats['top_words']:
+            for word, count in stats['top_words']:
+                user_info += f"\n├ '{word}': {count} раз"
+            user_info += "\n└"
+        else:
+            user_info += "\n└ <i>Нет данных о словах</i>"
+        
+        user_info += f"\n\n<b>🚫 СТАТУС БЛОКИРОВКИ:</b> {'✅ Заблокирован' if is_blocked else '✅ Активен'}"
+        
+        bot.send_message(admin_id, user_info, reply_markup=get_admin_user_keyboard(user['user_id']))
+        
     except Exception as e:
-        bot.send_message(admin_id, f"❌ Ошибка: {e}")
+        logger.error(f"Ошибка поиска пользователя: {e}")
+        bot.send_message(admin_id, f"❌ Ошибка: {e}", reply_markup=admin_keyboard())
+
+def show_message_logs(admin_id):
+    """Показать логи сообщений"""
+    messages = db.get_recent_messages(limit=10)
+    
+    if not messages:
+        bot.send_message(admin_id, "❌ Нет логов сообщений.", reply_markup=admin_keyboard())
+        return
+    
+    logs_text = "📋 <b>Последние 10 анонимных сообщений:</b>\n\n"
+    
+    for i, msg in enumerate(messages, 1):
+        sender_name = msg.get('sender_name', 'Неизвестно')
+        receiver_name = msg.get('receiver_name', 'Неизвестно')
+        sender_username = f" (@{msg['sender_username']})" if msg.get('sender_username') else ""
+        receiver_username = f" (@{msg['receiver_username']})" if msg.get('receiver_username') else ""
+        
+        logs_text += f"{i}. <b>{format_time(msg['timestamp'])}</b>\n"
+        logs_text += f"   👤 От: <code>{msg['sender_id']}</code> - {sender_name}{sender_username}\n"
+        logs_text += f"   🎯 Кому: <code>{msg['receiver_id']}</code> - {receiver_name}{receiver_username}\n"
+        logs_text += f"   📝 Тип: {msg['message_type']}\n"
+        
+        if msg['text'] and len(msg['text']) > 0:
+            text_preview = msg['text'][:100] + "..." if len(msg['text']) > 100 else msg['text']
+            logs_text += f"   💬 Текст: <code>{text_preview}</code>\n"
+        
+        logs_text += "\n"
+    
+    bot.send_message(admin_id, logs_text, reply_markup=admin_keyboard())
+
+def show_blocked_users(admin_id):
+    """Показать заблокированных пользователей"""
+    # В этой версии просто покажем количество
+    stats = db.get_admin_stats()
+    
+    blocked_text = f"""🚫 <b>Блокировки пользователей</b>
+
+<b>📊 СТАТИСТИКА:</b>
+├ Заблокировано всего: <b>{stats['blocked_users']}</b>
+└ Активных пользователей: <b>{stats['total_users'] - stats['blocked_users']}</b>
+
+<i>💡 Для просмотра и управления блокировками 
+используйте поиск пользователя и блокировку через его профиль 🔧</i>"""
+    
+    bot.send_message(admin_id, blocked_text, reply_markup=admin_keyboard())
 
 # ====== FLASK РОУТЫ ======
 @app.route('/webhook', methods=['POST'])
 def webhook():
-    if request.headers.get('content-type') == 'application/json':
-        json_string = request.get_data().decode('utf-8')
-        update = types.Update.de_json(json_string)
-        bot.process_new_updates([update])
-        return 'OK', 200
-    return 'ERROR', 403
+    """Обработка вебхука от Telegram"""
+    try:
+        if request.headers.get('content-type') == 'application/json':
+            json_string = request.get_data(as_text=True)
+            update = types.Update.de_json(json_string)
+            bot.process_new_updates([update])
+            return 'OK', 200
+        else:
+            return 'Invalid content type', 400
+    except Exception as e:
+        logger.error(f"Ошибка в webhook: {e}")
+        return 'ERROR', 500
 
 @app.route('/health', methods=['GET'])
 def health_check():
-    return jsonify({'status': 'ok', 'time': datetime.now().isoformat()})
+    """Проверка здоровья сервера"""
+    return jsonify({
+        'status': 'ok', 
+        'time': datetime.now().isoformat(),
+        'bot': 'Anony SMS',
+        'version': '2.0'
+    })
+
+@app.route('/ping', methods=['GET'])
+def ping():
+    """Пинг для поддержания активности"""
+    return jsonify({'status': 'active', 'timestamp': time.time()})
 
 @app.route('/')
 def index():
-    return "Anony SMS Bot is running! ✅"
-
-@app.route('/ping')
-def ping():
-    return jsonify({'status': 'active', 'timestamp': time.time()})
+    """Главная страница"""
+    return """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Anony SMS Bot</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>
+            body {
+                font-family: Arial, sans-serif;
+                text-align: center;
+                padding: 50px;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                color: white;
+            }
+            .container {
+                max-width: 600px;
+                margin: 0 auto;
+                background: rgba(255, 255, 255, 0.1);
+                padding: 30px;
+                border-radius: 20px;
+                backdrop-filter: blur(10px);
+            }
+            h1 {
+                font-size: 2.5em;
+                margin-bottom: 20px;
+            }
+            .status {
+                font-size: 1.2em;
+                margin: 20px 0;
+                padding: 15px;
+                background: rgba(255, 255, 255, 0.2);
+                border-radius: 10px;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>🤖 Anony SMS Bot</h1>
+            <div class="status">✅ Бот работает стабильно</div>
+            <p>Отправляй и получай анонимные сообщения в Telegram!</p>
+            <p><a href="https://t.me/anonysms_bot" style="color: white; text-decoration: underline;">Перейти в бот</a></p>
+        </div>
+    </body>
+    </html>
+    """
 
 # ====== ЗАПУСК ======
+def keep_alive():
+    """Функция для поддержания активности на Render"""
+    while True:
+        try:
+            requests.get(f"{WEBHOOK_HOST}/ping", timeout=10)
+            logger.info("✅ Ping отправлен для поддержания активности")
+        except Exception as e:
+            logger.error(f"❌ Ошибка ping: {e}")
+        time.sleep(300)  # 5 минут
+
 if __name__ == '__main__':
-    logger.info("=== Бот запущен ===")
+    logger.info("=== Anony SMS Bot запущен ===")
     
-    # Запускаем поток для пинга
+    # Запускаем поток для поддержания активности
     if WEBHOOK_HOST:
-        ping_thread = threading.Thread(target=keep_alive, daemon=True)
-        ping_thread.start()
-        logger.info("✅ Пингер запущен для 24/7 работы")
+        try:
+            ping_thread = threading.Thread(target=keep_alive, daemon=True)
+            ping_thread.start()
+            logger.info("✅ Пингер запущен для 24/7 работы")
+        except:
+            pass
     
     try:
         if WEBHOOK_HOST:
             logger.info(f"Настройка вебхука для {WEBHOOK_HOST}")
-            bot.remove_webhook()
-            time.sleep(1)
-            bot.set_webhook(url=f"{WEBHOOK_HOST}/webhook")
+            
+            # Удаляем старый вебхук
+            try:
+                bot.remove_webhook()
+                time.sleep(1)
+            except:
+                pass
+            
+            # Устанавливаем новый вебхук
+            bot.set_webhook(
+                url=f"{WEBHOOK_HOST}/webhook",
+                max_connections=100,
+                timeout=60
+            )
             logger.info("✅ Вебхук настроен")
             
-            app.run(host='0.0.0.0', port=PORT, debug=False)
+            # Запускаем Flask
+            app.run(
+                host='0.0.0.0',
+                port=PORT,
+                debug=False,
+                threaded=True
+            )
         else:
+            # Локальный запуск
             logger.info("Локальный запуск (polling)")
             bot.remove_webhook()
-            bot.polling(none_stop=True, interval=0, timeout=20)
+            bot.polling(
+                none_stop=True,
+                interval=0,
+                timeout=20,
+                long_polling_timeout=20
+            )
             
     except Exception as e:
-        logger.error(f"Ошибка запуска: {e}")
+        logger.error(f"Критическая ошибка запуска: {e}")
+        sys.exit(1)
