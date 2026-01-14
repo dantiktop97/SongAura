@@ -132,7 +132,7 @@ class Database:
                     file_id TEXT,
                     file_unique_id TEXT,
                     message_type TEXT,
-                    status TEXT DEFAULT 'open',  # open, answered, closed
+                    status TEXT DEFAULT 'open',
                     created_at INTEGER,
                     admin_id INTEGER,
                     admin_reply TEXT,
