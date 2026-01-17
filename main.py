@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Anony SMS Bot - Ultimate Version
-Multi-language, fully functional bot
+Anony SMS Bot - Ultimate Version v4.1
+With user statistics and profile analytics
 """
 
 import os
@@ -18,6 +18,9 @@ from contextlib import contextmanager
 import sqlite3
 import requests
 from collections import Counter
+import matplotlib.pyplot as plt
+import matplotlib
+matplotlib.use('Agg')
 
 from flask import Flask, request, jsonify
 from telebot import TeleBot, types
@@ -54,7 +57,7 @@ TRANSLATIONS = {
 Здесь тайны и эмоции превращаются в сообщения 👀💌
 
 <b>🔥 Отправляй и получай абсолютно анонимные сообщения —</b>
-никаких имён, только честность, интрига и эмоции 🕶️✨
+никаких имён, только чесность, интрига и эмоции 🕶️✨
 
 <b>Хочешь узнать, что о тебе думают друзья?</b>
 Получить тайное признание или анонимный комплимент? 😏💖
@@ -91,11 +94,17 @@ TRANSLATIONS = {
 <b>📈 Статистика:</b>
 ├ 📨 Получено: <b>{received}</b>
 ├ 📤 Отправлено: <b>{sent}</b>
-└ 🔗 Переходов: <b>{clicks}</b>
+├ 🔗 Переходов: <b>{clicks}</b>
+└ ⏱️ Сред. время ответа: <b>{response_time}</b>
 
 <b>⚙️ Настройки:</b>
 ├ Приём сообщений: {receive_status}
-└ Активность: {last_active}
+└ Последняя активность: {last_active}
+
+<b>📊 Статистика активности:</b>
+├ Пик активности: <b>{peak_hour}</b>
+├ Самый активный день: <b>{active_day}</b>
+└ Любимый тип: <b>{fav_type}</b>
 
 <b>🔗 Твоя ссылка:</b>
 <code>{link}</code>""",
@@ -130,7 +139,7 @@ Anony SMS — это бот для <b>полностью анонимных</b> 
 4. Жди анонимные сообщения! 💌
 
 <b>✉️ КАК ОТПРАВЛЯТЬ сообщения:</b>
-1. Перейди по чужой ссылку
+1. Перейди по чужой ссылке
 2. Напиши сообщение
 3. Отправь — получатель не узнает твою личность! 🎭
 
@@ -277,7 +286,7 @@ Anony SMS — это бот для <b>полностью анонимных</b> 
         'user_already_blocked': "✅ Пользователь уже заблокирован",
         'user_not_blocked': "✅ Пользователь не заблокирован",
         
-        # Новые переводы для активности
+        # Новые переводы для статистики
         'main_menu': "🏠 Главное меню",
         'just_now': "только что",
         'minutes_ago': "{minutes} минут назад",
@@ -285,17 +294,40 @@ Anony SMS — это бот для <b>полностью анонимных</b> 
         'yesterday': "вчера",
         'days_ago': "{days} дней назад",
         'never': "никогда",
-        'language_changed': "Язык изменен",
+        'language_changed': "✅ Язык изменен",
         'send_anonymous_to': "Отправь анонимное сообщение",
         'send_anonymous_description': "Напиши сообщение, фото, видео или голосовое сообщение",
         'send_reply': "Отправь ответное сообщение",
         'reply_to_ticket': "Ответить на тикет",
-        'user_blocked_bot': "Пользователь заблокировал бота",
+        'user_blocked_bot': "❌ Пользователь заблокировал бота",
         'text': "Текст",
+        'generating_stats': "📊 Генерирую вашу статистику...",
+        'stats_not_enough': "📊 <b>Статистика пока недоступна</b>\n\n<i>Нужно отправить и получить хотя бы 5 сообщений для генерации статистики.</i>",
+        'stats_ready': "✅ <b>Статистика готова!</b>",
+        'stats_error': "❌ <b>Не удалось сгенерировать статистику</b>",
+        'view_photo_stats': "📸 Фото статистики",
+        'photo_stats_caption': """📊 <b>Персональная статистика {name}</b>
+
+🎯 <b>ОСНОВНЫЕ ПОКАЗАТЕЛИ:</b>
+├ Всего сообщений: <b>{total}</b>
+├ Получено: <b>{received}</b>
+├ Отправлено: <b>{sent}</b>
+└ Переходов по ссылке: <b>{clicks}</b>
+
+⏱️ <b>АНАЛИЗ АКТИВНОСТИ:</b>
+├ Пик активности: <b>{peak_hour}</b>
+├ Самый активный день: <b>{active_day}</b>
+└ Любимый тип: <b>{fav_type}</b>
+
+💡 <b>РЕКОМЕНДАЦИИ:</b>
+{advice}
+
+✨ <b>Продолжайте в том же духе!</b>""",
         
         # Кнопки
         'btn_my_link': "📩 Моя ссылка",
         'btn_profile': "👤 Профиль",
+        'btn_stats': "📊 Статистика",
         'btn_settings': "⚙️ Настройки",
         'btn_qr': "📱 QR-код",
         'btn_help': "ℹ️ Помощь",
@@ -306,6 +338,7 @@ Anony SMS — это бот для <b>полностью анонимных</b> 
         'btn_language': "🌐 Язык",
         'btn_back': "⬅️ Назад",
         'btn_cancel': "❌ Отмена",
+        'btn_view_photo_stats': "📸 Фото статистики",
         
         'btn_admin_stats': "📊 Статистика",
         'btn_admin_broadcast': "📢 Рассылка",
@@ -377,11 +410,17 @@ and wait for anonymous messages 💌🤫
 <b>📈 Statistics:</b>
 ├ 📨 Received: <b>{received}</b>
 ├ 📤 Sent: <b>{sent}</b>
-└ 🔗 Clicks: <b>{clicks}</b>
+├ 🔗 Clicks: <b>{clicks}</b>
+└ ⏱️ Avg response: <b>{response_time}</b>
 
 <b>⚙️ Settings:</b>
 ├ Receive messages: {receive_status}
 └ Last active: {last_active}
+
+<b>📊 Activity Stats:</b>
+├ Peak time: <b>{peak_hour}</b>
+├ Most active day: <b>{active_day}</b>
+└ Favorite type: <b>{fav_type}</b>
 
 <b>🔗 Your link:</b>
 <code>{link}</code>""",
@@ -563,7 +602,7 @@ You can send text, photo or video.</i>""",
         'user_already_blocked': "✅ User already blocked",
         'user_not_blocked': "✅ User not blocked",
         
-        # Новые переводы для активности
+        # New translations for statistics
         'main_menu': "🏠 Main Menu",
         'just_now': "just now",
         'minutes_ago': "{minutes} minutes ago",
@@ -571,17 +610,40 @@ You can send text, photo or video.</i>""",
         'yesterday': "yesterday",
         'days_ago': "{days} days ago",
         'never': "never",
-        'language_changed': "Language changed",
+        'language_changed': "✅ Language changed",
         'send_anonymous_to': "Send anonymous message to",
         'send_anonymous_description': "Write a message, photo, video or voice message",
         'send_reply': "Send reply message",
         'reply_to_ticket': "Reply to ticket",
-        'user_blocked_bot': "User blocked the bot",
+        'user_blocked_bot': "❌ User blocked the bot",
         'text': "Text",
+        'generating_stats': "📊 Generating your statistics...",
+        'stats_not_enough': "📊 <b>Statistics not available yet</b>\n\n<i>You need to send and receive at least 5 messages to generate statistics.</i>",
+        'stats_ready': "✅ <b>Statistics ready!</b>",
+        'stats_error': "❌ <b>Failed to generate statistics</b>",
+        'view_photo_stats': "📸 Photo statistics",
+        'photo_stats_caption': """📊 <b>Personal statistics for {name}</b>
+
+🎯 <b>KEY METRICS:</b>
+├ Total messages: <b>{total}</b>
+├ Received: <b>{received}</b>
+├ Sent: <b>{sent}</b>
+└ Link clicks: <b>{clicks}</b>
+
+⏱️ <b>ACTIVITY ANALYSIS:</b>
+├ Peak time: <b>{peak_hour}</b>
+├ Most active day: <b>{active_day}</b>
+└ Favorite type: <b>{fav_type}</b>
+
+💡 <b>RECOMMENDATIONS:</b>
+{advice}
+
+✨ <b>Keep it up!</b>""",
         
-        # Кнопки
+        # Buttons
         'btn_my_link': "📩 My link",
         'btn_profile': "👤 Profile",
+        'btn_stats': "📊 Statistics",
         'btn_settings': "⚙️ Settings",
         'btn_qr': "📱 QR code",
         'btn_help': "ℹ️ Help",
@@ -592,6 +654,7 @@ You can send text, photo or video.</i>""",
         'btn_language': "🌐 Language",
         'btn_back': "⬅️ Back",
         'btn_cancel': "❌ Cancel",
+        'btn_view_photo_stats': "📸 Photo statistics",
         
         'btn_admin_stats': "📊 Stats",
         'btn_admin_broadcast': "📢 Broadcast",
@@ -612,583 +675,11 @@ You can send text, photo or video.</i>""",
         'btn_reply_ticket': "📝 Reply",
         'btn_close_ticket': "✅ Close",
         
-        # Языки
+        # Languages
         'lang_ru': "🇷🇺 Russian",
         'lang_en': "🇺🇸 English",
         'lang_uk': "🇺🇦 Ukrainian",
         'lang_es': "🇪🇸 Spanish",
-    },
-    
-    'uk': {
-        'start': """🎉 <b>Ласкаво просимо до Anony SMS!</b> 🎉
-
-Раді бачити тебе 💬✨
-Тут таємниці та емоції перетворюються на повідомлення 👀💌
-
-<b>🔥 Надсилай та отримуй абсолютно анонімні повідомлення —</b>
-без імен, лише чесність, інтрига та емоції 🕶️✨
-
-<b>Хочеш дізнатись, що думають про тебе друзі?</b>
-Отримати таємне визнання чи анонімний комплімент? 😏💖
-
-<b>🔗 Твоє особисте посилання:</b>
-<code>{link}</code>
-
-<b>🚀 Поділися ним у чатах або сторис —</b>
-та чекай анонімні повідомлення 💌🤫
-
-<b>Кожне повідомлення — маленька загадка</b> 👀✨
-
-👇 <b>Тискай кнопки нижче та погнали!</b> 🚀""",
-        
-        'my_link': """🔗 <b>Твоє унікальне посилання для анонімок:</b>
-
-<code>{link}</code>
-
-<i>📤 Поділися з друзями у:
-• Чатах 💬
-• Соцмережах 🌐
-• Сторіс 📲
-
-🎭 Кожен клік — новий анонімний відправник!
-🔥 Чим більше ділишся, тим більше таємниць дізнаєшся 😏</i>""",
-        
-        'profile': """👤 <b>Твій профіль</b>
-
-<b>📊 Ідентифікація:</b>
-├ ID: <code>{user_id}</code>
-├ Ім'я: <b>{first_name}</b>
-└ Юзернейм: {username}
-
-<b>📈 Статистика:</b>
-├ 📨 Отримано: <b>{received}</b>
-├ 📤 Надіслано: <b>{sent}</b>
-└ 🔗 Кліків: <b>{clicks}</b>
-
-<b>⚙️ Налаштування:</b>
-├ Отримання повідомлень: {receive_status}
-└ Остання активність: {last_active}
-
-<b>🔗 Твоє посилання:</b>
-<code>{link}</code>""",
-        
-        'anonymous_message': """📨 <b>Ти отримав анонімне повідомлення!</b>
-
-<i>💭 Хтось надіслав тобі таємне послання...</i>
-
-{text}
-
-<i>🎭 Відправник залишиться невідомим...</i>""",
-        
-        'message_sent': """✅ <b>Повідомлення надіслано анонімно!</b>
-
-<i>🎯 Отримувач: <b>{receiver_name}</b>
-🔒 Твоя особистість: <b>прихована</b>
-💭 Повідомлення доставлено успішно!</i>
-
-<b>Хочеш надіслати ще?</b>
-Просто продовжуй писати ✍️""",
-        
-        'help': """ℹ️ <b>Повний посібник Anony SMS</b>
-
-<b>🎯 Що це?</b>
-Anony SMS — це бот для <b>повністю анонімних</b> повідомлень! 
-Ніхто не дізнається, хто надіслав повідомлення 👻
-
-<b>📨 ЯК ОТРИМУВАТИ повідомлення:</b>
-1. Натисни «📩 Моє посилання»
-2. Скопіюй своє унікальне посилання
-3. Поділися з друзями
-4. Чекай анонімні повідомлення! 💌
-
-<b>✉️ ЯК НАДСИЛАТИ повідомлення:</b>
-1. Перейди за чужим посиланням
-2. Напиши повідомлення
-3. Надішли — отримувач не дізнається твоєї особистості! 🎭
-
-<b>📎 ЩО МОЖНА НАДСИЛАТИ:</b>
-✅ Текстові повідомлення ✍️
-✅ Фото 📸
-✅ Відео 🎬
-✅ Голосові повідомлення 🎤
-✅ Стікери 😜
-✅ GIF 🎞️
-✅ Документи 📎
-
-<b>⚙️ НАЛАШТУВАННЯ:</b>
-• Увімкнути/вимкнути отримання
-• Перегляд статистики
-• Генерація QR-коду
-
-<b>🔒 БЕЗПЕКА:</b>
-• <b>Повна анонімність</b>
-• Конфіденційність гарантована 🔐
-
-<b>🆘 ПІДТРИМКА:</b>
-Виникли проблеми? Натисни «🆘 Підтримка»""",
-        
-        'support': """🆘 <b>Служба підтримки</b>
-
-<i>Опиши свою проблему якомога детальніше 💭
-Ми постараємось відповісти якнайшвидше ⏰</i>
-
-<b>📎 Що можна надіслати:</b>
-• Текстове опис проблеми ✍️
-• Скріншот помилки 📸
-• Відео з багом 🎬
-• Будь-який медіафайл 📎""",
-        
-        'support_sent': """✅ <b>Запит до підтримки надіслано!</b>
-
-<i>Твій тікет: <b>#{ticket_id}</b>
-Ми відповімо вам якнайшвидше ⏰</i>""",
-        
-        'settings': "⚙️ <b>Налаштування</b>\n\n<i>Налаштуй бота під себе:</i>",
-        'turn_on': "✅ <b>Отримання анонімних повідомлень увімкнено!</b>\n\n<i>Тепер друзі можуть надсилати тобі таємні послання 🔮</i>",
-        'turn_off': "✅ <b>Отримання анонімних повідомлень вимкнено!</b>\n\n<i>Ти не будеш отримувати нові анонімки 🔒\nМожеш увімкнути в будь-який момент ⚡</i>",
-        'language': "🌐 <b>Виберіть мову</b>\n\n<i>Вибір мови змінить інтерфейс бота.</i>",
-        'blocked': "🚫 Ви заблоковані в цьому боті.",
-        'user_not_found': "❌ Користувача не знайдено.",
-        'messages_disabled': "❌ Цей користувач вимкнув отримання повідомлень.",
-        'wait': "⏳ Зачекайте 2 секунди перед наступним повідомленням.",
-        'canceled': "❌ Дію скасовано",
-        'spam_wait': "⏳ Зачекайте 2 секунди перед наступним повідомленням.",
-        'qr_code': """📱 <b>Твій персональний QR-код</b>
-
-<i>Скануй та надсилай анонімні повідомлення миттєво! ⚡</i>
-
-<b>🔗 Посилання:</b>
-<code>{link}</code>""",
-        
-        # Адмін
-        'admin_panel': "👑 <b>Панель адміністратора</b>\n\n<i>Доступ до управління ботом 🔧</i>",
-        'admin_stats': """👑 <b>Статистика бота</b>
-
-<b>📊 ОСНОВНІ МЕТРИКИ:</b>
-├ Всього користувачів: <b>{total_users}</b>
-├ Активних сьогодні: <b>{today_active}</b>
-├ Всього повідомлень: <b>{total_messages}</b>
-├ Повідомлень за 24год: <b>{messages_24h}</b>
-├ Нових за 24год: <b>{new_users_24h}</b>
-├ Заблокованих: <b>{blocked_users}</b>
-└ Відкритих тікетів: <b>{open_tickets}</b>""",
-        
-        'broadcast_start': """📢 <b>Створення розсилки</b>
-
-<i>Надішли повідомлення, яке буде відправлено всім користувачам.</i>
-
-<b>📎 Можна надіслати:</b>
-• Текст з HTML-розміткою ✍️
-• Фото з підписом 📸
-• Відео з описом 🎬
-• Документ з коментарем 📎
-• Стікер 😜""",
-        
-        'broadcast_progress': "⏳ <b>Починаю розсилку...</b>\n\nВсього користувачів: {total}",
-        'broadcast_result': """✅ <b>Розсилку завершено!</b>
-
-<b>📊 РЕЗУЛЬТАТИ:</b>
-├ Всього користувачів: <b>{total}</b>
-├ Успішно надіслано: <b>{sent}</b>
-├ Не вдалося надіслати: <b>{failed}</b>
-└ Пропущено (забл.): <b>{blocked}</b>""",
-        
-        'users_stats': """👥 <b>Статистика користувачів</b>
-
-<b>📊 ЗАГАЛЬНА:</b>
-├ Всього користувачів: <b>{total_users}</b>
-├ Активних сьогодні: <b>{today_active}</b>
-├ Заблокованих: <b>{blocked_count}</b>
-└ Нових за 24год: <b>{new_24h}</b>""",
-        
-        'find_user': "🔍 <b>Пошук користувача</b>\n\n<i>Введіть ID користувача або юзернейм (без @):</i>",
-        'user_info': """🔍 <b>ІНФОРМАЦІЯ ПРО КОРИСТУВАЧА</b>
-
-<b>👤 ОСНОВНІ ДАНІ:</b>
-├ ID: <code>{user_id}</code>
-├ Ім'я: <b>{first_name}</b>
-├ Юзернейм: {username}
-├ Зареєстровано: {registered}
-└ Остання активність: {last_active}
-
-<b>📊 СТАТИСТИКА:</b>
-├ 📨 Отримано: <b>{received}</b>
-├ 📤 Надіслано: <b>{sent}</b>
-├ 🔗 Кліків: <b>{clicks}</b>
-└ ⚙️ Отримання повідомлень: {receive_status}
-
-<b>🚫 СТАТУС:</b> {block_status}""",
-        
-        'logs': "📋 <b>Логи повідомлень</b>",
-        'no_logs': "📋 <b>Логи повідомлень порожні</b>\n\n<i>Поки що немає надісланих повідомлень.</i>",
-        'tickets': "🆘 <b>Відкриті тікети</b>",
-        'no_tickets': "🆘 <b>Відкритих тікетів немає</b>\n\n<i>Усі запити оброблено ✅</i>",
-        'admin_settings': """⚙️ <b>Налаштування адміністратора</b>
-
-<b>🔔 СПОВІЩЕННЯ:</b>
-├ Нові повідомлення: {notifications}
-└ В канал: {channel_status}
-
-<b>⚡ ПРОДУКТИВНІСТЬ:</b>
-├ Антиспам: {antispam} сек.
-└ База даних: ✅ Працює""",
-        
-        'direct_message': """✉️ <b>Надіслати повідомлення користувачу</b> <code>{user_id}</code>
-
-<i>Повідомлення прийде від бота 🤖
-Можна надіслати текст, фото або відео.</i>""",
-        
-        'message_sent_admin': """✅ <b>Повідомлення надіслано</b>
-
-👤 Користувач: <code>{user_id}</code>
-📝 Тип: {message_type}""",
-        
-        'block_user': "✅ Користувача <code>{user_id}</code> заблоковано.",
-        'unblock_user': "✅ Користувача <code>{user_id}</code> розблоковано.",
-        'user_blocked': "🚫 <b>Користувача заблоковано</b>",
-        'user_already_blocked': "✅ Користувач вже заблокований",
-        'user_not_blocked': "✅ Користувач не заблокований",
-        
-        # Новые переводы для активности
-        'main_menu': "🏠 Головне меню",
-        'just_now': "щойно",
-        'minutes_ago': "{minutes} хвилин тому",
-        'hours_ago': "{hours} годин тому",
-        'yesterday': "вчора",
-        'days_ago': "{days} днів тому",
-        'never': "ніколи",
-        'language_changed': "Мову змінено",
-        'send_anonymous_to': "Надішли анонімне повідомлення",
-        'send_anonymous_description': "Напиши повідомлення, фото, відео або голосове повідомлення",
-        'send_reply': "Надішли відповідь",
-        'reply_to_ticket': "Відповісти на тікет",
-        'user_blocked_bot': "Користувач заблокував бота",
-        'text': "Текст",
-        
-        # Кнопки
-        'btn_my_link': "📩 Моє посилання",
-        'btn_profile': "👤 Профіль",
-        'btn_settings': "⚙️ Налаштування",
-        'btn_qr': "📱 QR-код",
-        'btn_help': "ℹ️ Допомога",
-        'btn_support': "🆘 Підтримка",
-        'btn_admin': "👑 Адмін",
-        'btn_turn_on': "🔔 Увімк.",
-        'btn_turn_off': "🔕 Вимк.",
-        'btn_language': "🌐 Мова",
-        'btn_back': "⬅️ Назад",
-        'btn_cancel': "❌ Скасувати",
-        
-        'btn_admin_stats': "📊 Статистика",
-        'btn_admin_broadcast': "📢 Розсилка",
-        'btn_admin_users': "👥 Користувачі",
-        'btn_admin_find': "🔍 Пошук",
-        'btn_admin_logs': "📋 Логи",
-        'btn_admin_tickets': "🆘 Тікети",
-        'btn_admin_settings': "⚙️ Налаштування",
-        
-        'btn_reply': "💌 Відповісти",
-        'btn_ignore': "🚫 Ігнорувати",
-        'btn_block': "🚫 Заблокувати",
-        'btn_unblock': "✅ Розблокувати",
-        'btn_message': "✉️ Написати",
-        'btn_refresh': "🔄 Оновити",
-        'btn_toggle_text': "🔕 Сховати текст",
-        'btn_show_text': "🔔 Показати текст",
-        'btn_reply_ticket': "📝 Відповісти",
-        'btn_close_ticket': "✅ Закрити",
-        
-        # Язики
-        'lang_ru': "🇷🇺 Російська",
-        'lang_en': "🇺🇸 Англійська",
-        'lang_uk': "🇺🇦 Українська",
-        'lang_es': "🇪🇸 Іспанська",
-    },
-    
-    'es': {
-        'start': """🎉 <b>¡Bienvenido a Anony SMS!</b> 🎉
-
-¡Qué bueno verte 💬✨
-Aquí secretos y emociones se convierten en mensajes 👀💌
-
-<b>🔥 Envía y recibe mensajes absolutamente anónimos —</b>
-sin nombres, solo honestidad, intriga y emociones 🕶️✨
-
-<b>¿Quieres saber qué piensan tus amigos de ti?</b>
-¿Recibir una confesión secreta o un cumplido anónimo? 😏💖
-
-<b>🔗 Tu enlace personal:</b>
-<code>{link}</code>
-
-<b>🚀 Compártelo en chats o historias —</b>
-y espera mensajes anónimos 💌🤫
-
-<b>Cada mensaje es un pequeño misterio</b> 👀✨
-
-👇 <b>¡Haz clic en los botones de abajo y vamos!</b> 🚀""",
-        
-        'my_link': """🔗 <b>Tu enlace único para mensajes anónimos:</b>
-
-<code>{link}</code>
-
-<i>📤 Comparte con amigos en:
-• Chats 💬
-• Redes sociales 🌐
-• Historias 📲
-
-🎭 ¡Cada clic es un nuevo remitente anónimo!
-🔥 ¡Cuanto más compartas, más secretos descubrirás 😏</i>""",
-        
-        'profile': """👤 <b>Tu Perfil</b>
-
-<b>📊 Identificación:</b>
-├ ID: <code>{user_id}</code>
-├ Nombre: <b>{first_name}</b>
-└ Usuario: {username}
-
-<b>📈 Estadísticas:</b>
-├ 📨 Recibidos: <b>{received}</b>
-├ 📤 Enviados: <b>{sent}</b>
-└ 🔗 Clics: <b>{clicks}</b>
-
-<b>⚙️ Configuración:</b>
-├ Recibir mensajes: {receive_status}
-└ Última actividad: {last_active}
-
-<b>🔗 Tu enlace:</b>
-<code>{link}</code>""",
-        
-        'anonymous_message': """📨 <b>¡Has recibido un mensaje anónimo!</b>
-
-<i>💭 Alguien te envió un mensaje secreto...</i>
-
-{text}
-
-<i>🎭 El remitente permanecerá desconocido...</i>""",
-        
-        'message_sent': """✅ <b>¡Mensaje enviado anónimamente!</b>
-
-<i>🎯 Destinatario: <b>{receiver_name}</b>
-🔒 Tu identidad: <b>oculta</b>
-💭 ¡Mensaje entregado con éxito!</i>
-
-<b>¿Quieres enviar más?</b>
-Sigue escribiendo ✍️""",
-        
-        'help': """ℹ️ <b>Guía completa de Anony SMS</b>
-
-<b>🎯 ¿Qué es esto?</b>
-¡Anony SMS es un bot para mensajes <b>completamente anónimos</b>! 
-Nadie sabrá quién envió el mensaje 👻
-
-<b>📨 CÓMO RECIBIR mensajes:</b>
-1. Haz clic en «📩 Mi enlace»
-2. Copia tu enlace único
-3. Comparte con amigos
-4. ¡Espera mensajes anónimos! 💌
-
-<b>✉️ CÓMO ENVIAR mensajes:</b>
-1. Ve al enlace de otra persona
-2. Escribe un mensaje
-3. Envía — ¡el destinatario no sabrá tu identidad! 🎭
-
-<b>📎 QUÉ PUEDES ENVIAR:</b>
-✅ Mensajes de texto ✍️
-✅ Fotos 📸
-✅ Videos 🎬
-✅ Mensajes de voz 🎤
-✅ Stickers 😜
-✅ GIFs 🎞️
-✅ Documentos 📎
-
-<b>⚙️ CONFIGURACIÓN:</b>
-• Activar/desactivar mensajes
-• Ver estadísticas
-• Generar código QR
-
-<b>🔒 SEGURIDAD:</b>
-• <b>Anonimato completo</b>
-• Privacidad garantizada 🔐
-
-<b>🆘 SOPORTE:</b>
-¿Tienes problemas? Haz clic en «🆘 Soporte»""",
-        
-        'support': """🆘 <b>Servicio de Soporte</b>
-
-<i>Describe tu problema con el mayor detalle posible 💭
-Intentaremos responder lo antes posible ⏰</i>
-
-<b>📎 Qué puedes enviar:</b>
-• Descripción textual del problema ✍️
-• Captura de pantalla del error 📸
-• Video con el error 🎬
-• Cualquier archivo multimedia 📎""",
-        
-        'support_sent': """✅ <b>¡Solicitud de soporte enviada!</b>
-
-<i>Tu ticket: <b>#{ticket_id}</b>
-Te responderemos lo antes posible ⏰</i>""",
-        
-        'settings': "⚙️ <b>Configuración</b>\n\n<i>Personaliza el bot para ti:</i>",
-        'turn_on': "✅ <b>¡Recepción de mensajes anónimos activada!</b>\n\n<i>Ahora los amigos pueden enviarte mensajes secretos 🔮</i>",
-        'turn_off': "✅ <b>¡Recepción de mensajes anónimos desactivada!</b>\n\n<i>No recibirás nuevos mensajes anónimos 🔒\nPuedes activarlo en cualquier momento ⚡</i>",
-        'language': "🌐 <b>Seleccionar idioma</b>\n\n<i>La selección de idioma cambiará la interfaz del bot.</i>",
-        'blocked': "🚫 Estás bloqueado en este bot.",
-        'user_not_found': "❌ Usuario no encontrado.",
-        'messages_disabled': "❌ Este usuario ha desactivado la recepción de mensajes.",
-        'wait': "⏳ Espera 2 segundos antes del próximo mensaje.",
-        'canceled': "❌ Acción cancelada",
-        'spam_wait': "⏳ Espera 2 segundos antes del próximo mensaje.",
-        'qr_code': """📱 <b>Tu código QR personal</b>
-
-<i>¡Escanear y enviar mensajes anónimos al instante! ⚡</i>
-
-<b>🔗 Enlace:</b>
-<code>{link}</code>""",
-        
-        # Admin
-        'admin_panel': "👑 <b>Panel de Administrador</b>\n\n<i>Acceso a la gestión del bot 🔧</i>",
-        'admin_stats': """👑 <b>Estadísticas del Bot</b>
-
-<b>📊 MÉTRICAS PRINCIPALES:</b>
-├ Usuarios totales: <b>{total_users}</b>
-├ Activos hoy: <b>{today_active}</b>
-├ Mensajes totales: <b>{total_messages}</b>
-├ Mensajes últimas 24h: <b>{messages_24h}</b>
-├ Nuevos últimas 24h: <b>{new_users_24h}</b>
-├ Bloqueados: <b>{blocked_users}</b>
-└ Tickets abiertos: <b>{open_tickets}</b>""",
-        
-        'broadcast_start': """📢 <b>Crear Difusión</b>
-
-<i>Envía un mensaje que se enviará a todos los usuarios.</i>
-
-<b>📎 Puedes enviar:</b>
-• Texto con marcado HTML ✍️
-• Foto con pie de foto 📸
-• Video con descripción 🎬
-• Documento con comentario 📎
-• Sticker 😜""",
-        
-        'broadcast_progress': "⏳ <b>Comenzando difusión...</b>\n\nUsuarios totales: {total}",
-        'broadcast_result': """✅ <b>¡Difusión completada!</b>
-
-<b>📊 RESULTADOS:</b>
-├ Usuarios totales: <b>{total}</b>
-├ Enviados con éxito: <b>{sent}</b>
-├ No se pudo enviar: <b>{failed}</b>
-└ Omitidos (bloqueados): <b>{blocked}</b>""",
-        
-        'users_stats': """👥 <b>Estadísticas de Usuarios</b>
-
-<b>📊 GENERAL:</b>
-├ Usuarios totales: <b>{total_users}</b>
-├ Activos hoy: <b>{today_active}</b>
-├ Bloqueados: <b>{blocked_count}</b>
-└ Nuevos últimas 24h: <b>{new_24h}</b>""",
-        
-        'find_user': "🔍 <b>Buscar Usuario</b>\n\n<i>Ingresa ID de usuario o nombre de usuario (sin @):</i>",
-        'user_info': """🔍 <b>INFORMACIÓN DEL USUARIO</b>
-
-<b>👤 DATOS BÁSICOS:</b>
-├ ID: <code>{user_id}</code>
-├ Nombre: <b>{first_name}</b>
-├ Usuario: {username}
-├ Registrado: {registered}
-└ Última actividad: {last_active}
-
-<b>📊 ESTADÍSTICAS:</b>
-├ 📨 Recibidos: <b>{received}</b>
-├ 📤 Enviados: <b>{sent}</b>
-├ 🔗 Clics: <b>{clicks}</b>
-└ ⚙️ Recibir mensajes: {receive_status}
-
-<b>🚫 ESTADO:</b> {block_status}""",
-        
-        'logs': "📋 <b>Registros de Mensajes</b>",
-        'no_logs': "📋 <b>Los registros de mensajes están vacíos</b>\n\n<i>Aún no hay mensajes enviados.</i>",
-        'tickets': "🆘 <b>Tickets Abiertos</b>",
-        'no_tickets': "🆘 <b>No hay tickets abiertos</b>\n\n<i>Todas las solicitudes procesadas ✅</i>",
-        'admin_settings': """⚙️ <b>Configuración del Administrador</b>
-
-<b>🔔 NOTIFICACIONES:</b>
-├ Nuevos mensajes: {notifications}
-└ Al canal: {channel_status}
-
-<b>⚡ RENDIMIENTO:</b>
-├ Antispam: {antispam} seg.
-└ Base de datos: ✅ Funcionando""",
-        
-        'direct_message': """✉️ <b>Enviar mensaje al usuario</b> <code>{user_id}</code>
-
-<i>El mensaje vendrá del bot 🤖
-Puedes enviar texto, foto o video.</i>""",
-        
-        'message_sent_admin': """✅ <b>Mensaje enviado</b>
-
-👤 Usuario: <code>{user_id}</code>
-📝 Tipo: {message_type}""",
-        
-        'block_user': "✅ Usuario <code>{user_id}</code> bloqueado.",
-        'unblock_user': "✅ Usuario <code>{user_id}</code> desbloqueado.",
-        'user_blocked': "🚫 <b>Usuario bloqueado</b>",
-        'user_already_blocked': "✅ Usuario ya bloqueado",
-        'user_not_blocked': "✅ Usuario no bloqueado",
-        
-        # Новые переводы для активности
-        'main_menu': "🏠 Menú Principal",
-        'just_now': "justo ahora",
-        'minutes_ago': "hace {minutes} minutos",
-        'hours_ago': "hace {hours} horas",
-        'yesterday': "ayer",
-        'days_ago': "hace {days} días",
-        'never': "nunca",
-        'language_changed': "Idioma cambiado",
-        'send_anonymous_to': "Envía un mensaje anónimo a",
-        'send_anonymous_description': "Escribe un mensaje, foto, video o mensaje de voz",
-        'send_reply': "Enviar respuesta",
-        'reply_to_ticket': "Responder al ticket",
-        'user_blocked_bot': "El usuario bloqueó el bot",
-        'text': "Texto",
-        
-        # Botones
-        'btn_my_link': "📩 Mi enlace",
-        'btn_profile': "👤 Perfil",
-        'btn_settings': "⚙️ Configuración",
-        'btn_qr': "📱 Código QR",
-        'btn_help': "ℹ️ Ayuda",
-        'btn_support': "🆘 Soporte",
-        'btn_admin': "👑 Admin",
-        'btn_turn_on': "🔔 Activar",
-        'btn_turn_off': "🔕 Desactivar",
-        'btn_language': "🌐 Idioma",
-        'btn_back': "⬅️ Atrás",
-        'btn_cancel': "❌ Cancelar",
-        
-        'btn_admin_stats': "📊 Estadísticas",
-        'btn_admin_broadcast': "📢 Difusión",
-        'btn_admin_users': "👥 Usuarios",
-        'btn_admin_find': "🔍 Buscar",
-        'btn_admin_logs': "📋 Registros",
-        'btn_admin_tickets': "🆘 Tickets",
-        'btn_admin_settings': "⚙️ Configuración",
-        
-        'btn_reply': "💌 Responder",
-        'btn_ignore': "🚫 Ignorar",
-        'btn_block': "🚫 Bloquear",
-        'btn_unblock': "✅ Desbloquear",
-        'btn_message': "✉️ Mensaje",
-        'btn_refresh': "🔄 Actualizar",
-        'btn_toggle_text': "🔕 Ocultar texto",
-        'btn_show_text': "🔔 Mostrar texto",
-        'btn_reply_ticket': "📝 Responder",
-        'btn_close_ticket': "✅ Cerrar",
-        
-        # Idiomas
-        'lang_ru': "🇷🇺 Ruso",
-        'lang_en': "🇺🇸 Inglés",
-        'lang_uk': "🇺🇦 Ucraniano",
-        'lang_es': "🇪🇸 Español",
     }
 }
 
@@ -1315,6 +806,30 @@ class Database:
             c.execute('''
                 INSERT OR IGNORE INTO bot_settings (key, value) 
                 VALUES ('notifications_enabled', '1')
+            ''')
+            
+            # Детальная статистика для пользователя
+            c.execute('''
+                CREATE TABLE IF NOT EXISTS user_detailed_stats (
+                    user_id INTEGER PRIMARY KEY,
+                    messages_by_hour TEXT DEFAULT '{}',
+                    messages_by_day TEXT DEFAULT '{}',
+                    message_types TEXT DEFAULT '{}',
+                    avg_response_time REAL DEFAULT 0,
+                    most_active_day TEXT,
+                    FOREIGN KEY (user_id) REFERENCES users(user_id)
+                )
+            ''')
+            
+            # Статистика ссылок
+            c.execute('''
+                CREATE TABLE IF NOT EXISTS link_stats (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER,
+                    clicker_id INTEGER,
+                    timestamp INTEGER,
+                    FOREIGN KEY (user_id) REFERENCES users(user_id)
+                )
             ''')
             
             logger.info("✅ База данных инициализирована")
@@ -1571,6 +1086,125 @@ class Database:
                 'open_tickets': open_tickets
             }
 
+    # ====== МЕТОДЫ ДЛЯ СТАТИСТИКИ ======
+    
+    def update_detailed_stats(self, user_id, message_type, timestamp):
+        """Обновление детальной статистики пользователя"""
+        with self.get_connection() as conn:
+            c = conn.cursor()
+            
+            # Получаем текущую статистику
+            c.execute('SELECT * FROM user_detailed_stats WHERE user_id = ?', (user_id,))
+            row = c.fetchone()
+            
+            now = datetime.fromtimestamp(timestamp)
+            hour = now.hour
+            day_of_week = now.strftime('%A')
+            
+            if not row:
+                # Создаем новую запись
+                messages_by_hour = json.dumps({str(hour): 1})
+                messages_by_day = json.dumps({day_of_week: 1})
+                message_types = json.dumps({message_type: 1})
+                
+                c.execute('''
+                    INSERT INTO user_detailed_stats 
+                    (user_id, messages_by_hour, messages_by_day, message_types, most_active_day)
+                    VALUES (?, ?, ?, ?, ?)
+                ''', (user_id, messages_by_hour, messages_by_day, message_types, day_of_week))
+            else:
+                # Обновляем существующую статистику
+                messages_by_hour = json.loads(row['messages_by_hour'])
+                messages_by_day = json.loads(row['messages_by_day'])
+                message_types = json.loads(row['message_types'])
+                
+                # Обновляем часы
+                hour_key = str(hour)
+                messages_by_hour[hour_key] = messages_by_hour.get(hour_key, 0) + 1
+                
+                # Обновляем дни
+                messages_by_day[day_of_week] = messages_by_day.get(day_of_week, 0) + 1
+                
+                # Обновляем типы сообщений
+                message_types[message_type] = message_types.get(message_type, 0) + 1
+                
+                # Определяем самый активный день
+                most_active_day = max(messages_by_day.items(), key=lambda x: x[1])[0] if messages_by_day else day_of_week
+                
+                c.execute('''
+                    UPDATE user_detailed_stats 
+                    SET messages_by_hour = ?, messages_by_day = ?, message_types = ?, most_active_day = ?
+                    WHERE user_id = ?
+                ''', (json.dumps(messages_by_hour), json.dumps(messages_by_day), 
+                      json.dumps(message_types), most_active_day, user_id))
+    
+    def track_link_click(self, user_id, clicker_id):
+        """Отслеживание кликов по ссылке"""
+        with self.get_connection() as conn:
+            c = conn.cursor()
+            c.execute('''
+                INSERT INTO link_stats (user_id, clicker_id, timestamp)
+                VALUES (?, ?, ?)
+            ''', (user_id, clicker_id, int(time.time())))
+    
+    def get_user_detailed_stats(self, user_id):
+        """Получение детальной статистики пользователя"""
+        with self.get_connection() as conn:
+            c = conn.cursor()
+            
+            # Основная статистика
+            c.execute('SELECT * FROM user_detailed_stats WHERE user_id = ?', (user_id,))
+            stats_row = c.fetchone()
+            
+            if not stats_row:
+                return None
+            
+            stats = dict(stats_row)
+            
+            # Парсим JSON данные
+            stats['messages_by_hour'] = json.loads(stats.get('messages_by_hour', '{}'))
+            stats['messages_by_day'] = json.loads(stats.get('messages_by_day', '{}'))
+            stats['message_types'] = json.loads(stats.get('message_types', '{}'))
+            
+            # Статистика кликов по ссылке
+            c.execute('''
+                SELECT COUNT(*) as total_clicks,
+                       COUNT(DISTINCT clicker_id) as unique_clickers
+                FROM link_stats 
+                WHERE user_id = ?
+            ''', (user_id,))
+            link_stats_row = c.fetchone()
+            
+            if link_stats_row:
+                stats['total_clicks'] = link_stats_row['total_clicks']
+                stats['unique_clickers'] = link_stats_row['unique_clickers']
+            else:
+                stats['total_clicks'] = 0
+                stats['unique_clickers'] = 0
+            
+            # Получаем среднее время ответа из сообщений
+            c.execute('''
+                SELECT timestamp, sender_id, receiver_id
+                FROM messages 
+                WHERE sender_id = ? OR receiver_id = ?
+                ORDER BY timestamp
+            ''', (user_id, user_id))
+            all_messages = c.fetchall()
+            
+            response_times = []
+            for i in range(len(all_messages)-1):
+                if all_messages[i]['receiver_id'] == user_id and all_messages[i+1]['sender_id'] == user_id:
+                    time_diff = all_messages[i+1]['timestamp'] - all_messages[i]['timestamp']
+                    if 0 < time_diff < 3600:  # Исключаем отрицательные и большие перерывы
+                        response_times.append(time_diff)
+            
+            if response_times:
+                stats['avg_response_time'] = sum(response_times) / len(response_times)
+            else:
+                stats['avg_response_time'] = 0
+            
+            return stats
+
 db = Database()
 
 # ====== УТИЛИТЫ ======
@@ -1653,6 +1287,15 @@ def get_admin_log_keyboard(show_text, lang='ru'):
     )
     return keyboard
 
+def get_profile_stats_keyboard(lang='ru'):
+    """Клавиатура для профиля со статистикой"""
+    keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    keyboard.add(
+        types.KeyboardButton(t(lang, 'btn_view_photo_stats')),
+        types.KeyboardButton(t(lang, 'btn_back'))
+    )
+    return keyboard
+
 # ====== КЛАВИАТУРЫ ======
 def main_keyboard(is_admin=False, lang='ru'):
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
@@ -1711,8 +1354,373 @@ def language_keyboard():
     )
     return keyboard
 
+# ====== ФУНКЦИИ ДЛЯ СТАТИСТИКИ ======
+def get_advice_from_stats(stats):
+    """Генерация советов на основе статистики"""
+    messages_by_hour = stats.get('messages_by_hour', {})
+    message_types = stats.get('message_types', {})
+    
+    if not messages_by_hour:
+        return "Начните активнее использовать бот для получения статистики"
+    
+    # Анализ времени
+    evening_msgs = sum(messages_by_hour.get(str(h), 0) for h in range(18, 24))
+    morning_msgs = sum(messages_by_hour.get(str(h), 0) for h in range(6, 12))
+    
+    if evening_msgs > morning_msgs * 2:
+        time_advice = "Вы - сова! Вечером ваши сообщения получают больше внимания."
+    elif morning_msgs > evening_msgs * 2:
+        time_advice = "Вы - жаворонок! Утренние сообщения работают лучше."
+    else:
+        time_advice = "Вы активны в разное время - это хорошо для охвата!"
+    
+    # Анализ типов контента
+    text_count = message_types.get('text', 0)
+    photo_count = message_types.get('photo', 0)
+    video_count = message_types.get('video', 0)
+    media_count = photo_count + video_count
+    
+    if text_count > media_count * 2:
+        content_advice = "Попробуйте отправлять больше фото и видео - это привлекает внимание!"
+    elif media_count > text_count * 2:
+        content_advice = "Отличный баланс медиа! Добавьте текстовые сообщения для разнообразия."
+    else:
+        content_advice = "Идеальный баланс текста и медиа! Продолжайте в том же духе."
+    
+    # Анализ скорости ответа
+    avg_response = stats.get('avg_response_time', 0)
+    if avg_response > 0:
+        if avg_response < 300:  # Меньше 5 минут
+            speed_advice = "Вы отвечаете очень быстро! Это отлично для вовлеченности."
+        elif avg_response < 1800:  # Меньше 30 минут
+            speed_advice = "Нормальная скорость ответа. Можно попробовать отвечать быстрее."
+        else:
+            speed_advice = "Старайтесь отвечать быстрее - это увеличивает активность."
+    else:
+        speed_advice = "Отвечайте на сообщения вовремя для лучшего взаимодействия."
+    
+    return f"{time_advice}\n\n{content_advice}\n\n{speed_advice}"
+
+def generate_stats_charts(stats, user_data, lang='ru'):
+    """Генерация графиков статистики"""
+    try:
+        # Создаем фигуру с несколькими графиками
+        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(12, 10))
+        fig.patch.set_facecolor('#1a1a1a')
+        
+        # 1. Круговая диаграмма типов сообщений
+        message_types = stats.get('message_types', {})
+        if message_types:
+            # Объединяем похожие типы
+            type_labels = {
+                'text': '📝 Текст',
+                'photo': '📸 Фото',
+                'video': '🎬 Видео',
+                'voice': '🎤 Голос',
+                'sticker': '😜 Стикеры',
+                'document': '📎 Документы',
+                'audio': '🎵 Аудио'
+            }
+            
+            filtered_types = {}
+            for key, value in message_types.items():
+                display_key = type_labels.get(key, key)
+                filtered_types[display_key] = value
+            
+            labels = list(filtered_types.keys())
+            sizes = list(filtered_types.values())
+            colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD', '#87CEEB']
+            
+            if sum(sizes) > 0:
+                wedges, texts, autotexts = ax1.pie(sizes, labels=labels, colors=colors[:len(labels)],
+                                                  autopct='%1.1f%%', startangle=90)
+                ax1.set_title('📊 Типы сообщений', color='white', fontsize=14, fontweight='bold')
+                
+                for text in texts:
+                    text.set_color('white')
+                    text.set_fontsize(10)
+                for autotext in autotexts:
+                    autotext.set_color('white')
+                    autotext.set_fontweight('bold')
+            else:
+                ax1.text(0.5, 0.5, 'Нет данных', ha='center', va='center', 
+                        color='white', fontsize=12)
+                ax1.set_title('📊 Типы сообщений', color='white', fontsize=14, fontweight='bold')
+        else:
+            ax1.text(0.5, 0.5, 'Нет данных', ha='center', va='center', 
+                    color='white', fontsize=12)
+            ax1.set_title('📊 Типы сообщений', color='white', fontsize=14, fontweight='bold')
+        
+        # 2. График активности по часам
+        messages_by_hour = stats.get('messages_by_hour', {})
+        if messages_by_hour:
+            hours = sorted([int(h) for h in messages_by_hour.keys() if h.isdigit()])
+            values = [messages_by_hour.get(str(h), 0) for h in hours]
+            
+            if hours and values:
+                bars = ax2.bar(range(len(hours)), values, color='#4ECDC4', edgecolor='white', alpha=0.8)
+                ax2.set_xlabel('Час дня', color='white')
+                ax2.set_ylabel('Сообщения', color='white')
+                ax2.set_title('⏰ Активность по часам', color='white', fontsize=14, fontweight='bold')
+                ax2.set_xticks(range(len(hours)))
+                ax2.set_xticklabels([f'{h:02d}:00' for h in hours], rotation=45, color='white')
+                ax2.tick_params(colors='white')
+                ax2.set_facecolor('#2d2d2d')
+                
+                # Подсветка максимального значения
+                if values:
+                    max_idx = values.index(max(values))
+                    bars[max_idx].set_color('#FF6B6B')
+            else:
+                ax2.text(0.5, 0.5, 'Нет данных', ha='center', va='center', 
+                        color='white', fontsize=12)
+                ax2.set_title('⏰ Активность по часам', color='white', fontsize=14, fontweight='bold')
+        else:
+            ax2.text(0.5, 0.5, 'Нет данных', ha='center', va='center', 
+                    color='white', fontsize=12)
+            ax2.set_title('⏰ Активность по часам', color='white', fontsize=14, fontweight='bold')
+        
+        # 3. График активности по дням
+        days_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+        days_ru = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']
+        
+        messages_by_day = stats.get('messages_by_day', {})
+        if messages_by_day:
+            days = []
+            values = []
+            for day in days_order:
+                if day in messages_by_day:
+                    days.append(days_ru[days_order.index(day)])
+                    values.append(messages_by_day[day])
+            
+            if days and values:
+                bars = ax3.bar(days, values, color='#45B7D1', edgecolor='white', alpha=0.8)
+                ax3.set_xlabel('День недели', color='white')
+                ax3.set_ylabel('Сообщения', color='white')
+                ax3.set_title('📅 Активность по дням', color='white', fontsize=14, fontweight='bold')
+                ax3.tick_params(colors='white')
+                ax3.set_facecolor('#2d2d2d')
+                
+                # Подсветка максимального значения
+                if values:
+                    max_idx = values.index(max(values))
+                    bars[max_idx].set_color('#FF6B6B')
+            else:
+                ax3.text(0.5, 0.5, 'Нет данных', ha='center', va='center', 
+                        color='white', fontsize=12)
+                ax3.set_title('📅 Активность по дням', color='white', fontsize=14, fontweight='bold')
+        else:
+            ax3.text(0.5, 0.5, 'Нет данных', ha='center', va='center', 
+                    color='white', fontsize=12)
+            ax3.set_title('📅 Активность по дням', color='white', fontsize=14, fontweight='bold')
+        
+        # 4. Текстовая информация
+        ax4.axis('off')
+        
+        # Анализ данных
+        total_messages = sum(message_types.values()) if message_types else 0
+        avg_response = stats.get('avg_response_time', 0)
+        response_min = f"{int(avg_response//60)} мин {int(avg_response%60)} сек" if avg_response > 0 else "N/A"
+        
+        if messages_by_hour:
+            peak_hour = max(messages_by_hour.items(), key=lambda x: x[1])[0] if messages_by_hour else "N/A"
+        else:
+            peak_hour = "N/A"
+        
+        if message_types:
+            fav_type = max(message_types.items(), key=lambda x: x[1])[0] if message_types else "N/A"
+            type_names = {
+                'text': '📝 Текст',
+                'photo': '📸 Фото',
+                'video': '🎬 Видео',
+                'voice': '🎤 Голос'
+            }
+            fav_type_display = type_names.get(fav_type, fav_type)
+        else:
+            fav_type_display = "N/A"
+        
+        most_active_day = stats.get('most_active_day', 'N/A')
+        day_names = {
+            'Monday': 'Понедельник',
+            'Tuesday': 'Вторник',
+            'Wednesday': 'Среда',
+            'Thursday': 'Четверг',
+            'Friday': 'Пятница',
+            'Saturday': 'Суббота',
+            'Sunday': 'Воскресенье'
+        }
+        active_day_display = day_names.get(most_active_day, most_active_day)
+        
+        info_text = f"""
+        👤 <b>{user_data['first_name']}</b>
+        
+        📊 <b>Основные показатели:</b>
+        ├ Всего сообщений: {total_messages}
+        ├ Получено: {user_data.get('messages_received', 0)}
+        ├ Отправлено: {user_data.get('messages_sent', 0)}
+        ├ Переходов: {stats.get('total_clicks', 0)}
+        └ Сред. ответ: {response_min}
+        
+        ⏰ <b>Анализ активности:</b>
+        ├ Пик: {peak_hour}:00
+        ├ День: {active_day_display}
+        └ Тип: {fav_type_display}
+        
+        💡 <b>Рекомендации:</b>
+        {get_advice_from_stats(stats)[:150]}...
+        """
+        
+        ax4.text(0.1, 0.95, info_text, transform=ax4.transAxes,
+                fontsize=10, color='white', verticalalignment='top',
+                bbox=dict(boxstyle='round', facecolor='#2d2d2d', alpha=0.8))
+        
+        # Настройка общего вида
+        plt.suptitle(f'📈 Статистика {user_data["first_name"]}', color='white', fontsize=18, fontweight='bold', y=0.98)
+        plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+        
+        # Сохраняем в буфер
+        buf = BytesIO()
+        plt.savefig(buf, format='png', dpi=120, facecolor=fig.get_facecolor(), 
+                   bbox_inches='tight', pad_inches=0.5)
+        buf.seek(0)
+        plt.close(fig)
+        
+        return buf
+        
+    except Exception as e:
+        logger.error(f"Chart generation error: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return None
+
+def send_stats_image(user_id, stats, user_data, lang='ru'):
+    """Генерация и отправка изображения со статистикой"""
+    try:
+        # Создаем графики
+        image_buffer = generate_stats_charts(stats, user_data, lang)
+        
+        if not image_buffer:
+            raise Exception("Не удалось создать графики")
+        
+        # Формируем текст описания
+        total_messages = sum(stats.get('message_types', {}).values()) if stats.get('message_types') else 0
+        
+        if stats.get('messages_by_hour'):
+            peak_hour = max(stats['messages_by_hour'].items(), key=lambda x: x[1])[0] if stats['messages_by_hour'] else "N/A"
+        else:
+            peak_hour = "N/A"
+        
+        if stats.get('message_types'):
+            fav_type = max(stats['message_types'].items(), key=lambda x: x[1])[0] if stats['message_types'] else "N/A"
+            type_names = {
+                'text': 'текстовые',
+                'photo': 'фото',
+                'video': 'видео',
+                'voice': 'голосовые',
+                'sticker': 'стикеры'
+            }
+            fav_type_display = type_names.get(fav_type, fav_type)
+        else:
+            fav_type_display = "N/A"
+        
+        most_active_day = stats.get('most_active_day', 'N/A')
+        day_names = {
+            'Monday': 'понедельник',
+            'Tuesday': 'вторник',
+            'Wednesday': 'среда',
+            'Thursday': 'четверг',
+            'Friday': 'пятница',
+            'Saturday': 'суббота',
+            'Sunday': 'воскресенье'
+        }
+        active_day_display = day_names.get(most_active_day, most_active_day)
+        
+        avg_response = stats.get('avg_response_time', 0)
+        response_min = f"{int(avg_response//60)} мин {int(avg_response%60)} сек" if avg_response > 0 else "N/A"
+        
+        caption = t(lang, 'photo_stats_caption',
+                   name=user_data['first_name'],
+                   total=total_messages,
+                   received=user_data.get('messages_received', 0),
+                   sent=user_data.get('messages_sent', 0),
+                   clicks=stats.get('total_clicks', 0),
+                   peak_hour=peak_hour,
+                   active_day=active_day_display,
+                   fav_type=fav_type_display,
+                   advice=get_advice_from_stats(stats))
+        
+        # Отправляем изображение
+        bot.send_photo(
+            user_id,
+            photo=image_buffer,
+            caption=caption,
+            parse_mode="HTML",
+            reply_markup=get_profile_stats_keyboard(lang)
+        )
+        
+        return True
+        
+    except Exception as e:
+        logger.error(f"Stats image error: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return False
+
+def handle_stats_command(user_id, lang='ru'):
+    """Обработчик команды статистики"""
+    user = db.get_user(user_id)
+    if not user:
+        bot.send_message(user_id, t(lang, 'user_not_found'))
+        return
+    
+    # Проверяем, достаточно ли данных
+    stats = db.get_user_detailed_stats(user_id)
+    if not stats or sum(stats.get('message_types', {}).values()) < 3:
+        bot.send_message(
+            user_id,
+            t(lang, 'stats_not_enough'),
+            parse_mode="HTML",
+            reply_markup=get_profile_stats_keyboard(lang)
+        )
+        return
+    
+    # Отправляем сообщение о начале генерации
+    msg = bot.send_message(
+        user_id,
+        t(lang, 'generating_stats'),
+        reply_markup=get_profile_stats_keyboard(lang)
+    )
+    
+    # Генерируем и отправляем статистику
+    success = send_stats_image(user_id, stats, user, lang)
+    
+    if success:
+        try:
+            bot.edit_message_text(
+                t(lang, 'stats_ready'),
+                user_id,
+                msg.message_id,
+                parse_mode="HTML"
+            )
+        except:
+            pass
+    else:
+        try:
+            bot.edit_message_text(
+                t(lang, 'stats_error'),
+                user_id,
+                msg.message_id,
+                parse_mode="HTML"
+            )
+        except:
+            bot.send_message(
+                user_id,
+                t(lang, 'stats_error'),
+                parse_mode="HTML"
+            )
+
 # ====== ОБРАБОТЧИКИ КОМАНД ======
-@bot.message_handler(commands=['start', 'lang'])
+@bot.message_handler(commands=['start', 'lang', 'mystats'])
 def start_command(message):
     user_id = message.from_user.id
     username = message.from_user.username or ""
@@ -1734,6 +1742,13 @@ def start_command(message):
         user = db.get_user(user_id)
         lang = user['language'] if user else 'ru'
         bot.send_message(user_id, t(lang, 'language'), reply_markup=language_keyboard())
+        return
+    
+    # Обработка команды /mystats
+    if message.text.startswith('/mystats'):
+        user = db.get_user(user_id)
+        lang = user['language'] if user else 'ru'
+        handle_stats_command(user_id, lang)
         return
     
     # Обработка реферальной ссылки
@@ -1765,6 +1780,7 @@ def handle_link_click(clicker_id, target_id):
     
     user_reply_targets[clicker_id] = target_id
     db.increment_stat(target_id, 'link_clicks')
+    db.track_link_click(target_id, clicker_id)  # Для статистики
     
     user = db.get_user(clicker_id)
     lang = user['language'] if user else 'ru'
@@ -1960,7 +1976,7 @@ def handle_message(message):
                         reply_markup=main_keyboard(user_id == ADMIN_ID, lang))
         return
     
-    # Обработка кнопки "Админ" - добавлено исправление
+    # Обработка кнопки "Админ" - исправлено
     if text == t(lang, 'btn_admin') and user_id == ADMIN_ID:
         bot.send_message(user_id, t(lang, 'admin_panel'), 
                         reply_markup=admin_keyboard(lang))
@@ -2018,6 +2034,9 @@ def handle_text_button(user_id, text, lang):
     elif text == t(lang, 'btn_profile'):
         show_profile(user_id, lang)
     
+    elif text == t(lang, 'btn_stats'):
+        handle_stats_command(user_id, lang)
+    
     elif text == t(lang, 'btn_settings'):
         bot.send_message(user_id, t(lang, 'settings'),
                         reply_markup=settings_keyboard(lang))
@@ -2027,6 +2046,9 @@ def handle_text_button(user_id, text, lang):
     
     elif text == t(lang, 'btn_help'):
         show_help(user_id, lang)
+    
+    elif text == t(lang, 'btn_view_photo_stats'):
+        handle_stats_command(user_id, lang)
     
     elif text == t(lang, 'btn_turn_on'):
         db.set_receive_messages(user_id, True)
@@ -2057,8 +2079,49 @@ def show_profile(user_id, lang):
         return
     
     stats = db.get_user_messages_stats(user_id)
+    detailed_stats = db.get_user_detailed_stats(user_id)
+    
     receive_status = "✅ Включён" if user['receive_messages'] else "❌ Выключен"
     username = f"@{user['username']}" if user['username'] else "❌ отсутствует"
+    
+    # Анализ времени ответа
+    avg_response = detailed_stats.get('avg_response_time', 0) if detailed_stats else 0
+    response_time = f"{int(avg_response//60)} мин {int(avg_response%60)} сек" if avg_response > 0 else "N/A"
+    
+    # Анализ пиковой активности
+    if detailed_stats and detailed_stats.get('messages_by_hour'):
+        peak_hour = max(detailed_stats['messages_by_hour'].items(), key=lambda x: x[1])[0] if detailed_stats['messages_by_hour'] else "N/A"
+    else:
+        peak_hour = "N/A"
+    
+    # Анализ дней
+    if detailed_stats:
+        most_active_day = detailed_stats.get('most_active_day', 'N/A')
+        day_names = {
+            'Monday': 'понедельник',
+            'Tuesday': 'вторник',
+            'Wednesday': 'среда',
+            'Thursday': 'четверг',
+            'Friday': 'пятница',
+            'Saturday': 'суббота',
+            'Sunday': 'воскресенье'
+        }
+        active_day = day_names.get(most_active_day, most_active_day)
+    else:
+        active_day = "N/A"
+    
+    # Любимый тип сообщений
+    if detailed_stats and detailed_stats.get('message_types'):
+        fav_type = max(detailed_stats['message_types'].items(), key=lambda x: x[1])[0] if detailed_stats['message_types'] else "N/A"
+        type_names = {
+            'text': '📝 Текст',
+            'photo': '📸 Фото',
+            'video': '🎬 Видео',
+            'voice': '🎤 Голос'
+        }
+        fav_type_display = type_names.get(fav_type, fav_type)
+    else:
+        fav_type_display = "N/A"
     
     profile_text = t(lang, 'profile',
                     user_id=user['user_id'],
@@ -2067,11 +2130,16 @@ def show_profile(user_id, lang):
                     received=user['messages_received'],
                     sent=user['messages_sent'],
                     clicks=user['link_clicks'],
+                    response_time=response_time,
                     receive_status=receive_status,
                     last_active=format_time(user['last_active'], lang),
+                    peak_hour=peak_hour,
+                    active_day=active_day,
+                    fav_type=fav_type_display,
                     link=generate_link(user_id))
     
-    bot.send_message(user_id, profile_text, reply_markup=main_keyboard(user_id == ADMIN_ID, lang))
+    bot.send_message(user_id, profile_text, 
+                    reply_markup=get_profile_stats_keyboard(lang))
 
 def send_anonymous_message(sender_id, receiver_id, message, lang):
     try:
@@ -2107,9 +2175,12 @@ def send_anonymous_message(sender_id, receiver_id, message, lang):
             file_id = message.sticker.file_id
             file_unique_id = message.sticker.file_unique_id
         
-        db.save_message(sender_id, receiver_id, message_type, 
+        message_id = db.save_message(sender_id, receiver_id, message_type, 
                        message.text or message.caption or "", 
                        file_id, file_unique_id)
+        
+        # Обновляем детальную статистику
+        db.update_detailed_stats(sender_id, message_type, int(time.time()))
         
         message_text = message.text or message.caption or ""
         caption = t(receiver['language'] if receiver else 'ru', 'anonymous_message', 
@@ -2462,8 +2533,17 @@ def show_admin_stats(admin_id, lang):
                                open_tickets=stats['open_tickets']),
                     reply_markup=admin_keyboard(lang))
 
-def start_broadcast(admin_id, text, lang):
+def start_broadcast(admin_id, message, lang):
     try:
+        if isinstance(message, str):
+            text = message
+        else:
+            text = message.text or message.caption or ""
+            
+        if not text:
+            bot.send_message(admin_id, "❌ Введите текст рассылки")
+            return
+        
         users = db.get_all_users_list()
         total = len(users)
         sent = 0
@@ -2653,7 +2733,7 @@ def health_check():
             'status': 'ok', 
             'time': datetime.now().isoformat(),
             'bot': 'Anony SMS',
-            'version': '4.0',
+            'version': '4.1',
             'users': db.get_all_users_count()
         })
     except Exception as e:
@@ -2732,7 +2812,6 @@ def monitor_bot():
             logger.error(f"Monitor error: {e}")
             time.sleep(300)
 
-# ====== ЗАПУСК ======
 def keep_alive():
     while True:
         try:
@@ -2742,8 +2821,11 @@ def keep_alive():
             logger.error(f"❌ Ping error: {e}")
         time.sleep(300)
 
+# ====== ЗАПУСК ======
 if __name__ == '__main__':
-    logger.info("=== Anony SMS Bot v4.0 запущен ===")
+    logger.info("=== Anony SMS Bot v4.1 запущен ===")
+    logger.info(f"Admin ID: {ADMIN_ID}")
+    logger.info(f"Bot username: @{bot.get_me().username}")
     
     if WEBHOOK_HOST:
         try:
@@ -2781,7 +2863,7 @@ if __name__ == '__main__':
                 threaded=True
             )
         else:
-            logger.info("Локальный запуск")
+            logger.info("Локальный запуск (поллинг)")
             bot.remove_webhook()
             bot.polling(
                 none_stop=True,
@@ -2792,4 +2874,6 @@ if __name__ == '__main__':
             
     except Exception as e:
         logger.error(f"Критическая ошибка: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         sys.exit(1)
