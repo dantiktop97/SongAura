@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Anony SMS Bot - Ultimate Version v4.1
-With user statistics and profile analytics
+With user statistics and profile analytics (without matplotlib)
 """
 
 import os
@@ -18,13 +18,12 @@ from contextlib import contextmanager
 import sqlite3
 import requests
 from collections import Counter
-import matplotlib.pyplot as plt
-import matplotlib
-matplotlib.use('Agg')
+import random
 
 from flask import Flask, request, jsonify
 from telebot import TeleBot, types
 from telebot.apihelper import ApiException
+from PIL import Image, ImageDraw, ImageFont
 
 # ====== КОНФИГУРАЦИЯ ======
 TOKEN = os.getenv("PLAY", "")
@@ -57,7 +56,7 @@ TRANSLATIONS = {
 Здесь тайны и эмоции превращаются в сообщения 👀💌
 
 <b>🔥 Отправляй и получай абсолютно анонимные сообщения —</b>
-никаких имён, только чесность, интрига и эмоции 🕶️✨
+никаких имён, только честность, интрига и эмоции 🕶️✨
 
 <b>Хочешь узнать, что о тебе думают друзья?</b>
 Получить тайное признание или анонимный комплимент? 😏💖
@@ -302,7 +301,7 @@ Anony SMS — это бот для <b>полностью анонимных</b> 
         'user_blocked_bot': "❌ Пользователь заблокировал бота",
         'text': "Текст",
         'generating_stats': "📊 Генерирую вашу статистику...",
-        'stats_not_enough': "📊 <b>Статистика пока недоступна</b>\n\n<i>Нужно отправить и получить хотя бы 5 сообщений для генерации статистики.</i>",
+        'stats_not_enough': "📊 <b>Статистика пока недоступна</b>\n\n<i>Нужно отправить и получить хотя бы 3 сообщения для генерации статистики.</i>",
         'stats_ready': "✅ <b>Статистика готова!</b>",
         'stats_error': "❌ <b>Не удалось сгенерировать статистику</b>",
         'view_photo_stats': "📸 Фото статистики",
@@ -618,7 +617,7 @@ You can send text, photo or video.</i>""",
         'user_blocked_bot': "❌ User blocked the bot",
         'text': "Text",
         'generating_stats': "📊 Generating your statistics...",
-        'stats_not_enough': "📊 <b>Statistics not available yet</b>\n\n<i>You need to send and receive at least 5 messages to generate statistics.</i>",
+        'stats_not_enough': "📊 <b>Statistics not available yet</b>\n\n<i>You need to send and receive at least 3 messages to generate statistics.</i>",
         'stats_ready': "✅ <b>Statistics ready!</b>",
         'stats_error': "❌ <b>Failed to generate statistics</b>",
         'view_photo_stats': "📸 Photo statistics",
@@ -1129,7 +1128,10 @@ class Database:
                 message_types[message_type] = message_types.get(message_type, 0) + 1
                 
                 # Определяем самый активный день
-                most_active_day = max(messages_by_day.items(), key=lambda x: x[1])[0] if messages_by_day else day_of_week
+                if messages_by_day:
+                    most_active_day = max(messages_by_day.items(), key=lambda x: x[1])[0]
+                else:
+                    most_active_day = day_of_week
                 
                 c.execute('''
                     UPDATE user_detailed_stats 
@@ -1401,194 +1403,125 @@ def get_advice_from_stats(stats):
     
     return f"{time_advice}\n\n{content_advice}\n\n{speed_advice}"
 
-def generate_stats_charts(stats, user_data, lang='ru'):
-    """Генерация графиков статистики"""
+def create_simple_stats_image(stats, user_data, lang='ru'):
+    """Создание простого изображения статистики без matplotlib"""
     try:
-        # Создаем фигуру с несколькими графиками
-        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(12, 10))
-        fig.patch.set_facecolor('#1a1a1a')
+        # Создаем изображение
+        width, height = 800, 1000
+        image = Image.new('RGB', (width, height), color='#1a1a1a')
+        draw = ImageDraw.Draw(image)
         
-        # 1. Круговая диаграмма типов сообщений
-        message_types = stats.get('message_types', {})
-        if message_types:
-            # Объединяем похожие типы
-            type_labels = {
-                'text': '📝 Текст',
-                'photo': '📸 Фото',
-                'video': '🎬 Видео',
-                'voice': '🎤 Голос',
-                'sticker': '😜 Стикеры',
-                'document': '📎 Документы',
-                'audio': '🎵 Аудио'
-            }
-            
-            filtered_types = {}
-            for key, value in message_types.items():
-                display_key = type_labels.get(key, key)
-                filtered_types[display_key] = value
-            
-            labels = list(filtered_types.keys())
-            sizes = list(filtered_types.values())
-            colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD', '#87CEEB']
-            
-            if sum(sizes) > 0:
-                wedges, texts, autotexts = ax1.pie(sizes, labels=labels, colors=colors[:len(labels)],
-                                                  autopct='%1.1f%%', startangle=90)
-                ax1.set_title('📊 Типы сообщений', color='white', fontsize=14, fontweight='bold')
-                
-                for text in texts:
-                    text.set_color('white')
-                    text.set_fontsize(10)
-                for autotext in autotexts:
-                    autotext.set_color('white')
-                    autotext.set_fontweight('bold')
-            else:
-                ax1.text(0.5, 0.5, 'Нет данных', ha='center', va='center', 
-                        color='white', fontsize=12)
-                ax1.set_title('📊 Типы сообщений', color='white', fontsize=14, fontweight='bold')
-        else:
-            ax1.text(0.5, 0.5, 'Нет данных', ha='center', va='center', 
-                    color='white', fontsize=12)
-            ax1.set_title('📊 Типы сообщений', color='white', fontsize=14, fontweight='bold')
+        # Используем доступный шрифт (PIL поставляется с дефолтным)
+        try:
+            font_large = ImageFont.truetype("arial.ttf", 36)
+            font_medium = ImageFont.truetype("arial.ttf", 24)
+            font_small = ImageFont.truetype("arial.ttf", 18)
+        except:
+            font_large = ImageFont.load_default()
+            font_medium = ImageFont.load_default()
+            font_small = ImageFont.load_default()
         
-        # 2. График активности по часам
+        # Заголовок
+        draw.text((width//2, 50), f"📊 Статистика {user_data['first_name']}", 
+                 fill='white', font=font_large, anchor="mm")
+        
+        # Основные показатели
+        y = 150
+        stats_text = [
+            f"📨 Получено: {user_data.get('messages_received', 0)}",
+            f"📤 Отправлено: {user_data.get('messages_sent', 0)}",
+            f"🔗 Переходов: {stats.get('total_clicks', 0)}",
+            f"👥 Уникальных: {stats.get('unique_clickers', 0)}"
+        ]
+        
+        for text in stats_text:
+            draw.text((100, y), text, fill='#4ECDC4', font=font_medium)
+            y += 50
+        
+        # Активность по часам (простая визуализация)
+        y += 50
+        draw.text((100, y), "⏰ Активность по часам:", fill='white', font=font_medium)
+        y += 40
+        
         messages_by_hour = stats.get('messages_by_hour', {})
         if messages_by_hour:
-            hours = sorted([int(h) for h in messages_by_hour.keys() if h.isdigit()])
-            values = [messages_by_hour.get(str(h), 0) for h in hours]
+            max_value = max(messages_by_hour.values()) if messages_by_hour.values() else 1
             
-            if hours and values:
-                bars = ax2.bar(range(len(hours)), values, color='#4ECDC4', edgecolor='white', alpha=0.8)
-                ax2.set_xlabel('Час дня', color='white')
-                ax2.set_ylabel('Сообщения', color='white')
-                ax2.set_title('⏰ Активность по часам', color='white', fontsize=14, fontweight='bold')
-                ax2.set_xticks(range(len(hours)))
-                ax2.set_xticklabels([f'{h:02d}:00' for h in hours], rotation=45, color='white')
-                ax2.tick_params(colors='white')
-                ax2.set_facecolor('#2d2d2d')
+            for hour in range(24):
+                count = messages_by_hour.get(str(hour), 0)
+                bar_width = int((count / max_value) * 200) if max_value > 0 else 0
                 
-                # Подсветка максимального значения
-                if values:
-                    max_idx = values.index(max(values))
-                    bars[max_idx].set_color('#FF6B6B')
-            else:
-                ax2.text(0.5, 0.5, 'Нет данных', ha='center', va='center', 
-                        color='white', fontsize=12)
-                ax2.set_title('⏰ Активность по часам', color='white', fontsize=14, fontweight='bold')
-        else:
-            ax2.text(0.5, 0.5, 'Нет данных', ha='center', va='center', 
-                    color='white', fontsize=12)
-            ax2.set_title('⏰ Активность по часам', color='white', fontsize=14, fontweight='bold')
-        
-        # 3. График активности по дням
-        days_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
-        days_ru = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']
-        
-        messages_by_day = stats.get('messages_by_day', {})
-        if messages_by_day:
-            days = []
-            values = []
-            for day in days_order:
-                if day in messages_by_day:
-                    days.append(days_ru[days_order.index(day)])
-                    values.append(messages_by_day[day])
-            
-            if days and values:
-                bars = ax3.bar(days, values, color='#45B7D1', edgecolor='white', alpha=0.8)
-                ax3.set_xlabel('День недели', color='white')
-                ax3.set_ylabel('Сообщения', color='white')
-                ax3.set_title('📅 Активность по дням', color='white', fontsize=14, fontweight='bold')
-                ax3.tick_params(colors='white')
-                ax3.set_facecolor('#2d2d2d')
+                # Цвет для пикового часа
+                color = '#FF6B6B' if count == max_value else '#45B7D1'
                 
-                # Подсветка максимального значения
-                if values:
-                    max_idx = values.index(max(values))
-                    bars[max_idx].set_color('#FF6B6B')
-            else:
-                ax3.text(0.5, 0.5, 'Нет данных', ha='center', va='center', 
-                        color='white', fontsize=12)
-                ax3.set_title('📅 Активность по дням', color='white', fontsize=14, fontweight='bold')
+                draw.rectangle([100, y, 100 + bar_width, y + 20], fill=color)
+                draw.text((320, y), f"{hour:02d}:00 - {count}", fill='white', font=font_small)
+                y += 30
         else:
-            ax3.text(0.5, 0.5, 'Нет данных', ha='center', va='center', 
-                    color='white', fontsize=12)
-            ax3.set_title('📅 Активность по дням', color='white', fontsize=14, fontweight='bold')
+            draw.text((100, y), "Нет данных", fill='gray', font=font_small)
+            y += 30
         
-        # 4. Текстовая информация
-        ax4.axis('off')
+        # Типы сообщений
+        y += 20
+        draw.text((100, y), "📊 Типы сообщений:", fill='white', font=font_medium)
+        y += 40
         
-        # Анализ данных
-        total_messages = sum(message_types.values()) if message_types else 0
-        avg_response = stats.get('avg_response_time', 0)
-        response_min = f"{int(avg_response//60)} мин {int(avg_response%60)} сек" if avg_response > 0 else "N/A"
-        
-        if messages_by_hour:
-            peak_hour = max(messages_by_hour.items(), key=lambda x: x[1])[0] if messages_by_hour else "N/A"
-        else:
-            peak_hour = "N/A"
-        
+        message_types = stats.get('message_types', {})
         if message_types:
-            fav_type = max(message_types.items(), key=lambda x: x[1])[0] if message_types else "N/A"
+            total = sum(message_types.values())
             type_names = {
                 'text': '📝 Текст',
                 'photo': '📸 Фото',
                 'video': '🎬 Видео',
-                'voice': '🎤 Голос'
+                'voice': '🎤 Голос',
+                'sticker': '😜 Стикеры'
             }
-            fav_type_display = type_names.get(fav_type, fav_type)
+            
+            for i, (type_key, count) in enumerate(message_types.items()):
+                percent = (count / total * 100) if total > 0 else 0
+                display_name = type_names.get(type_key, type_key)
+                draw.text((100, y), f"{display_name}: {count} ({percent:.1f}%)", 
+                         fill='#96CEB4', font=font_small)
+                y += 30
         else:
-            fav_type_display = "N/A"
+            draw.text((100, y), "Нет данных", fill='gray', font=font_small)
+            y += 30
         
-        most_active_day = stats.get('most_active_day', 'N/A')
-        day_names = {
-            'Monday': 'Понедельник',
-            'Tuesday': 'Вторник',
-            'Wednesday': 'Среда',
-            'Thursday': 'Четверг',
-            'Friday': 'Пятница',
-            'Saturday': 'Суббота',
-            'Sunday': 'Воскресенье'
-        }
-        active_day_display = day_names.get(most_active_day, most_active_day)
+        # Рекомендации
+        y += 20
+        draw.text((100, y), "💡 Рекомендации:", fill='white', font=font_medium)
+        y += 40
         
-        info_text = f"""
-        👤 <b>{user_data['first_name']}</b>
+        advice = get_advice_from_stats(stats)
+        advice_lines = []
+        words = advice.split()
+        line = ""
+        for word in words:
+            if len(line + word) < 40:
+                line += word + " "
+            else:
+                advice_lines.append(line)
+                line = word + " "
+        if line:
+            advice_lines.append(line)
         
-        📊 <b>Основные показатели:</b>
-        ├ Всего сообщений: {total_messages}
-        ├ Получено: {user_data.get('messages_received', 0)}
-        ├ Отправлено: {user_data.get('messages_sent', 0)}
-        ├ Переходов: {stats.get('total_clicks', 0)}
-        └ Сред. ответ: {response_min}
+        for line in advice_lines[:4]:  # Ограничиваем 4 строками
+            draw.text((100, y), line, fill='#FFEAA7', font=font_small)
+            y += 25
         
-        ⏰ <b>Анализ активности:</b>
-        ├ Пик: {peak_hour}:00
-        ├ День: {active_day_display}
-        └ Тип: {fav_type_display}
-        
-        💡 <b>Рекомендации:</b>
-        {get_advice_from_stats(stats)[:150]}...
-        """
-        
-        ax4.text(0.1, 0.95, info_text, transform=ax4.transAxes,
-                fontsize=10, color='white', verticalalignment='top',
-                bbox=dict(boxstyle='round', facecolor='#2d2d2d', alpha=0.8))
-        
-        # Настройка общего вида
-        plt.suptitle(f'📈 Статистика {user_data["first_name"]}', color='white', fontsize=18, fontweight='bold', y=0.98)
-        plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+        # Футер
+        draw.text((width//2, height - 50), "✨ Продолжайте в том же духе!", 
+                 fill='white', font=font_medium, anchor="mm")
         
         # Сохраняем в буфер
         buf = BytesIO()
-        plt.savefig(buf, format='png', dpi=120, facecolor=fig.get_facecolor(), 
-                   bbox_inches='tight', pad_inches=0.5)
+        image.save(buf, format='PNG')
         buf.seek(0)
-        plt.close(fig)
         
         return buf
         
     except Exception as e:
-        logger.error(f"Chart generation error: {e}")
+        logger.error(f"Simple stats image error: {e}")
         import traceback
         logger.error(traceback.format_exc())
         return None
@@ -1596,11 +1529,11 @@ def generate_stats_charts(stats, user_data, lang='ru'):
 def send_stats_image(user_id, stats, user_data, lang='ru'):
     """Генерация и отправка изображения со статистикой"""
     try:
-        # Создаем графики
-        image_buffer = generate_stats_charts(stats, user_data, lang)
+        # Создаем простое изображение
+        image_buffer = create_simple_stats_image(stats, user_data, lang)
         
         if not image_buffer:
-            raise Exception("Не удалось создать графики")
+            raise Exception("Не удалось создать изображение статистики")
         
         # Формируем текст описания
         total_messages = sum(stats.get('message_types', {}).values()) if stats.get('message_types') else 0
