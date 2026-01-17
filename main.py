@@ -1183,6 +1183,10 @@ def get_admin_log_keyboard(show_text: bool, lang: str = 'ru') -> types.InlineKey
 class Database:
     def __init__(self, db_path: str = DB_PATH):
         self.db_path = db_path
+        self._stats_cache = {}
+        self._stats_cache_time = {}
+        self._user_cache = {}
+        self._user_cache_time = {}
         self.init_db()
     
     @contextmanager
@@ -1371,29 +1375,80 @@ class Database:
             
             logger.info("✅ Database initialized with indexes")
     
-    # ====== КЭШИРОВАНИЕ ======
-    @lru_cache(maxsize=1024)
-    def get_user(self, user_id: int):
+    def _get_cached_user(self, user_id: int):
         """Получение пользователя с кэшированием"""
+        now = time.time()
+        if user_id in self._user_cache:
+            if now - self._user_cache_time.get(user_id, 0) < 60:  # TTL 60 секунд
+                return self._user_cache[user_id]
+        
         with self.get_connection() as conn:
             c = conn.cursor()
             c.execute('SELECT * FROM users WHERE user_id = ?', (user_id,))
             row = c.fetchone()
-            return dict(row) if row else None
+            user = dict(row) if row else None
+            
+            if user:
+                self._user_cache[user_id] = user
+                self._user_cache_time[user_id] = now
+            
+            return user
     
-    @lru_cache(maxsize=512)
-    def get_user_by_username(self, username: str):
+    def _get_cached_user_by_username(self, username: str):
         """Получение пользователя по username с кэшированием"""
+        now = time.time()
+        cache_key = f"username:{username}"
+        
+        if cache_key in self._user_cache:
+            if now - self._user_cache_time.get(cache_key, 0) < 60:
+                return self._user_cache[cache_key]
+        
         with self.get_connection() as conn:
             c = conn.cursor()
             c.execute('SELECT * FROM users WHERE username = ?', (username,))
             row = c.fetchone()
-            return dict(row) if row else None
+            user = dict(row) if row else None
+            
+            if user:
+                self._user_cache[cache_key] = user
+                self._user_cache_time[cache_key] = now
+            
+            return user
     
-    @lru_cache(maxsize=32, ttl=60)  # TTL 60 секунд
+    def get_user(self, user_id: int):
+        """Получение пользователя"""
+        return self._get_cached_user(user_id)
+    
+    def get_user_by_username(self, username: str):
+        """Получение пользователя по username"""
+        return self._get_cached_user_by_username(username)
+    
+    def _clear_user_cache(self, user_id: int = None, username: str = None):
+        """Очистка кэша пользователя"""
+        if user_id:
+            if user_id in self._user_cache:
+                del self._user_cache[user_id]
+            if user_id in self._user_cache_time:
+                del self._user_cache_time[user_id]
+        
+        if username:
+            cache_key = f"username:{username}"
+            if cache_key in self._user_cache:
+                del self._user_cache[cache_key]
+            if cache_key in self._user_cache_time:
+                del self._user_cache_time[cache_key]
+    
     def get_admin_stats(self):
         """Получение статистики админа с кэшированием"""
-        return self._get_admin_stats_impl()
+        now = time.time()
+        if 'admin_stats' in self._stats_cache:
+            if now - self._stats_cache_time.get('admin_stats', 0) < 60:  # TTL 60 секунд
+                return self._stats_cache['admin_stats']
+        
+        stats = self._get_admin_stats_impl()
+        self._stats_cache['admin_stats'] = stats
+        self._stats_cache_time['admin_stats'] = now
+        return stats
     
     def _get_admin_stats_impl(self):
         """Реализация получения статистики админа"""
@@ -1550,9 +1605,7 @@ class Database:
             ''', (username, first_name, now, user_id))
             
             # Очищаем кэш
-            self.get_user.cache_clear()
-            if username:
-                self.get_user_by_username.cache_clear()
+            self._clear_user_cache(user_id, username)
     
     def update_last_active(self, user_id: int):
         """Обновление времени последней активности"""
@@ -1560,7 +1613,7 @@ class Database:
             c = conn.cursor()
             c.execute('UPDATE users SET last_active = ? WHERE user_id = ?', 
                      (int(time.time()), user_id))
-            self.get_user.cache_clear()
+            self._clear_user_cache(user_id)
     
     def increment_stat(self, user_id: int, field: str):
         """Инкремент статистики пользователя"""
@@ -1573,7 +1626,7 @@ class Database:
             # Используем параметризованный запрос для безопасности
             c.execute(f'UPDATE users SET {field} = {field} + 1 WHERE user_id = ?', 
                      (user_id,))
-            self.get_user.cache_clear()
+            self._clear_user_cache(user_id)
     
     def set_receive_messages(self, user_id: int, status: bool):
         """Установка статуса приёма сообщений"""
@@ -1581,7 +1634,7 @@ class Database:
             c = conn.cursor()
             c.execute('UPDATE users SET receive_messages = ? WHERE user_id = ?',
                      (1 if status else 0, user_id))
-            self.get_user.cache_clear()
+            self._clear_user_cache(user_id)
     
     def set_language(self, user_id: int, language: str):
         """Установка языка"""
@@ -1589,7 +1642,7 @@ class Database:
             c = conn.cursor()
             c.execute('UPDATE users SET language = ? WHERE user_id = ?',
                      (language, user_id))
-            self.get_user.cache_clear()
+            self._clear_user_cache(user_id)
     
     def get_all_users_list(self) -> List[int]:
         """Получение списка всех пользователей"""
@@ -1908,7 +1961,7 @@ class Database:
                     INSERT OR IGNORE INTO blocked_users (user_id, blocked_at, blocked_by, reason)
                     VALUES (?, ?, ?, ?)
                 ''', (user_id, now, admin_id, reason))
-                self.get_user.cache_clear()
+                self._clear_user_cache(user_id)
                 return True
             except:
                 return False
@@ -1920,7 +1973,7 @@ class Database:
             c.execute('DELETE FROM blocked_users WHERE user_id = ?', (user_id,))
             success = c.rowcount > 0
             if success:
-                self.get_user.cache_clear()
+                self._clear_user_cache(user_id)
             return success
     
     def get_blocked_users_count(self) -> int:
@@ -2808,7 +2861,7 @@ def send_anonymous_message(sender_id: int, receiver_id: int, message, lang: str)
             db.add_moderation_log(sender_id, text[:100], "Blacklisted word", "blocked")
             
             # Уведомление админа
-            if CHANNEL:
+            if CHANNEL and CHANNEL != "":
                 try:
                     bot.send_message(CHANNEL, t('ru', 'moderation_alert_admin', user_id=sender_id))
                 except:
@@ -3832,9 +3885,11 @@ def cleanup_old_data():
                     logger.info(f"🧹 Cleaned {deleted} old logs")
             
             # Очистка кэша
-            db.get_admin_stats.cache_clear()
-            db.get_user.cache_clear()
-            db.get_user_by_username.cache_clear()
+            if hasattr(db, '_stats_cache'):
+                db._stats_cache.clear()
+                db._stats_cache_time.clear()
+                db._user_cache.clear()
+                db._user_cache_time.clear()
             
             time.sleep(86400)  # Раз в день
             
