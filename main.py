@@ -130,7 +130,7 @@ Anony SMS — это бот для <b>полностью анонимных</b> 
 4. Жди анонимные сообщения! 💌
 
 <b>✉️ КАК ОТПРАВЛЯТЬ сообщения:</b>
-1. Перейди по чужой ссылке
+1. Перейди по чужой ссылку
 2. Напиши сообщение
 3. Отправь — получатель не узнает твою личность! 🎭
 
@@ -171,7 +171,7 @@ Anony SMS — это бот для <b>полностью анонимных</b> 
 <i>Ваш тикет: <b>#{ticket_id}</b>
 Мы ответим вам в ближайшее время ⏰</i>""",
         
-        'settings': "⚙️ <b>Настройки</b>\n\n<i>Настрой бота под себя:</i>",
+        'settings': "⚙️ <b>Настройки</b>\n\n<i>Настрой бот под себя:</i>",
         'turn_on': "✅ <b>Приём анонимных сообщений включён!</b>\n\n<i>Теперь друзья могут отправлять тебе тайные послания 🔮</i>",
         'turn_off': "✅ <b>Приём анонимных сообщений отключён!</b>\n\n<i>Ты не будешь получать новые анонимки 🔒\nМожешь включить в любой момент ⚡</i>",
         'language': "🌐 <b>Выберите язык</b>\n\n<i>Выбор языка изменит интерфейс бота.</i>",
@@ -276,6 +276,22 @@ Anony SMS — это бот для <b>полностью анонимных</b> 
         'user_blocked': "🚫 <b>Пользователь заблокирован</b>",
         'user_already_blocked': "✅ Пользователь уже заблокирован",
         'user_not_blocked': "✅ Пользователь не заблокирован",
+        
+        # Новые переводы для активности
+        'main_menu': "🏠 Главное меню",
+        'just_now': "только что",
+        'minutes_ago': "{minutes} минут назад",
+        'hours_ago': "{hours} часов назад",
+        'yesterday': "вчера",
+        'days_ago': "{days} дней назад",
+        'never': "никогда",
+        'language_changed': "Язык изменен",
+        'send_anonymous_to': "Отправь анонимное сообщение",
+        'send_anonymous_description': "Напиши сообщение, фото, видео или голосовое сообщение",
+        'send_reply': "Отправь ответное сообщение",
+        'reply_to_ticket': "Ответить на тикет",
+        'user_blocked_bot': "Пользователь заблокировал бота",
+        'text': "Текст",
         
         # Кнопки
         'btn_my_link': "📩 Моя ссылка",
@@ -547,6 +563,22 @@ You can send text, photo or video.</i>""",
         'user_already_blocked': "✅ User already blocked",
         'user_not_blocked': "✅ User not blocked",
         
+        # Новые переводы для активности
+        'main_menu': "🏠 Main Menu",
+        'just_now': "just now",
+        'minutes_ago': "{minutes} minutes ago",
+        'hours_ago': "{hours} hours ago",
+        'yesterday': "yesterday",
+        'days_ago': "{days} days ago",
+        'never': "never",
+        'language_changed': "Language changed",
+        'send_anonymous_to': "Send anonymous message to",
+        'send_anonymous_description': "Write a message, photo, video or voice message",
+        'send_reply': "Send reply message",
+        'reply_to_ticket': "Reply to ticket",
+        'user_blocked_bot': "User blocked the bot",
+        'text': "Text",
+        
         # Кнопки
         'btn_my_link': "📩 My link",
         'btn_profile': "👤 Profile",
@@ -817,6 +849,22 @@ Anony SMS — це бот для <b>повністю анонімних</b> по
         'user_already_blocked': "✅ Користувач вже заблокований",
         'user_not_blocked': "✅ Користувач не заблокований",
         
+        # Новые переводы для активности
+        'main_menu': "🏠 Головне меню",
+        'just_now': "щойно",
+        'minutes_ago': "{minutes} хвилин тому",
+        'hours_ago': "{hours} годин тому",
+        'yesterday': "вчора",
+        'days_ago': "{days} днів тому",
+        'never': "ніколи",
+        'language_changed': "Мову змінено",
+        'send_anonymous_to': "Надішли анонімне повідомлення",
+        'send_anonymous_description': "Напиши повідомлення, фото, відео або голосове повідомлення",
+        'send_reply': "Надішли відповідь",
+        'reply_to_ticket': "Відповісти на тікет",
+        'user_blocked_bot': "Користувач заблокував бота",
+        'text': "Текст",
+        
         # Кнопки
         'btn_my_link': "📩 Моє посилання",
         'btn_profile': "👤 Профіль",
@@ -1086,6 +1134,22 @@ Puedes enviar texto, foto o video.</i>""",
         'user_blocked': "🚫 <b>Usuario bloqueado</b>",
         'user_already_blocked': "✅ Usuario ya bloqueado",
         'user_not_blocked': "✅ Usuario no bloqueado",
+        
+        # Новые переводы для активности
+        'main_menu': "🏠 Menú Principal",
+        'just_now': "justo ahora",
+        'minutes_ago': "hace {minutes} minutos",
+        'hours_ago': "hace {hours} horas",
+        'yesterday': "ayer",
+        'days_ago': "hace {days} días",
+        'never': "nunca",
+        'language_changed': "Idioma cambiado",
+        'send_anonymous_to': "Envía un mensaje anónimo a",
+        'send_anonymous_description': "Escribe un mensaje, foto, video o mensaje de voz",
+        'send_reply': "Enviar respuesta",
+        'reply_to_ticket': "Responder al ticket",
+        'user_blocked_bot': "El usuario bloqueó el bot",
+        'text': "Texto",
         
         # Botones
         'btn_my_link': "📩 Mi enlace",
@@ -1648,7 +1712,7 @@ def language_keyboard():
     return keyboard
 
 # ====== ОБРАБОТЧИКИ КОМАНД ======
-@bot.message_handler(commands=['start'])
+@bot.message_handler(commands=['start', 'lang'])
 def start_command(message):
     user_id = message.from_user.id
     username = message.from_user.username or ""
@@ -1664,6 +1728,15 @@ def start_command(message):
     db.update_last_active(user_id)
     
     args = message.text.split()
+    
+    # Обработка команды /lang
+    if message.text.startswith('/lang'):
+        user = db.get_user(user_id)
+        lang = user['language'] if user else 'ru'
+        bot.send_message(user_id, t(lang, 'language'), reply_markup=language_keyboard())
+        return
+    
+    # Обработка реферальной ссылки
     if len(args) > 1 and args[1].isdigit():
         target_id = int(args[1])
         handle_link_click(user_id, target_id)
@@ -1755,8 +1828,14 @@ def handle_callback(call):
         elif data.startswith("reply_"):
             target_id = int(data.split("_")[1])
             user_reply_targets[user_id] = target_id
-            bot.send_message(user_id, f"💌 {t(lang, 'send_reply')}", 
-                           reply_markup=cancel_keyboard(lang))
+            
+            target_user = db.get_user(target_id)
+            if target_user:
+                bot.send_message(user_id, f"💌 {t(lang, 'send_reply')} {target_user['first_name']}", 
+                               reply_markup=cancel_keyboard(lang))
+            else:
+                bot.send_message(user_id, t(lang, 'send_reply'), 
+                               reply_markup=cancel_keyboard(lang))
             bot.answer_callback_query(call.id)
         
         elif data.startswith("admin_block_"):
@@ -1770,10 +1849,12 @@ def handle_callback(call):
             bot.answer_callback_query(call.id, t(lang, 'block_user', user_id=target_id))
             
             try:
+                user_info = t(lang, 'user_blocked')
                 bot.edit_message_text(
                     chat_id=call.message.chat.id,
                     message_id=call.message.message_id,
-                    text=call.message.text + f"\n\n{t(lang, 'user_blocked')}"
+                    text=call.message.text + f"\n\n{user_info}",
+                    reply_markup=get_admin_user_keyboard(target_id, True, lang)
                 )
             except:
                 pass
@@ -1789,10 +1870,12 @@ def handle_callback(call):
             bot.answer_callback_query(call.id, t(lang, 'unblock_user', user_id=target_id))
             
             try:
+                user_info = "✅ Разблокирован"
                 bot.edit_message_text(
                     chat_id=call.message.chat.id,
                     message_id=call.message.message_id,
-                    text=call.message.text + f"\n\n✅ Разблокирован"
+                    text=call.message.text + f"\n\n{user_info}",
+                    reply_markup=get_admin_user_keyboard(target_id, False, lang)
                 )
             except:
                 pass
@@ -1875,6 +1958,12 @@ def handle_message(message):
         clear_user_state(user_id)
         bot.send_message(user_id, t(lang, 'canceled'), 
                         reply_markup=main_keyboard(user_id == ADMIN_ID, lang))
+        return
+    
+    # Обработка кнопки "Админ" - добавлено исправление
+    if text == t(lang, 'btn_admin') and user_id == ADMIN_ID:
+        bot.send_message(user_id, t(lang, 'admin_panel'), 
+                        reply_markup=admin_keyboard(lang))
         return
     
     if user_id == ADMIN_ID and user_id in admin_modes:
@@ -2046,7 +2135,8 @@ def send_anonymous_message(sender_id, receiver_id, message, lang):
                 msg = bot.send_document(receiver_id, file_id, caption=caption,
                                       reply_markup=get_message_reply_keyboard(sender_id, receiver['language'] if receiver else 'ru'))
             elif message_type == 'sticker':
-                bot.send_message(receiver_id, caption)
+                if caption:
+                    bot.send_message(receiver_id, caption)
                 msg = bot.send_sticker(receiver_id, file_id, 
                                      reply_markup=get_message_reply_keyboard(sender_id, receiver['language'] if receiver else 'ru'))
             
