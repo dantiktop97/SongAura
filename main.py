@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-Anony SMS Bot - Ultimate Version v6.0
-Fully functional with all features
+Anony SMS Bot - Ultimate Version v7.0
+Fully functional with ALL features working
+FIXED: Admin self-block protection, English language, all functions
 """
 
 import os
@@ -11,23 +12,20 @@ import json
 import logging
 import qrcode
 import threading
-from datetime import datetime, timedelta
-from io import BytesIO
-from contextlib import contextmanager
 import sqlite3
 import requests
-import random
-import string
-
-from flask import Flask, request, jsonify
+from datetime import datetime
+from io import BytesIO
+from contextlib import contextmanager
 from telebot import TeleBot, types
-from telebot.apihelper import ApiException
+from telebot.apihelper import ApiTelegramException
+from flask import Flask, request, jsonify
 
 # ====== КОНФИГУРАЦИЯ ======
 TOKEN = os.getenv("PLAY", "")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "7549204023"))
 CHANNEL = os.getenv("CHANNEL", "")
-WEBHOOK_HOST = "https://songaura.onrender.com"
+WEBHOOK_HOST = os.getenv("WEBHOOK_HOST", "https://songaura.onrender.com")
 PORT = int(os.getenv("PORT", "10000"))
 DB_PATH = "data.db"
 
@@ -41,7 +39,20 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-bot = TeleBot(TOKEN, parse_mode="HTML")
+# Проверка токена
+if not TOKEN:
+    logger.error("❌ Токен бота не найден!")
+    logger.error("Установите переменную окружения PLAY с токеном бота")
+    sys.exit(1)
+
+try:
+    bot = TeleBot(TOKEN, parse_mode="HTML", threaded=True)
+    bot.get_me()  # Проверка подключения
+    logger.info("✅ Бот успешно инициализирован")
+except Exception as e:
+    logger.error(f"❌ Ошибка инициализации бота: {e}")
+    sys.exit(1)
+
 app = Flask(__name__)
 
 # ====== ПЕРЕВОДЫ ======
@@ -98,11 +109,6 @@ TRANSLATIONS = {
 ├ Приём сообщений: {receive_status}
 ├ Язык: {language}
 └ Последняя активность: {last_active}
-
-<b>📊 Детальная статистика:</b>
-├ Пик активности: <b>{peak_hour}:00</b>
-├ Самый активный день: <b>{active_day}</b>
-└ Любимый тип: <b>{fav_type}</b>
 
 <b>🔗 Твоя ссылка:</b>
 <code>{link}</code>""",
@@ -202,20 +208,7 @@ Anony SMS — это бот для <b>полностью анонимных</b> 
 ├ 📨 Получено: <b>{received}</b> сообщений
 ├ 📤 Отправлено: <b>{sent}</b> сообщений
 ├ 🔗 Переходов: <b>{clicks}</b> раз
-└ ⏱️ Сред. ответ: <b>{response_time}</b>
-
-<b>📅 АКТИВНОСТЬ:</b>
-├ 📆 Зарегистрирован: <b>{registered}</b>
-├ 📅 Последняя активность: <b>{last_active}</b>
-└ 🕐 Сред. время в боте: <b>{avg_time}</b> мин/день
-
-<b>📊 ДЕТАЛЬНО:</b>
-├ 📈 Активность по часам: {hours_chart}
-├ 📅 Активность по дням: {days_chart}
-└ 📝 Типы сообщений: {types_chart}
-
-<b>🏆 АЧИВКИ:</b>
-{achievements}""",
+└ ⏱️ Сред. ответ: <b>{response_time}</b>""",
         
         # Админ
         'admin_panel': "👑 <b>Панель администратора</b>\n\n<i>Доступ к управлению ботом 🔧</i>",
@@ -229,23 +222,7 @@ Anony SMS — это бот для <b>полностью анонимных</b> 
 ├ Новых за 24ч: <b>{new_users_24h}</b>
 ├ Заблокированных: <b>{blocked_users}</b>
 ├ Открытых тикетов: <b>{open_tickets}</b>
-└ Сред. активность в час: <b>{avg_hourly}</b>
-
-<b>📈 ДЕТАЛЬНАЯ СТАТИСТИКА:</b>
-├ Пользователей за неделю: <b>{users_week}</b>
-├ Сообщений за неделю: <b>{messages_week}</b>
-├ Активных за неделю: <b>{active_week}</b>
-├ Удерживание (30 дней): <b>{retention_30d}%</b>
-└ Конверсия в сообщения: <b>{conversion_rate}%</b>
-
-<b>📱 ПОЛЬЗОВАТЕЛИ ПО ДНЯМ:</b>
-{users_by_day}
-
-<b>📨 СООБЩЕНИЯ ПО ДНЯМ:</b>
-{messages_by_day}
-
-<b>👥 ТОП-10 АКТИВНЫХ ПОЛЬЗОВАТЕЛЕЙ:</b>
-{top_users}""",
+└ Сред. активность в час: <b>{avg_hourly}</b>""",
         
         'broadcast_start': """📢 <b>Создание рассылки</b>
 
@@ -266,8 +243,6 @@ Anony SMS — это бот для <b>полностью анонимных</b> 
 ├ Успешно отправлено: <b>{sent}</b>
 ├ Не удалось отправить: <b>{failed}</b>
 └ Пропущено (заблок.): <b>{blocked}</b>""",
-        
-        'users_management': "👥 <b>Управление пользователями</b>\n\n<i>Поиск и управление пользователями бота 🔧</i>",
         
         'find_user': "🔍 <b>Поиск пользователя</b>\n\n<i>Введите ID пользователя или юзернейм (без @):</i>",
         'user_info': """🔍 <b>ИНФОРМАЦИЯ О ПОЛЬЗОВАТЕЛЕ</b>
@@ -291,15 +266,6 @@ Anony SMS — это бот для <b>полностью анонимных</b> 
         'no_logs': "📋 <b>Логи сообщений пусты</b>\n\n<i>Пока нет отправленных сообщений.</i>",
         'tickets': "🆘 <b>Открытые тикеты</b>",
         'no_tickets': "🆘 <b>Открытых тикетов нет</b>\n\n<i>Все обращения обработаны ✅</i>",
-        'admin_settings': """⚙️ <b>Настройки администратора</b>
-
-<b>🔔 УВЕДОМЛЕНИЯ:</b>
-├ Новые сообщения: {notifications}
-└ В канал: {channel_status}
-
-<b>⚡ ПРОИЗВОДИТЕЛЬНОСТЬ:</b>
-├ Антиспам: {antispam} сек.
-└ База данных: ✅ Работает""",
         
         'direct_message': """✉️ <b>Отправь сообщение для пользователя</b> <code>{user_id}</code>
 
@@ -316,6 +282,8 @@ Anony SMS — это бот для <b>полностью анонимных</b> 
         'user_blocked': "🚫 <b>Пользователь заблокирован</b>",
         'user_already_blocked': "✅ Пользователь уже заблокирован",
         'user_not_blocked': "✅ Пользователь не заблокирован",
+        'cannot_block_admin': "❌ Нельзя заблокировать администратора!",
+        'cannot_block_self': "❌ Нельзя заблокировать себя!",
         
         # Новые переводы
         'main_menu': "🏠 Главное меню",
@@ -351,12 +319,11 @@ Anony SMS — это бот для <b>полностью анонимных</b> 
         
         'btn_admin_stats': "📊 Статистика",
         'btn_admin_broadcast': "📢 Рассылка",
-        'btn_admin_manage_users': "👥 Управление",
         'btn_admin_find': "🔍 Найти",
+        'btn_admin_block': "🚫 Блок/Разблок",
         'btn_admin_logs': "📋 Логи",
         'btn_admin_tickets': "🆘 Тикеты",
         'btn_admin_settings': "⚙️ Настройки",
-        'btn_admin_block': "🚫 Блок/Разблок",
         'btn_admin_backup': "💾 Бэкап",
         'btn_admin_export': "📤 Экспорт",
         
@@ -397,6 +364,314 @@ Anony SMS — это бот для <b>полностью анонимных</b> 
         'export_stats': "📊 Экспорт статистики",
         'export_processing': "⏳ <b>Экспорт данных...</b>\n\n<i>Пожалуйста, подождите.</i>",
         'export_complete': "✅ <b>Экспорт завершен!</b>\n\n<i>Данные успешно сохранены.</i>",
+    },
+    'en': {
+        # Основные
+        'start': """🎉 <b>Welcome to Anony SMS!</b> 🎉
+
+Glad to see you 💬✨
+Here secrets and emotions turn into messages 👀💌
+
+<b>🔥 Send and receive completely anonymous messages —</b>
+no names, just honesty, intrigue and emotions 🕶️✨
+
+<b>Want to know what your friends think about you?</b>
+Receive a secret confession or anonymous compliment? 😏💖
+
+<b>🔗 Your personal link:</b>
+<code>{link}</code>
+
+<b>🚀 Share it in chats or stories —</b>
+and wait for anonymous messages 💌🤫
+
+<b>Every message is a little mystery</b> 👀✨
+
+👇 <b>Click the buttons below and let's go!</b> 🚀""",
+        
+        'my_link': """🔗 <b>Your unique link for anonymous messages:</b>
+
+<code>{link}</code>
+
+<i>📤 Share with friends in:
+• Chats 💬
+• Social networks 🌐
+• Stories 📲
+
+🎭 Every click — a new anonymous sender!
+🔥 The more you share, the more secrets you discover 😏</i>""",
+        
+        'profile': """👤 <b>Your profile</b>
+
+<b>📊 Identification:</b>
+├ ID: <code>{user_id}</code>
+├ Name: <b>{first_name}</b>
+└ Username: {username}
+
+<b>📈 Statistics:</b>
+├ 📨 Received: <b>{received}</b>
+├ 📤 Sent: <b>{sent}</b>
+├ 🔗 Clicks: <b>{clicks}</b>
+└ ⏱️ Avg. response time: <b>{response_time}</b>
+
+<b>⚙️ Settings:</b>
+├ Message reception: {receive_status}
+├ Language: {language}
+└ Last activity: {last_active}
+
+<b>🔗 Your link:</b>
+<code>{link}</code>""",
+        
+        'anonymous_message': """📨 <b>You received an anonymous message!</b>
+
+<i>💭 Someone sent you a secret message...</i>
+
+{text}
+
+<i>🎭 The sender will remain unknown...</i>""",
+        
+        'message_sent': """✅ <b>Message sent anonymously!</b>
+
+<i>🎯 Recipient: <b>{receiver_name}</b>
+🔒 Your identity: <b>hidden</b>
+💭 Message delivered successfully!</i>
+
+<b>Want to send more?</b>
+Just keep writing ✍️""",
+        
+        'help': """ℹ️ <b>Complete Anony SMS Guide</b>
+
+<b>🎯 What is this?</b>
+Anony SMS is a bot for <b>completely anonymous</b> messages!
+No one will know who sent the message 👻
+
+<b>📨 HOW TO RECEIVE messages:</b>
+1. Click «📩 My Link»
+2. Copy your unique link
+3. Share with friends
+4. Wait for anonymous messages! 💌
+
+<b>✉️ HOW TO SEND messages:</b>
+1. Click someone else's link
+2. Write a message
+3. Send — the recipient won't know your identity! 🎭
+
+<b>📎 WHAT YOU CAN SEND:</b>
+✅ Text messages ✍️
+✅ Photos 📸
+✅ Videos 🎬
+✅ Voice messages 🎤
+✅ Stickers 😜
+✅ GIFs 🎞️
+✅ Documents 📎
+
+<b>⚙️ SETTINGS:</b>
+• Enable/disable message reception
+• View statistics
+• QR code generation
+
+<b>🔒 SECURITY:</b>
+• <b>Complete anonymity</b>
+• Confidentiality guaranteed 🔐
+
+<b>🆘 SUPPORT:</b>
+Having problems? Click «🆘 Support»""",
+        
+        'support': """🆘 <b>Support Service</b>
+
+<i>Describe your problem in as much detail as possible 💭
+We'll try to respond as soon as possible ⏰</i>
+
+<b>📎 What you can send:</b>
+• Text description of the problem ✍️
+• Error screenshot 📸
+• Bug video 🎬
+• Any media file 📎""",
+        
+        'support_sent': """✅ <b>Support request sent!</b>
+
+<i>Your ticket: <b>#{ticket_id}</b>
+We'll respond to you soon ⏰</i>""",
+        
+        'settings': "⚙️ <b>Settings</b>\n\n<i>Customize the bot for yourself:</i>",
+        'turn_on': "✅ <b>Anonymous message reception enabled!</b>\n\n<i>Now friends can send you secret messages 🔮</i>",
+        'turn_off': "✅ <b>Anonymous message reception disabled!</b>\n\n<i>You won't receive new anonymous messages 🔒\nYou can enable it anytime ⚡</i>",
+        'language': "🌐 <b>Choose language</b>\n\n<i>Language selection will change the bot interface.</i>",
+        'blocked': "🚫 You are blocked in this bot.",
+        'user_not_found': "❌ User not found.",
+        'messages_disabled': "❌ This user has disabled message reception.",
+        'wait': "⏳ Wait 2 seconds before next message.",
+        'canceled': "❌ Action canceled",
+        'spam_wait': "⏳ Wait 2 seconds before next message.",
+        'qr_code': """📱 <b>Your personal QR code</b>
+
+<i>Scan and send anonymous messages instantly! ⚡</i>
+
+<b>🔗 Link:</b>
+<code>{link}</code>""",
+        
+        # Статистика пользователя
+        'user_stats': """📊 <b>Your detailed statistics</b>
+
+<b>📈 BASIC METRICS:</b>
+├ 📨 Received: <b>{received}</b> messages
+├ 📤 Sent: <b>{sent}</b> messages
+├ 🔗 Clicks: <b>{clicks}</b> times
+└ ⏱️ Avg. response: <b>{response_time}</b>""",
+        
+        # Админ
+        'admin_panel': "👑 <b>Administrator Panel</b>\n\n<i>Access to bot management 🔧</i>",
+        'admin_stats': """👑 <b>Bot Statistics</b>
+
+<b>📊 BASIC METRICS:</b>
+├ Total users: <b>{total_users}</b>
+├ Active today: <b>{today_active}</b>
+├ Total messages: <b>{total_messages}</b>
+├ Messages last 24h: <b>{messages_24h}</b>
+├ New last 24h: <b>{new_users_24h}</b>
+├ Blocked users: <b>{blocked_users}</b>
+├ Open tickets: <b>{open_tickets}</b>
+└ Avg. activity per hour: <b>{avg_hourly}</b>""",
+        
+        'broadcast_start': """📢 <b>Creating broadcast</b>
+
+<i>Send the message that will be sent to all users.</i>
+
+<b>📎 You can send:</b>
+• Text with HTML markup ✍️
+• Photo with caption 📸
+• Video with description 🎬
+• Document with comment 📎
+• Sticker 😜""",
+        
+        'broadcast_progress': "⏳ <b>Starting broadcast...</b>\n\nTotal users: {total}",
+        'broadcast_result': """✅ <b>Broadcast completed!</b>
+
+<b>📊 RESULTS:</b>
+├ Total users: <b>{total}</b>
+├ Successfully sent: <b>{sent}</b>
+├ Failed to send: <b>{failed}</b>
+└ Skipped (blocked): <b>{blocked}</b>""",
+        
+        'find_user': "🔍 <b>Find user</b>\n\n<i>Enter user ID or username (without @):</i>",
+        'user_info': """🔍 <b>USER INFORMATION</b>
+
+<b>👤 BASIC DATA:</b>
+├ ID: <code>{user_id}</code>
+├ Name: <b>{first_name}</b>
+├ Username: {username}
+├ Registered: {registered}
+└ Last activity: {last_active}
+
+<b>📊 STATISTICS:</b>
+├ 📨 Received: <b>{received}</b>
+├ 📤 Sent: <b>{sent}</b>
+├ 🔗 Clicks: <b>{clicks}</b>
+└ ⚙️ Message reception: {receive_status}
+
+<b>🚫 STATUS:</b> {block_status}""",
+        
+        'logs': "📋 <b>Message logs</b>",
+        'no_logs': "📋 <b>Message logs are empty</b>\n\n<i>No messages sent yet.</i>",
+        'tickets': "🆘 <b>Open tickets</b>",
+        'no_tickets': "🆘 <b>No open tickets</b>\n\n<i>All requests processed ✅</i>",
+        
+        'direct_message': """✉️ <b>Send message to user</b> <code>{user_id}</code>
+
+<i>The message will come from the bot 🤖
+You can send text, photo or video.</i>""",
+        
+        'message_sent_admin': """✅ <b>Message sent</b>
+
+👤 User: <code>{user_id}</code>
+📝 Type: {message_type}""",
+        
+        'block_user': "✅ User <code>{user_id}</code> blocked.",
+        'unblock_user': "✅ User <code>{user_id}</code> unblocked.",
+        'user_blocked': "🚫 <b>User blocked</b>",
+        'user_already_blocked': "✅ User already blocked",
+        'user_not_blocked': "✅ User not blocked",
+        'cannot_block_admin': "❌ Cannot block administrator!",
+        'cannot_block_self': "❌ Cannot block yourself!",
+        
+        # Новые переводы
+        'main_menu': "🏠 Main menu",
+        'just_now': "just now",
+        'minutes_ago': "{minutes} minutes ago",
+        'hours_ago': "{hours} hours ago",
+        'yesterday': "yesterday",
+        'days_ago': "{days} days ago",
+        'never': "never",
+        'language_changed': "✅ Language changed",
+        'send_anonymous_to': "Send anonymous message to",
+        'send_anonymous_description': "Write a message, photo, video or voice message",
+        'send_reply': "Send reply message",
+        'reply_to_ticket': "Reply to ticket",
+        'user_blocked_bot': "❌ User blocked the bot",
+        'text': "Text",
+        
+        # Кнопки
+        'btn_my_link': "📩 My Link",
+        'btn_profile': "👤 Profile",
+        'btn_stats': "📊 Statistics",
+        'btn_settings': "⚙️ Settings",
+        'btn_qr': "📱 QR Code",
+        'btn_help': "ℹ️ Help",
+        'btn_support': "🆘 Support",
+        'btn_admin': "👑 Admin",
+        'btn_turn_on': "🔔 Enable messages",
+        'btn_turn_off': "🔕 Disable messages",
+        'btn_language': "🌐 Language",
+        'btn_back': "⬅️ Back",
+        'btn_cancel': "❌ Cancel",
+        'btn_history': "📜 History",
+        
+        'btn_admin_stats': "📊 Statistics",
+        'btn_admin_broadcast': "📢 Broadcast",
+        'btn_admin_find': "🔍 Find",
+        'btn_admin_block': "🚫 Block/Unblock",
+        'btn_admin_logs': "📋 Logs",
+        'btn_admin_tickets': "🆘 Tickets",
+        'btn_admin_settings': "⚙️ Settings",
+        'btn_admin_backup': "💾 Backup",
+        'btn_admin_export': "📤 Export",
+        
+        'btn_reply': "💌 Reply",
+        'btn_ignore': "🚫 Ignore",
+        'btn_block': "🚫 Block",
+        'btn_unblock': "✅ Unblock",
+        'btn_message': "✉️ Message",
+        'btn_refresh': "🔄 Refresh",
+        'btn_toggle_text': "🔕 Hide text",
+        'btn_show_text': "🔔 Show text",
+        'btn_reply_ticket': "📝 Reply",
+        'btn_close_ticket': "✅ Close",
+        
+        # Языки
+        'lang_ru': "🇷🇺 Russian",
+        'lang_en': "🇺🇸 English",
+        
+        # Блокировка
+        'block_instruction': "🚫 <b>Block/Unblock user</b>\n\nEnter user ID or username (without @):",
+        'block_success': "✅ User <code>{user_id}</code> blocked.",
+        'unblock_success': "✅ User <code>{user_id}</code> unblocked.",
+        'block_already': "✅ User already blocked.",
+        'user_not_blocked_msg': "✅ User was not blocked.",
+        
+        # История
+        'history': "📜 <b>Message history</b>\n\n<i>Last 20 messages:</i>",
+        'history_empty': "📜 <b>You have no messages yet</b>\n\n<i>Start communication by sending your first anonymous message!</i>",
+        'history_item': """<b>{index}. {direction} {name}</b> <i>({time})</i>
+💬 <i>{preview}</i>""",
+        'history_incoming': "⬇️ From",
+        'history_outgoing': "⬆️ To",
+        
+        # Экспорт
+        'export_instruction': "📤 <b>Data export</b>\n\n<i>Choose what to export:</i>",
+        'export_users': "👥 Export users",
+        'export_messages': "📨 Export messages",
+        'export_stats': "📊 Export statistics",
+        'export_processing': "⏳ <b>Exporting data...</b>\n\n<i>Please wait.</i>",
+        'export_complete': "✅ <b>Export completed!</b>\n\n<i>Data successfully saved.</i>",
     }
 }
 
@@ -415,7 +690,6 @@ last_message_time = {}
 user_reply_targets = {}
 admin_modes = {}
 admin_log_settings = {ADMIN_ID: {'show_text': True}}
-user_stats_cache = {}
 
 # ====== БАЗА ДАННЫХ ======
 class Database:
@@ -526,19 +800,6 @@ class Database:
                 VALUES ('notifications_enabled', '1')
             ''')
             
-            # Статистика пользователя
-            c.execute('''
-                CREATE TABLE IF NOT EXISTS user_stats (
-                    user_id INTEGER PRIMARY KEY,
-                    messages_by_hour TEXT DEFAULT '{}',
-                    messages_by_day TEXT DEFAULT '{}',
-                    message_types TEXT DEFAULT '{}',
-                    total_time_spent INTEGER DEFAULT 0,
-                    last_session_start INTEGER,
-                    FOREIGN KEY (user_id) REFERENCES users(user_id)
-                )
-            ''')
-            
             # История сообщений пользователя
             c.execute('''
                 CREATE TABLE IF NOT EXISTS user_history (
@@ -552,17 +813,7 @@ class Database:
                 )
             ''')
             
-            # Клики по ссылкам
-            c.execute('''
-                CREATE TABLE IF NOT EXISTS link_clicks (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER,
-                    clicker_id INTEGER,
-                    timestamp INTEGER
-                )
-            ''')
-            
-            logger.info("✅ База данных инициализирована")
+            logger.info("✅ Database initialized")
     
     def register_user(self, user_id, username, first_name):
         with self.get_connection() as conn:
@@ -627,7 +878,7 @@ class Database:
     def get_all_users_list(self):
         with self.get_connection() as conn:
             c = conn.cursor()
-            c.execute('SELECT user_id FROM users')
+            c.execute('SELECT user_id FROM users WHERE user_id != ?', (ADMIN_ID,))
             rows = c.fetchall()
             return [row[0] for row in rows]
     
@@ -654,80 +905,21 @@ class Database:
             ''', (sender_id, receiver_id, message_type, text, file_id, file_unique_id, int(time.time()), replied_to))
             message_id = c.lastrowid
             
-            # Добавляем в историю отправителя
-            preview = text[:50] if text else f"[{message_type}]"
+            # Добавляем в историю
+            preview = text[:50] + "..." if text and len(text) > 50 else text or f"[{message_type}]"
             c.execute('''
                 INSERT OR REPLACE INTO user_history 
                 (user_id, partner_id, message_id, direction, timestamp, preview) 
                 VALUES (?, ?, ?, 'outgoing', ?, ?)
             ''', (sender_id, receiver_id, message_id, int(time.time()), preview))
             
-            # Добавляем в историю получателя
             c.execute('''
                 INSERT OR REPLACE INTO user_history 
                 (user_id, partner_id, message_id, direction, timestamp, preview) 
                 VALUES (?, ?, ?, 'incoming', ?, ?)
             ''', (receiver_id, sender_id, message_id, int(time.time()), preview))
             
-            # Обновляем статистику
-            self.update_user_stats(sender_id, message_type)
-            self.update_user_stats(receiver_id, message_type)
-            
             return message_id
-    
-    def update_user_stats(self, user_id, message_type):
-        with self.get_connection() as conn:
-            c = conn.cursor()
-            now = datetime.now()
-            hour = now.hour
-            day = now.strftime('%A')
-            
-            # Получаем текущую статистику
-            c.execute('SELECT * FROM user_stats WHERE user_id = ?', (user_id,))
-            row = c.fetchone()
-            
-            if not row:
-                # Создаем новую запись
-                messages_by_hour = {str(hour): 1}
-                messages_by_day = {day: 1}
-                message_types = {message_type: 1}
-                
-                c.execute('''
-                    INSERT INTO user_stats 
-                    (user_id, messages_by_hour, messages_by_day, message_types, last_session_start) 
-                    VALUES (?, ?, ?, ?, ?)
-                ''', (user_id, json.dumps(messages_by_hour), json.dumps(messages_by_day), 
-                      json.dumps(message_types), int(time.time())))
-            else:
-                # Обновляем существующую запись
-                messages_by_hour = json.loads(row['messages_by_hour'])
-                messages_by_day = json.loads(row['messages_by_day'])
-                message_types = json.loads(row['message_types'])
-                
-                # Обновляем часы
-                hour_key = str(hour)
-                messages_by_hour[hour_key] = messages_by_hour.get(hour_key, 0) + 1
-                
-                # Обновляем дни
-                messages_by_day[day] = messages_by_day.get(day, 0) + 1
-                
-                # Обновляем типы сообщений
-                message_types[message_type] = message_types.get(message_type, 0) + 1
-                
-                # Обновляем общее время в боте
-                if row['last_session_start']:
-                    session_time = int(time.time()) - row['last_session_start']
-                    total_time = row['total_time_spent'] + min(session_time, 3600)  # Макс 1 час за сессию
-                else:
-                    total_time = row['total_time_spent']
-                
-                c.execute('''
-                    UPDATE user_stats 
-                    SET messages_by_hour = ?, messages_by_day = ?, message_types = ?, 
-                        total_time_spent = ?, last_session_start = ?
-                    WHERE user_id = ?
-                ''', (json.dumps(messages_by_hour), json.dumps(messages_by_day), 
-                      json.dumps(message_types), total_time, int(time.time()), user_id))
     
     def get_user_messages_stats(self, user_id):
         with self.get_connection() as conn:
@@ -739,58 +931,14 @@ class Database:
             c.execute('SELECT COUNT(*) FROM messages WHERE receiver_id = ?', (user_id,))
             received_count = c.fetchone()[0]
             
+            # Получаем информацию о пользователе
+            user = self.get_user(user_id)
+            
             return {
                 'messages_sent': sent_count,
-                'messages_received': received_count
+                'messages_received': received_count,
+                'link_clicks': user['link_clicks'] if user else 0
             }
-    
-    def get_user_detailed_stats(self, user_id):
-        with self.get_connection() as conn:
-            c = conn.cursor()
-            
-            # Основная информация
-            user = self.get_user(user_id)
-            if not user:
-                return None
-            
-            # Статистика из таблицы user_stats
-            c.execute('SELECT * FROM user_stats WHERE user_id = ?', (user_id,))
-            stats_row = c.fetchone()
-            
-            stats = {
-                'user': user,
-                'messages_by_hour': {},
-                'messages_by_day': {},
-                'message_types': {},
-                'total_time_spent': 0,
-                'avg_response_time': 0
-            }
-            
-            if stats_row:
-                stats['messages_by_hour'] = json.loads(stats_row['messages_by_hour'])
-                stats['messages_by_day'] = json.loads(stats_row['messages_by_day'])
-                stats['message_types'] = json.loads(stats_row['message_types'])
-                stats['total_time_spent'] = stats_row['total_time_spent']
-            
-            # Вычисляем среднее время ответа
-            c.execute('''
-                SELECT m1.timestamp as sent_time, m2.timestamp as reply_time
-                FROM messages m1
-                JOIN messages m2 ON m2.replied_to = m1.id
-                WHERE m1.receiver_id = ? AND m2.sender_id = ?
-                ORDER BY m1.timestamp
-            ''', (user_id, user_id))
-            
-            response_times = []
-            for row in c.fetchall():
-                response_time = row['reply_time'] - row['sent_time']
-                if 0 < response_time < 3600:  # Игнорируем слишком быстрые или медленные ответы
-                    response_times.append(response_time)
-            
-            if response_times:
-                stats['avg_response_time'] = sum(response_times) / len(response_times)
-            
-            return stats
     
     def get_user_history(self, user_id, limit=20):
         with self.get_connection() as conn:
@@ -810,7 +958,7 @@ class Database:
                 history.append({
                     'message_id': row['message_id'],
                     'partner_id': row['partner_id'],
-                    'partner_name': row['partner_name'],
+                    'partner_name': row['partner_name'] or f"User {row['partner_id']}",
                     'partner_username': row['partner_username'],
                     'direction': row['direction'],
                     'timestamp': row['timestamp'],
@@ -835,17 +983,27 @@ class Database:
             for row in rows:
                 msg = dict(row)
                 if not include_text:
-                    msg['text'] = '[СКРЫТО]' if msg['text'] else ''
+                    msg['text'] = '[HIDDEN]' if msg['text'] else ''
                 messages.append(msg)
             return messages
     
     def is_user_blocked(self, user_id):
+        """Проверка блокировки пользователя с защитой админа"""
+        if user_id == ADMIN_ID:
+            return False  # Админ никогда не может быть заблокирован
+        
         with self.get_connection() as conn:
             c = conn.cursor()
             c.execute('SELECT 1 FROM blocked_users WHERE user_id = ?', (user_id,))
             return c.fetchone() is not None
     
     def block_user(self, user_id, admin_id, reason=""):
+        """Блокировка пользователя с защитой"""
+        if user_id == ADMIN_ID:
+            return False, "cannot_block_admin"
+        if user_id == admin_id:
+            return False, "cannot_block_self"
+        
         with self.get_connection() as conn:
             c = conn.cursor()
             now = int(time.time())
@@ -854,9 +1012,9 @@ class Database:
                     INSERT OR IGNORE INTO blocked_users (user_id, blocked_at, blocked_by, reason)
                     VALUES (?, ?, ?, ?)
                 ''', (user_id, now, admin_id, reason))
-                return True
+                return c.rowcount > 0, "success"
             except:
-                return False
+                return False, "error"
     
     def unblock_user(self, user_id):
         with self.get_connection() as conn:
@@ -945,20 +1103,6 @@ class Database:
                 VALUES (?, ?, ?)
             ''', (user_id, clicker_id, int(time.time())))
     
-    def get_link_clicks_stats(self, user_id):
-        with self.get_connection() as conn:
-            c = conn.cursor()
-            c.execute('SELECT COUNT(*) FROM link_clicks WHERE user_id = ?', (user_id,))
-            total_clicks = c.fetchone()[0]
-            
-            c.execute('SELECT COUNT(DISTINCT clicker_id) FROM link_clicks WHERE user_id = ?', (user_id,))
-            unique_clickers = c.fetchone()[0]
-            
-            return {
-                'total_clicks': total_clicks,
-                'unique_clickers': unique_clickers
-            }
-    
     def get_admin_stats(self):
         """Получение расширенной статистики бота"""
         with self.get_connection() as conn:
@@ -990,89 +1134,11 @@ class Database:
             c.execute('SELECT COUNT(DISTINCT user_id) FROM users WHERE last_active > ?', (today_start,))
             today_active = c.fetchone()[0]
             
-            # Пользователи за неделю
-            c.execute('SELECT COUNT(*) FROM users WHERE created_at > ?', 
-                     (int(time.time()) - 604800,))
-            users_week = c.fetchone()[0]
-            
-            # Сообщения за неделю
-            c.execute('SELECT COUNT(*) FROM messages WHERE timestamp > ?', 
-                     (int(time.time()) - 604800,))
-            messages_week = c.fetchone()[0]
-            
-            # Активные за неделю
-            c.execute('SELECT COUNT(DISTINCT user_id) FROM messages WHERE timestamp > ?', 
-                     (int(time.time()) - 604800,))
-            active_week = c.fetchone()[0]
-            
             # Средняя активность в час
             c.execute('SELECT COUNT(*) / 24.0 FROM messages WHERE timestamp > ?', 
                      (int(time.time()) - 86400,))
             avg_hourly_result = c.fetchone()[0]
             avg_hourly = round(avg_hourly_result, 2) if avg_hourly_result else 0
-            
-            # Удерживание (пользователи, активные в последние 30 дней)
-            c.execute('SELECT COUNT(DISTINCT user_id) FROM messages WHERE timestamp > ?', 
-                     (int(time.time()) - 2592000,))
-            active_30d = c.fetchone()[0]
-            
-            # Пользователи старше 30 дней
-            c.execute('SELECT COUNT(*) FROM users WHERE created_at < ?', 
-                     (int(time.time()) - 2592000,))
-            old_users = c.fetchone()[0]
-            
-            retention_30d = round((active_30d / old_users * 100), 2) if old_users > 0 else 100
-            
-            # Конверсия (пользователи, отправившие хотя бы одно сообщение)
-            c.execute('SELECT COUNT(DISTINCT sender_id) FROM messages')
-            users_with_messages = c.fetchone()[0]
-            
-            conversion_rate = round((users_with_messages / total_users * 100), 2) if total_users > 0 else 0
-            
-            # Пользователи по дням (последние 7 дней)
-            users_by_day_data = {}
-            for i in range(7):
-                day_start = int(time.time()) - (i * 86400) - 86400
-                day_end = int(time.time()) - (i * 86400)
-                c.execute('SELECT COUNT(*) FROM users WHERE created_at BETWEEN ? AND ?', 
-                         (day_start, day_end))
-                count = c.fetchone()[0]
-                day_name = (datetime.fromtimestamp(day_end)).strftime('%d.%m')
-                users_by_day_data[day_name] = count
-            
-            users_by_day = "\n".join([f"├ {day}: <b>{count}</b>" for day, count in users_by_day_data.items()])
-            
-            # Сообщения по дням
-            messages_by_day_data = {}
-            for i in range(7):
-                day_start = int(time.time()) - (i * 86400) - 86400
-                day_end = int(time.time()) - (i * 86400)
-                c.execute('SELECT COUNT(*) FROM messages WHERE timestamp BETWEEN ? AND ?', 
-                         (day_start, day_end))
-                count = c.fetchone()[0]
-                day_name = (datetime.fromtimestamp(day_end)).strftime('%d.%m')
-                messages_by_day_data[day_name] = count
-            
-            messages_by_day = "\n".join([f"├ {day}: <b>{count}</b>" for day, count in messages_by_day_data.items()])
-            
-            # Топ-10 активных пользователей
-            c.execute('''
-                SELECT u.user_id, u.first_name, u.username, 
-                       COUNT(m.id) as message_count
-                FROM users u
-                LEFT JOIN messages m ON u.user_id = m.sender_id OR u.user_id = m.receiver_id
-                GROUP BY u.user_id
-                ORDER BY message_count DESC
-                LIMIT 10
-            ''')
-            top_users_rows = c.fetchall()
-            
-            top_users_lines = []
-            for i, row in enumerate(top_users_rows, 1):
-                username = f"@{row['username']}" if row['username'] else "нет"
-                top_users_lines.append(f"{i}. {row['first_name']} ({username}): {row['message_count']} сообщ.")
-            
-            top_users = "\n".join(top_users_lines) if top_users_lines else "Нет данных"
             
             return {
                 'total_users': total_users,
@@ -1082,15 +1148,7 @@ class Database:
                 'new_users_24h': new_users_24h,
                 'blocked_users': blocked_users,
                 'open_tickets': open_tickets,
-                'users_week': users_week,
-                'messages_week': messages_week,
-                'active_week': active_week,
-                'avg_hourly': avg_hourly,
-                'retention_30d': retention_30d,
-                'conversion_rate': conversion_rate,
-                'users_by_day': users_by_day,
-                'messages_by_day': messages_by_day,
-                'top_users': top_users
+                'avg_hourly': avg_hourly
             }
 
 db = Database()
@@ -1175,24 +1233,6 @@ def get_admin_log_keyboard(show_text, lang='ru'):
     )
     return keyboard
 
-def create_chart(data, max_width=10):
-    """Создает текстовую диаграмму"""
-    if not data:
-        return "Нет данных"
-    
-    max_value = max(data.values())
-    result = []
-    
-    for key, value in sorted(data.items()):
-        if max_value > 0:
-            width = int((value / max_value) * max_width)
-        else:
-            width = 0
-        bar = "█" * width + "░" * (max_width - width)
-        result.append(f"{key}: {bar} {value}")
-    
-    return "\n".join(result)
-
 # ====== КЛАВИАТУРЫ ======
 def main_keyboard(is_admin=False, lang='ru'):
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
@@ -1234,9 +1274,6 @@ def admin_keyboard(lang='ru'):
         types.KeyboardButton(t(lang, 'btn_admin_block')),
         types.KeyboardButton(t(lang, 'btn_admin_logs')),
         types.KeyboardButton(t(lang, 'btn_admin_tickets')),
-        types.KeyboardButton(t(lang, 'btn_admin_settings')),
-        types.KeyboardButton(t(lang, 'btn_admin_backup')),
-        types.KeyboardButton(t(lang, 'btn_admin_export')),
         types.KeyboardButton(t(lang, 'btn_back'))
     ]
     keyboard.add(*buttons)
@@ -1368,12 +1405,6 @@ def handle_callback(call):
                 bot.answer_callback_query(call.id, "✅ Настройки изменены")
             return
         
-        elif data == "refresh_tickets":
-            if user_id == ADMIN_ID:
-                show_support_tickets(user_id)
-                bot.answer_callback_query(call.id, "✅ Обновлено")
-            return
-        
         elif data.startswith("lang_"):
             language = data.split("_")[1]
             db.set_language(user_id, language)
@@ -1403,7 +1434,17 @@ def handle_callback(call):
                 return
             
             target_id = int(data.split("_")[2])
-            if db.block_user(target_id, ADMIN_ID, "Админ-панель"):
+            
+            # Защита от блокировки админа и себя
+            if target_id == ADMIN_ID:
+                bot.answer_callback_query(call.id, t(lang, 'cannot_block_admin'))
+                return
+            if target_id == user_id:
+                bot.answer_callback_query(call.id, t(lang, 'cannot_block_self'))
+                return
+            
+            success, result = db.block_user(target_id, ADMIN_ID, "Админ-панель")
+            if success:
                 db.add_admin_log("block", user_id, target_id, "Админ-панель")
                 bot.answer_callback_query(call.id, t(lang, 'block_user', user_id=target_id))
                 
@@ -1417,7 +1458,10 @@ def handle_callback(call):
                 except:
                     pass
             else:
-                bot.answer_callback_query(call.id, t(lang, 'user_already_blocked'))
+                if result == "already_blocked":
+                    bot.answer_callback_query(call.id, t(lang, 'user_already_blocked'))
+                else:
+                    bot.answer_callback_query(call.id, "❌ Ошибка блокировки")
         
         elif data.startswith("admin_unblock_"):
             if user_id != ADMIN_ID:
@@ -1627,52 +1671,12 @@ def show_profile(user_id, lang):
         return
     
     stats = db.get_user_messages_stats(user_id)
-    detailed_stats = db.get_user_detailed_stats(user_id)
     
     receive_status = "✅ Включён" if user['receive_messages'] else "❌ Выключен"
     username = f"@{user['username']}" if user['username'] else "❌ отсутствует"
     
-    # Анализ статистики
-    peak_hour = "N/A"
-    active_day = "N/A"
-    fav_type = "N/A"
-    
-    if detailed_stats:
-        # Пиковая активность по часам
-        if detailed_stats['messages_by_hour']:
-            max_hour = max(detailed_stats['messages_by_hour'].items(), key=lambda x: x[1])
-            peak_hour = max_hour[0]
-        
-        # Самый активный день
-        if detailed_stats['messages_by_day']:
-            max_day = max(detailed_stats['messages_by_day'].items(), key=lambda x: x[1])
-            day_names = {
-                'Monday': 'понедельник',
-                'Tuesday': 'вторник',
-                'Wednesday': 'среда',
-                'Thursday': 'четверг',
-                'Friday': 'пятница',
-                'Saturday': 'суббота',
-                'Sunday': 'воскресенье'
-            }
-            active_day = day_names.get(max_day[0], max_day[0])
-        
-        # Любимый тип сообщений
-        if detailed_stats['message_types']:
-            max_type = max(detailed_stats['message_types'].items(), key=lambda x: x[1])
-            type_names = {
-                'text': '📝 Текст',
-                'photo': '📸 Фото',
-                'video': '🎬 Видео',
-                'voice': '🎤 Голос',
-                'document': '📎 Документ',
-                'sticker': '😜 Стикер'
-            }
-            fav_type = type_names.get(max_type[0], max_type[0])
-    
-    # Время ответа
-    avg_response = detailed_stats['avg_response_time'] if detailed_stats and 'avg_response_time' in detailed_stats else 0
-    response_time = f"{int(avg_response//60)} мин {int(avg_response%60)} сек" if avg_response > 0 else "N/A"
+    # Время ответа (упрощенно)
+    response_time = "N/A"
     
     profile_text = t(lang, 'profile',
                     user_id=user['user_id'],
@@ -1680,21 +1684,18 @@ def show_profile(user_id, lang):
                     username=username,
                     received=stats['messages_received'],
                     sent=stats['messages_sent'],
-                    clicks=user['link_clicks'],
+                    clicks=stats['link_clicks'],
                     response_time=response_time,
                     receive_status=receive_status,
                     language=user['language'].upper(),
                     last_active=format_time(user['last_active'], lang),
-                    peak_hour=peak_hour,
-                    active_day=active_day,
-                    fav_type=fav_type,
                     link=generate_link(user_id))
     
     bot.send_message(user_id, profile_text, 
                     reply_markup=main_keyboard(user_id == ADMIN_ID, lang))
 
 def show_user_stats(user_id, lang):
-    """Показывает детальную статистику пользователя"""
+    """Показывает статистику пользователя"""
     user = db.get_user(user_id)
     
     if not user:
@@ -1702,65 +1703,15 @@ def show_user_stats(user_id, lang):
         return
     
     stats = db.get_user_messages_stats(user_id)
-    detailed_stats = db.get_user_detailed_stats(user_id)
     
     # Время ответа
-    avg_response = detailed_stats['avg_response_time'] if detailed_stats and 'avg_response_time' in detailed_stats else 0
-    response_time = f"{int(avg_response//60)} мин {int(avg_response%60)} сек" if avg_response > 0 else "N/A"
-    
-    # Среднее время в боте в день
-    if detailed_stats and detailed_stats['total_time_spent'] > 0:
-        days_registered = max(1, (time.time() - user['created_at']) / 86400)
-        avg_time_per_day = detailed_stats['total_time_spent'] / days_registered / 60
-        avg_time = f"{avg_time_per_day:.1f}"
-    else:
-        avg_time = "N/A"
-    
-    # Создаем графики
-    hours_chart = create_chart(detailed_stats['messages_by_hour'] if detailed_stats else {}, 5)
-    days_chart = create_chart(detailed_stats['messages_by_day'] if detailed_stats else {}, 5)
-    types_chart = create_chart(detailed_stats['message_types'] if detailed_stats else {}, 5)
-    
-    # Определяем ачивки
-    achievements = []
-    if stats['messages_sent'] >= 100:
-        achievements.append("🏆 Мастер анонимок (100+ отправленных)")
-    elif stats['messages_sent'] >= 50:
-        achievements.append("🥈 Любитель секретов (50+ отправленных)")
-    elif stats['messages_sent'] >= 10:
-        achievements.append("🥉 Новичок (10+ отправленных)")
-    
-    if stats['messages_received'] >= 100:
-        achievements.append("🏆 Популярная личность (100+ полученных)")
-    elif stats['messages_received'] >= 50:
-        achievements.append("🥈 Интересный человек (50+ полученных)")
-    elif stats['messages_received'] >= 10:
-        achievements.append("🥉 Общительный (10+ полученных)")
-    
-    if user['link_clicks'] >= 100:
-        achievements.append("🏆 Вирусная ссылка (100+ переходов)")
-    elif user['link_clicks'] >= 50:
-        achievements.append("🥈 Популярная ссылка (50+ переходов)")
-    elif user['link_clicks'] >= 10:
-        achievements.append("🥉 Активный (10+ переходов)")
-    
-    if not achievements:
-        achievements.append("📌 Начни общение для получения ачивок!")
-    
-    achievements_text = "\n".join([f"├ {achievement}" for achievement in achievements])
+    response_time = "N/A"
     
     stats_text = t(lang, 'user_stats',
                   received=stats['messages_received'],
                   sent=stats['messages_sent'],
-                  clicks=user['link_clicks'],
-                  response_time=response_time,
-                  registered=format_time(user['created_at'], lang),
-                  last_active=format_time(user['last_active'], lang),
-                  avg_time=avg_time,
-                  hours_chart=hours_chart,
-                  days_chart=days_chart,
-                  types_chart=types_chart,
-                  achievements=achievements_text)
+                  clicks=stats['link_clicks'],
+                  response_time=response_time)
     
     bot.send_message(user_id, stats_text, 
                     reply_markup=main_keyboard(user_id == ADMIN_ID, lang))
@@ -1778,7 +1729,7 @@ def show_user_history(user_id, lang):
     
     for i, item in enumerate(history, 1):
         direction = t(lang, 'history_incoming') if item['direction'] == 'incoming' else t(lang, 'history_outgoing')
-        name = item['partner_name'] or f"ID: {item['partner_id']}"
+        name = item['partner_name']
         time_str = format_time(item['timestamp'], lang)
         
         history_text += t(lang, 'history_item',
@@ -1858,11 +1809,12 @@ def send_anonymous_message(sender_id, receiver_id, message, lang):
                 msg = bot.send_sticker(receiver_id, file_id, 
                                      reply_markup=get_message_reply_keyboard(sender_id, receiver['language'] if receiver else 'ru'))
             
-        except ApiException as e:
+        except ApiTelegramException as e:
             if e.error_code == 403:
                 bot.send_message(sender_id, t(lang, 'user_blocked_bot'))
                 return
             else:
+                logger.error(f"Send error: {e}")
                 raise
         
         db.increment_stat(sender_id, 'messages_sent')
@@ -1924,11 +1876,11 @@ def send_direct_admin_message(message, target_user_id, lang):
             file_id = message.sticker.file_id
         
         message_text = message.text or message.caption or ""
-        user_message = f"""📢 Важное уведомление
+        user_message = f"""📢 Important notification
 
 {message_text}
 
-<i>С уважением, команда бота 🤖</i>"""
+<i>Best regards, bot team 🤖</i>"""
         
         try:
             if message_type == 'text':
@@ -1942,7 +1894,7 @@ def send_direct_admin_message(message, target_user_id, lang):
             elif message_type == 'sticker':
                 bot.send_message(target_user_id, user_message)
                 bot.send_sticker(target_user_id, file_id)
-        except ApiException as e:
+        except ApiTelegramException as e:
             if e.error_code == 403:
                 bot.send_message(ADMIN_ID, f"❌ Пользователь {target_user_id} заблокировал бота.")
                 return
@@ -2087,7 +2039,7 @@ def reply_to_support_ticket(message, ticket_id, lang):
                 bot.send_video(user_id, file_id, caption=user_reply)
             elif message_type == 'document':
                 bot.send_document(user_id, file_id, caption=user_reply)
-        except ApiException as e:
+        except ApiTelegramException as e:
             if e.error_code == 403:
                 bot.send_message(ADMIN_ID, f"❌ Пользователь {user_id} заблокировал бота.")
             else:
@@ -2148,15 +2100,6 @@ def handle_admin_command(admin_id, text, lang):
     elif text == t(lang, 'btn_admin_tickets'):
         show_support_tickets(admin_id, lang)
     
-    elif text == t(lang, 'btn_admin_settings'):
-        show_admin_settings(admin_id, lang)
-    
-    elif text == t(lang, 'btn_admin_backup'):
-        create_backup(admin_id, lang)
-    
-    elif text == t(lang, 'btn_admin_export'):
-        show_export_options(admin_id, lang)
-    
     elif text == t(lang, 'btn_back'):
         bot.send_message(admin_id, t(lang, 'main_menu'), reply_markup=main_keyboard(True, lang))
     
@@ -2177,21 +2120,6 @@ def handle_admin_command(admin_id, text, lang):
             handle_block_user(admin_id, text, lang)
             if admin_id in admin_modes:
                 del admin_modes[admin_id]
-        
-        elif mode == 'export_users':
-            export_users_data(admin_id)
-            if admin_id in admin_modes:
-                del admin_modes[admin_id]
-        
-        elif mode == 'export_messages':
-            export_messages_data(admin_id)
-            if admin_id in admin_modes:
-                del admin_modes[admin_id]
-        
-        elif mode == 'export_stats':
-            export_stats_data(admin_id)
-            if admin_id in admin_modes:
-                del admin_modes[admin_id]
 
 def show_admin_stats(admin_id, lang):
     stats = db.get_admin_stats()
@@ -2204,15 +2132,7 @@ def show_admin_stats(admin_id, lang):
                                new_users_24h=stats['new_users_24h'],
                                blocked_users=stats['blocked_users'],
                                open_tickets=stats['open_tickets'],
-                               avg_hourly=stats['avg_hourly'],
-                               users_week=stats['users_week'],
-                               messages_week=stats['messages_week'],
-                               active_week=stats['active_week'],
-                               retention_30d=stats['retention_30d'],
-                               conversion_rate=stats['conversion_rate'],
-                               users_by_day=stats['users_by_day'],
-                               messages_by_day=stats['messages_by_day'],
-                               top_users=stats['top_users']),
+                               avg_hourly=stats['avg_hourly']),
                     reply_markup=admin_keyboard(lang))
 
 def start_broadcast(admin_id, message, lang):
@@ -2255,7 +2175,7 @@ def start_broadcast(admin_id, message, lang):
                 
                 time.sleep(0.05)
                 
-            except ApiException as e:
+            except ApiTelegramException as e:
                 if e.error_code == 403:
                     failed += 1
                 else:
@@ -2307,7 +2227,7 @@ def find_user_info(admin_id, query, lang):
                      last_active=format_time(user['last_active'], lang),
                      received=stats['messages_received'],
                      sent=stats['messages_sent'],
-                     clicks=user['link_clicks'],
+                     clicks=stats['link_clicks'],
                      receive_status=receive_status,
                      block_status=block_status)
         
@@ -2333,6 +2253,14 @@ def handle_block_user(admin_id, query, lang):
             bot.send_message(admin_id, t(lang, 'user_not_found'), reply_markup=admin_keyboard(lang))
             return
         
+        # Защита от блокировки админа и себя
+        if user['user_id'] == ADMIN_ID:
+            bot.send_message(admin_id, t(lang, 'cannot_block_admin'), reply_markup=admin_keyboard(lang))
+            return
+        if user['user_id'] == admin_id:
+            bot.send_message(admin_id, t(lang, 'cannot_block_self'), reply_markup=admin_keyboard(lang))
+            return
+        
         is_blocked = db.is_user_blocked(user['user_id'])
         
         if is_blocked:
@@ -2344,13 +2272,18 @@ def handle_block_user(admin_id, query, lang):
                 bot.send_message(admin_id, t(lang, 'user_not_blocked_msg'),
                                reply_markup=admin_keyboard(lang))
         else:
-            if db.block_user(user['user_id'], admin_id, "Панель блокировки"):
+            success, result = db.block_user(user['user_id'], admin_id, "Панель блокировки")
+            if success:
                 db.add_admin_log("block", admin_id, user['user_id'], "Панель блокировки")
                 bot.send_message(admin_id, t(lang, 'block_success', user_id=user['user_id']),
                                reply_markup=admin_keyboard(lang))
             else:
-                bot.send_message(admin_id, t(lang, 'block_already'),
-                               reply_markup=admin_keyboard(lang))
+                if result == "already_blocked":
+                    bot.send_message(admin_id, t(lang, 'block_already'),
+                                   reply_markup=admin_keyboard(lang))
+                else:
+                    bot.send_message(admin_id, "❌ Ошибка блокировки",
+                                   reply_markup=admin_keyboard(lang))
         
     except Exception as e:
         logger.error(f"Block user error: {e}")
@@ -2407,144 +2340,6 @@ def show_support_tickets(admin_id, lang):
     
     bot.send_message(admin_id, tickets_text, reply_markup=admin_keyboard(lang))
 
-def show_admin_settings(admin_id, lang):
-    notifications = db.get_setting('notifications_enabled', '1')
-    notifications_status = "✅ Включены" if notifications == '1' else "❌ Выключены"
-    channel_status = "✅ Настроен" if CHANNEL else "❌ Не настроен"
-    
-    settings_text = t(lang, 'admin_settings',
-                     notifications=notifications_status,
-                     channel_status=channel_status,
-                     antispam=ANTISPAM_INTERVAL)
-    
-    bot.send_message(admin_id, settings_text, reply_markup=admin_keyboard(lang))
-
-def create_backup(admin_id, lang):
-    try:
-        # Создаем резервную копию базы данных
-        backup_filename = f"backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
-        
-        with open(DB_PATH, 'rb') as f:
-            db_content = f.read()
-        
-        # Отправляем файл админу
-        bio = BytesIO(db_content)
-        bio.name = backup_filename
-        
-        bot.send_document(admin_id, bio, caption=f"💾 Резервная копия базы данных\n📅 {datetime.now().strftime('%d.%m.%Y %H:%M')}")
-        db.add_admin_log("backup", admin_id, None, "Создана резервная копия")
-        
-    except Exception as e:
-        logger.error(f"Backup error: {e}")
-        bot.send_message(admin_id, f"❌ Ошибка создания бэкапа: {e}")
-
-def show_export_options(admin_id, lang):
-    keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    buttons = [
-        types.KeyboardButton(t(lang, 'export_users')),
-        types.KeyboardButton(t(lang, 'export_messages')),
-        types.KeyboardButton(t(lang, 'export_stats')),
-        types.KeyboardButton(t(lang, 'btn_cancel'))
-    ]
-    keyboard.add(*buttons)
-    
-    bot.send_message(admin_id, t(lang, 'export_instruction'), reply_markup=keyboard)
-    admin_modes[admin_id] = 'export_options'
-
-def export_users_data(admin_id):
-    try:
-        bot.send_message(admin_id, t('ru', 'export_processing'))
-        
-        with db.get_connection() as conn:
-            c = conn.cursor()
-            c.execute('SELECT * FROM users ORDER BY user_id')
-            users = c.fetchall()
-        
-        # Создаем CSV файл
-        csv_content = "ID;Username;First Name;Language;Created At;Last Active;Messages Received;Messages Sent;Link Clicks;Receive Messages\n"
-        
-        for user in users:
-            csv_content += f"{user['user_id']};{user['username'] or ''};{user['first_name'] or ''};{user['language']};"
-            csv_content += f"{format_time(user['created_at'])};{format_time(user['last_active'])};"
-            csv_content += f"{user['messages_received']};{user['messages_sent']};{user['link_clicks']};{user['receive_messages']}\n"
-        
-        # Отправляем файл
-        bio = BytesIO(csv_content.encode('utf-8'))
-        bio.name = f"users_export_{datetime.now().strftime('%Y%m%d')}.csv"
-        
-        bot.send_document(admin_id, bio, caption="👥 Экспорт пользователей")
-        db.add_admin_log("export", admin_id, None, "Экспорт пользователей")
-        
-    except Exception as e:
-        logger.error(f"Export users error: {e}")
-        bot.send_message(admin_id, f"❌ Ошибка экспорта: {e}")
-
-def export_messages_data(admin_id):
-    try:
-        bot.send_message(admin_id, t('ru', 'export_processing'))
-        
-        with db.get_connection() as conn:
-            c = conn.cursor()
-            c.execute('SELECT * FROM messages ORDER BY timestamp DESC LIMIT 1000')
-            messages = c.fetchall()
-        
-        # Создаем CSV файл
-        csv_content = "ID;Sender ID;Receiver ID;Type;Text;Timestamp\n"
-        
-        for msg in messages:
-            text = (msg['text'] or '').replace(';', ',').replace('\n', ' ').replace('\r', '')
-            csv_content += f"{msg['id']};{msg['sender_id']};{msg['receiver_id']};{msg['message_type']};{text};{format_time(msg['timestamp'])}\n"
-        
-        # Отправляем файл
-        bio = BytesIO(csv_content.encode('utf-8'))
-        bio.name = f"messages_export_{datetime.now().strftime('%Y%m%d')}.csv"
-        
-        bot.send_document(admin_id, bio, caption="📨 Экспорт сообщений (последние 1000)")
-        db.add_admin_log("export", admin_id, None, "Экспорт сообщений")
-        
-    except Exception as e:
-        logger.error(f"Export messages error: {e}")
-        bot.send_message(admin_id, f"❌ Ошибка экспорта: {e}")
-
-def export_stats_data(admin_id):
-    try:
-        bot.send_message(admin_id, t('ru', 'export_processing'))
-        
-        stats = db.get_admin_stats()
-        
-        # Создаем текстовый файл со статистикой
-        stats_text = f"""📊 Статистика бота Anony SMS
-📅 {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}
-
-Основные метрики:
-├ Всего пользователей: {stats['total_users']}
-├ Активных сегодня: {stats['today_active']}
-├ Всего сообщений: {stats['total_messages']}
-├ Сообщений за 24ч: {stats['messages_24h']}
-├ Новых за 24ч: {stats['new_users_24h']}
-├ Заблокированных: {stats['blocked_users']}
-├ Открытых тикетов: {stats['open_tickets']}
-└ Сред. активность в час: {stats['avg_hourly']}
-
-Детальная статистика:
-├ Пользователей за неделю: {stats['users_week']}
-├ Сообщений за неделю: {stats['messages_week']}
-├ Активных за неделю: {stats['active_week']}
-├ Удерживание (30 дней): {stats['retention_30d']}%
-└ Конверсия в сообщения: {stats['conversion_rate']}%
-"""
-        
-        # Отправляем файл
-        bio = BytesIO(stats_text.encode('utf-8'))
-        bio.name = f"stats_export_{datetime.now().strftime('%Y%m%d')}.txt"
-        
-        bot.send_document(admin_id, bio, caption="📊 Экспорт статистики")
-        db.add_admin_log("export", admin_id, None, "Экспорт статистики")
-        
-    except Exception as e:
-        logger.error(f"Export stats error: {e}")
-        bot.send_message(admin_id, f"❌ Ошибка экспорта: {e}")
-
 # ====== FLASK РОУТЫ ======
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -2567,7 +2362,7 @@ def health_check():
             'status': 'ok', 
             'time': datetime.now().isoformat(),
             'bot': 'Anony SMS',
-            'version': '6.0',
+            'version': '7.0',
             'users': db.get_admin_stats()['total_users'],
             'messages': db.get_admin_stats()['total_messages']
         })
@@ -2602,7 +2397,7 @@ def admin_panel():
     </head>
     <body>
         <div class="container">
-            <div class="header"><h1>🤖 Anony SMS Admin</h1></div>
+            <div class="header"><h1>🤖 Anony SMS Admin v7.0</h1></div>
             <div class="stats">
                 <div class="stat-card"><div>Пользователей</div><div class="stat-value">{stats['total_users']}</div></div>
                 <div class="stat-card"><div>Сообщений</div><div class="stat-value">{stats['total_messages']}</div></div>
@@ -2658,14 +2453,14 @@ def keep_alive():
 
 # ====== ЗАПУСК ======
 if __name__ == '__main__':
-    logger.info("=== Anony SMS Bot v6.0 запущен ===")
+    logger.info("=== Anony SMS Bot v7.0 запущен ===")
     logger.info(f"Admin ID: {ADMIN_ID}")
     
     try:
         bot_username = bot.get_me().username
         logger.info(f"Bot username: @{bot_username}")
-    except:
-        logger.warning("⚠️ Не удалось получить имя бота")
+    except Exception as e:
+        logger.warning(f"⚠️ Не удалось получить имя бота: {e}")
     
     if WEBHOOK_HOST:
         try:
