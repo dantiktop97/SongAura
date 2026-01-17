@@ -3,3 +3,4 @@ pyTelegramBotAPI
 qrcode[pil]
 Pillow
 requests
+gunicorn
