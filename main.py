@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Anony SMS Bot - Ultimate Version v5.0
-Fully functional with dynamic menu system
+Anony SMS Bot - Ultimate Version v6.0
+Fully functional with all features
 """
 
 import os
@@ -11,7 +11,7 @@ import json
 import logging
 import qrcode
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 from io import BytesIO
 from contextlib import contextmanager
 import sqlite3
@@ -96,10 +96,11 @@ TRANSLATIONS = {
 
 <b>⚙️ Настройки:</b>
 ├ Приём сообщений: {receive_status}
+├ Язык: {language}
 └ Последняя активность: {last_active}
 
-<b>📊 Статистика активности:</b>
-├ Пик активности: <b>{peak_hour}</b>
+<b>📊 Детальная статистика:</b>
+├ Пик активности: <b>{peak_hour}:00</b>
 ├ Самый активный день: <b>{active_day}</b>
 └ Любимый тип: <b>{fav_type}</b>
 
@@ -193,6 +194,28 @@ Anony SMS — это бот для <b>полностью анонимных</b> 
 
 <b>🔗 Ссылка:</b>
 <code>{link}</code>""",
+        
+        # Статистика пользователя
+        'user_stats': """📊 <b>Твоя детальная статистика</b>
+
+<b>📈 ОСНОВНЫЕ МЕТРИКИ:</b>
+├ 📨 Получено: <b>{received}</b> сообщений
+├ 📤 Отправлено: <b>{sent}</b> сообщений
+├ 🔗 Переходов: <b>{clicks}</b> раз
+└ ⏱️ Сред. ответ: <b>{response_time}</b>
+
+<b>📅 АКТИВНОСТЬ:</b>
+├ 📆 Зарегистрирован: <b>{registered}</b>
+├ 📅 Последняя активность: <b>{last_active}</b>
+└ 🕐 Сред. время в боте: <b>{avg_time}</b> мин/день
+
+<b>📊 ДЕТАЛЬНО:</b>
+├ 📈 Активность по часам: {hours_chart}
+├ 📅 Активность по дням: {days_chart}
+└ 📝 Типы сообщений: {types_chart}
+
+<b>🏆 АЧИВКИ:</b>
+{achievements}""",
         
         # Админ
         'admin_panel': "👑 <b>Панель администратора</b>\n\n<i>Доступ к управлению ботом 🔧</i>",
@@ -324,6 +347,7 @@ Anony SMS — это бот для <b>полностью анонимных</b> 
         'btn_language': "🌐 Язык",
         'btn_back': "⬅️ Назад",
         'btn_cancel': "❌ Отмена",
+        'btn_history': "📜 История",
         
         'btn_admin_stats': "📊 Статистика",
         'btn_admin_broadcast': "📢 Рассылка",
@@ -332,7 +356,9 @@ Anony SMS — это бот для <b>полностью анонимных</b> 
         'btn_admin_logs': "📋 Логи",
         'btn_admin_tickets': "🆘 Тикеты",
         'btn_admin_settings': "⚙️ Настройки",
-        'btn_admin_custom_menus': "➕ Меню",
+        'btn_admin_block': "🚫 Блок/Разблок",
+        'btn_admin_backup': "💾 Бэкап",
+        'btn_admin_export': "📤 Экспорт",
         
         'btn_reply': "💌 Ответить",
         'btn_ignore': "🚫 Игнор",
@@ -348,6 +374,29 @@ Anony SMS — это бот для <b>полностью анонимных</b> 
         # Языки
         'lang_ru': "🇷🇺 Русский",
         'lang_en': "🇺🇸 English",
+        
+        # Блокировка
+        'block_instruction': "🚫 <b>Блокировка/Разблокировка пользователя</b>\n\nВведите ID пользователя или юзернейм (без @):",
+        'block_success': "✅ Пользователь <code>{user_id}</code> заблокирован.",
+        'unblock_success': "✅ Пользователь <code>{user_id}</code> разблокирован.",
+        'block_already': "✅ Пользователь уже заблокирован.",
+        'user_not_blocked_msg': "✅ Пользователь не был заблокирован.",
+        
+        # История
+        'history': "📜 <b>История сообщений</b>\n\n<i>Последние 20 сообщений:</i>",
+        'history_empty': "📜 <b>У тебя пока нет сообщений</b>\n\n<i>Начни общение, отправив первую анонимку!</i>",
+        'history_item': """<b>{index}. {direction} {name}</b> <i>({time})</i>
+💬 <i>{preview}</i>""",
+        'history_incoming': "⬇️ От",
+        'history_outgoing': "⬆️ Кому",
+        
+        # Экспорт
+        'export_instruction': "📤 <b>Экспорт данных</b>\n\n<i>Выберите что экспортировать:</i>",
+        'export_users': "👥 Экспорт пользователей",
+        'export_messages': "📨 Экспорт сообщений",
+        'export_stats': "📊 Экспорт статистики",
+        'export_processing': "⏳ <b>Экспорт данных...</b>\n\n<i>Пожалуйста, подождите.</i>",
+        'export_complete': "✅ <b>Экспорт завершен!</b>\n\n<i>Данные успешно сохранены.</i>",
     }
 }
 
@@ -366,6 +415,7 @@ last_message_time = {}
 user_reply_targets = {}
 admin_modes = {}
 admin_log_settings = {ADMIN_ID: {'show_text': True}}
+user_stats_cache = {}
 
 # ====== БАЗА ДАННЫХ ======
 class Database:
@@ -476,42 +526,39 @@ class Database:
                 VALUES ('notifications_enabled', '1')
             ''')
             
-            # Кастомные меню
+            # Статистика пользователя
             c.execute('''
-                CREATE TABLE IF NOT EXISTS custom_menus (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name TEXT,
-                    description TEXT,
-                    parent_id INTEGER DEFAULT 0,
-                    button_text TEXT,
-                    message_text TEXT,
-                    is_active INTEGER DEFAULT 1,
-                    created_at INTEGER,
-                    order_index INTEGER DEFAULT 0
-                )
-            ''')
-            
-            # Детальная статистика для пользователя
-            c.execute('''
-                CREATE TABLE IF NOT EXISTS user_detailed_stats (
+                CREATE TABLE IF NOT EXISTS user_stats (
                     user_id INTEGER PRIMARY KEY,
                     messages_by_hour TEXT DEFAULT '{}',
                     messages_by_day TEXT DEFAULT '{}',
                     message_types TEXT DEFAULT '{}',
-                    avg_response_time REAL DEFAULT 0,
-                    most_active_day TEXT,
+                    total_time_spent INTEGER DEFAULT 0,
+                    last_session_start INTEGER,
                     FOREIGN KEY (user_id) REFERENCES users(user_id)
                 )
             ''')
             
-            # Статистика ссылок
+            # История сообщений пользователя
             c.execute('''
-                CREATE TABLE IF NOT EXISTS link_stats (
+                CREATE TABLE IF NOT EXISTS user_history (
+                    user_id INTEGER,
+                    partner_id INTEGER,
+                    message_id INTEGER,
+                    direction TEXT,
+                    timestamp INTEGER,
+                    preview TEXT,
+                    PRIMARY KEY (user_id, message_id)
+                )
+            ''')
+            
+            # Клики по ссылкам
+            c.execute('''
+                CREATE TABLE IF NOT EXISTS link_clicks (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     user_id INTEGER,
                     clicker_id INTEGER,
-                    timestamp INTEGER,
-                    FOREIGN KEY (user_id) REFERENCES users(user_id)
+                    timestamp INTEGER
                 )
             ''')
             
@@ -605,7 +652,82 @@ class Database:
                 (sender_id, receiver_id, message_type, text, file_id, file_unique_id, timestamp, replied_to) 
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ''', (sender_id, receiver_id, message_type, text, file_id, file_unique_id, int(time.time()), replied_to))
-            return c.lastrowid
+            message_id = c.lastrowid
+            
+            # Добавляем в историю отправителя
+            preview = text[:50] if text else f"[{message_type}]"
+            c.execute('''
+                INSERT OR REPLACE INTO user_history 
+                (user_id, partner_id, message_id, direction, timestamp, preview) 
+                VALUES (?, ?, ?, 'outgoing', ?, ?)
+            ''', (sender_id, receiver_id, message_id, int(time.time()), preview))
+            
+            # Добавляем в историю получателя
+            c.execute('''
+                INSERT OR REPLACE INTO user_history 
+                (user_id, partner_id, message_id, direction, timestamp, preview) 
+                VALUES (?, ?, ?, 'incoming', ?, ?)
+            ''', (receiver_id, sender_id, message_id, int(time.time()), preview))
+            
+            # Обновляем статистику
+            self.update_user_stats(sender_id, message_type)
+            self.update_user_stats(receiver_id, message_type)
+            
+            return message_id
+    
+    def update_user_stats(self, user_id, message_type):
+        with self.get_connection() as conn:
+            c = conn.cursor()
+            now = datetime.now()
+            hour = now.hour
+            day = now.strftime('%A')
+            
+            # Получаем текущую статистику
+            c.execute('SELECT * FROM user_stats WHERE user_id = ?', (user_id,))
+            row = c.fetchone()
+            
+            if not row:
+                # Создаем новую запись
+                messages_by_hour = {str(hour): 1}
+                messages_by_day = {day: 1}
+                message_types = {message_type: 1}
+                
+                c.execute('''
+                    INSERT INTO user_stats 
+                    (user_id, messages_by_hour, messages_by_day, message_types, last_session_start) 
+                    VALUES (?, ?, ?, ?, ?)
+                ''', (user_id, json.dumps(messages_by_hour), json.dumps(messages_by_day), 
+                      json.dumps(message_types), int(time.time())))
+            else:
+                # Обновляем существующую запись
+                messages_by_hour = json.loads(row['messages_by_hour'])
+                messages_by_day = json.loads(row['messages_by_day'])
+                message_types = json.loads(row['message_types'])
+                
+                # Обновляем часы
+                hour_key = str(hour)
+                messages_by_hour[hour_key] = messages_by_hour.get(hour_key, 0) + 1
+                
+                # Обновляем дни
+                messages_by_day[day] = messages_by_day.get(day, 0) + 1
+                
+                # Обновляем типы сообщений
+                message_types[message_type] = message_types.get(message_type, 0) + 1
+                
+                # Обновляем общее время в боте
+                if row['last_session_start']:
+                    session_time = int(time.time()) - row['last_session_start']
+                    total_time = row['total_time_spent'] + min(session_time, 3600)  # Макс 1 час за сессию
+                else:
+                    total_time = row['total_time_spent']
+                
+                c.execute('''
+                    UPDATE user_stats 
+                    SET messages_by_hour = ?, messages_by_day = ?, message_types = ?, 
+                        total_time_spent = ?, last_session_start = ?
+                    WHERE user_id = ?
+                ''', (json.dumps(messages_by_hour), json.dumps(messages_by_day), 
+                      json.dumps(message_types), total_time, int(time.time()), user_id))
     
     def get_user_messages_stats(self, user_id):
         with self.get_connection() as conn:
@@ -621,6 +743,80 @@ class Database:
                 'messages_sent': sent_count,
                 'messages_received': received_count
             }
+    
+    def get_user_detailed_stats(self, user_id):
+        with self.get_connection() as conn:
+            c = conn.cursor()
+            
+            # Основная информация
+            user = self.get_user(user_id)
+            if not user:
+                return None
+            
+            # Статистика из таблицы user_stats
+            c.execute('SELECT * FROM user_stats WHERE user_id = ?', (user_id,))
+            stats_row = c.fetchone()
+            
+            stats = {
+                'user': user,
+                'messages_by_hour': {},
+                'messages_by_day': {},
+                'message_types': {},
+                'total_time_spent': 0,
+                'avg_response_time': 0
+            }
+            
+            if stats_row:
+                stats['messages_by_hour'] = json.loads(stats_row['messages_by_hour'])
+                stats['messages_by_day'] = json.loads(stats_row['messages_by_day'])
+                stats['message_types'] = json.loads(stats_row['message_types'])
+                stats['total_time_spent'] = stats_row['total_time_spent']
+            
+            # Вычисляем среднее время ответа
+            c.execute('''
+                SELECT m1.timestamp as sent_time, m2.timestamp as reply_time
+                FROM messages m1
+                JOIN messages m2 ON m2.replied_to = m1.id
+                WHERE m1.receiver_id = ? AND m2.sender_id = ?
+                ORDER BY m1.timestamp
+            ''', (user_id, user_id))
+            
+            response_times = []
+            for row in c.fetchall():
+                response_time = row['reply_time'] - row['sent_time']
+                if 0 < response_time < 3600:  # Игнорируем слишком быстрые или медленные ответы
+                    response_times.append(response_time)
+            
+            if response_times:
+                stats['avg_response_time'] = sum(response_times) / len(response_times)
+            
+            return stats
+    
+    def get_user_history(self, user_id, limit=20):
+        with self.get_connection() as conn:
+            c = conn.cursor()
+            c.execute('''
+                SELECT h.*, u.first_name as partner_name, u.username as partner_username
+                FROM user_history h
+                LEFT JOIN users u ON h.partner_id = u.user_id
+                WHERE h.user_id = ?
+                ORDER BY h.timestamp DESC
+                LIMIT ?
+            ''', (user_id, limit))
+            
+            rows = c.fetchall()
+            history = []
+            for row in rows:
+                history.append({
+                    'message_id': row['message_id'],
+                    'partner_id': row['partner_id'],
+                    'partner_name': row['partner_name'],
+                    'partner_username': row['partner_username'],
+                    'direction': row['direction'],
+                    'timestamp': row['timestamp'],
+                    'preview': row['preview']
+                })
+            return history
     
     def get_recent_messages(self, limit=10, include_text=True):
         with self.get_connection() as conn:
@@ -653,15 +849,20 @@ class Database:
         with self.get_connection() as conn:
             c = conn.cursor()
             now = int(time.time())
-            c.execute('''
-                INSERT OR REPLACE INTO blocked_users (user_id, blocked_at, blocked_by, reason)
-                VALUES (?, ?, ?, ?)
-            ''', (user_id, now, admin_id, reason))
+            try:
+                c.execute('''
+                    INSERT OR IGNORE INTO blocked_users (user_id, blocked_at, blocked_by, reason)
+                    VALUES (?, ?, ?, ?)
+                ''', (user_id, now, admin_id, reason))
+                return True
+            except:
+                return False
     
     def unblock_user(self, user_id):
         with self.get_connection() as conn:
             c = conn.cursor()
             c.execute('DELETE FROM blocked_users WHERE user_id = ?', (user_id,))
+            return c.rowcount > 0
     
     def get_blocked_users_count(self):
         with self.get_connection() as conn:
@@ -736,6 +937,28 @@ class Database:
             c.execute('INSERT OR REPLACE INTO bot_settings (key, value) VALUES (?, ?)', 
                      (key, value))
     
+    def track_link_click(self, user_id, clicker_id):
+        with self.get_connection() as conn:
+            c = conn.cursor()
+            c.execute('''
+                INSERT INTO link_clicks (user_id, clicker_id, timestamp)
+                VALUES (?, ?, ?)
+            ''', (user_id, clicker_id, int(time.time())))
+    
+    def get_link_clicks_stats(self, user_id):
+        with self.get_connection() as conn:
+            c = conn.cursor()
+            c.execute('SELECT COUNT(*) FROM link_clicks WHERE user_id = ?', (user_id,))
+            total_clicks = c.fetchone()[0]
+            
+            c.execute('SELECT COUNT(DISTINCT clicker_id) FROM link_clicks WHERE user_id = ?', (user_id,))
+            unique_clickers = c.fetchone()[0]
+            
+            return {
+                'total_clicks': total_clicks,
+                'unique_clickers': unique_clickers
+            }
+    
     def get_admin_stats(self):
         """Получение расширенной статистики бота"""
         with self.get_connection() as conn:
@@ -761,6 +984,11 @@ class Database:
             
             c.execute('SELECT COUNT(*) FROM support_tickets WHERE status = "open"')
             open_tickets = c.fetchone()[0]
+            
+            # Активные сегодня
+            today_start = int(time.time()) - 86400
+            c.execute('SELECT COUNT(DISTINCT user_id) FROM users WHERE last_active > ?', (today_start,))
+            today_active = c.fetchone()[0]
             
             # Пользователи за неделю
             c.execute('SELECT COUNT(*) FROM users WHERE created_at > ?', 
@@ -793,7 +1021,7 @@ class Database:
                      (int(time.time()) - 2592000,))
             old_users = c.fetchone()[0]
             
-            retention_30d = round((active_30d / old_users * 100), 2) if old_users > 0 else 0
+            retention_30d = round((active_30d / old_users * 100), 2) if old_users > 0 else 100
             
             # Конверсия (пользователи, отправившие хотя бы одно сообщение)
             c.execute('SELECT COUNT(DISTINCT sender_id) FROM messages')
@@ -848,10 +1076,11 @@ class Database:
             
             return {
                 'total_users': total_users,
+                'today_active': today_active,
                 'total_messages': total_messages,
-                'blocked_users': blocked_users,
-                'new_users_24h': new_users_24h,
                 'messages_24h': messages_24h,
+                'new_users_24h': new_users_24h,
+                'blocked_users': blocked_users,
                 'open_tickets': open_tickets,
                 'users_week': users_week,
                 'messages_week': messages_week,
@@ -863,175 +1092,6 @@ class Database:
                 'messages_by_day': messages_by_day,
                 'top_users': top_users
             }
-
-    # ====== МЕТОДЫ ДЛЯ СТАТИСТИКИ ======
-    
-    def update_detailed_stats(self, user_id, message_type, timestamp):
-        """Обновление детальной статистики пользователя"""
-        with self.get_connection() as conn:
-            c = conn.cursor()
-            
-            # Получаем текущую статистику
-            c.execute('SELECT * FROM user_detailed_stats WHERE user_id = ?', (user_id,))
-            row = c.fetchone()
-            
-            now = datetime.fromtimestamp(timestamp)
-            hour = now.hour
-            day_of_week = now.strftime('%A')
-            
-            if not row:
-                # Создаем новую запись
-                messages_by_hour = json.dumps({str(hour): 1})
-                messages_by_day = json.dumps({day_of_week: 1})
-                message_types = json.dumps({message_type: 1})
-                
-                c.execute('''
-                    INSERT INTO user_detailed_stats 
-                    (user_id, messages_by_hour, messages_by_day, message_types, most_active_day)
-                    VALUES (?, ?, ?, ?, ?)
-                ''', (user_id, messages_by_hour, messages_by_day, message_types, day_of_week))
-            else:
-                # Обновляем существующую статистику
-                messages_by_hour = json.loads(row['messages_by_hour'])
-                messages_by_day = json.loads(row['messages_by_day'])
-                message_types = json.loads(row['message_types'])
-                
-                # Обновляем часы
-                hour_key = str(hour)
-                messages_by_hour[hour_key] = messages_by_hour.get(hour_key, 0) + 1
-                
-                # Обновляем дни
-                messages_by_day[day_of_week] = messages_by_day.get(day_of_week, 0) + 1
-                
-                # Обновляем типы сообщений
-                message_types[message_type] = message_types.get(message_type, 0) + 1
-                
-                # Определяем самый активный день
-                if messages_by_day:
-                    most_active_day = max(messages_by_day.items(), key=lambda x: x[1])[0]
-                else:
-                    most_active_day = day_of_week
-                
-                c.execute('''
-                    UPDATE user_detailed_stats 
-                    SET messages_by_hour = ?, messages_by_day = ?, message_types = ?, most_active_day = ?
-                    WHERE user_id = ?
-                ''', (json.dumps(messages_by_hour), json.dumps(messages_by_day), 
-                      json.dumps(message_types), most_active_day, user_id))
-    
-    def track_link_click(self, user_id, clicker_id):
-        """Отслеживание кликов по ссылке"""
-        with self.get_connection() as conn:
-            c = conn.cursor()
-            c.execute('''
-                INSERT INTO link_stats (user_id, clicker_id, timestamp)
-                VALUES (?, ?, ?)
-            ''', (user_id, clicker_id, int(time.time())))
-    
-    def get_user_detailed_stats(self, user_id):
-        """Получение детальной статистики пользователя"""
-        with self.get_connection() as conn:
-            c = conn.cursor()
-            
-            # Основная статистика
-            c.execute('SELECT * FROM user_detailed_stats WHERE user_id = ?', (user_id,))
-            stats_row = c.fetchone()
-            
-            if not stats_row:
-                return None
-            
-            stats = dict(stats_row)
-            
-            # Парсим JSON данные
-            stats['messages_by_hour'] = json.loads(stats.get('messages_by_hour', '{}'))
-            stats['messages_by_day'] = json.loads(stats.get('messages_by_day', '{}'))
-            stats['message_types'] = json.loads(stats.get('message_types', '{}'))
-            
-            # Статистика кликов по ссылке
-            c.execute('''
-                SELECT COUNT(*) as total_clicks,
-                       COUNT(DISTINCT clicker_id) as unique_clickers
-                FROM link_stats 
-                WHERE user_id = ?
-            ''', (user_id,))
-            link_stats_row = c.fetchone()
-            
-            if link_stats_row:
-                stats['total_clicks'] = link_stats_row['total_clicks']
-                stats['unique_clickers'] = link_stats_row['unique_clickers']
-            else:
-                stats['total_clicks'] = 0
-                stats['unique_clickers'] = 0
-            
-            # Получаем среднее время ответа из сообщений
-            c.execute('''
-                SELECT timestamp, sender_id, receiver_id
-                FROM messages 
-                WHERE sender_id = ? OR receiver_id = ?
-                ORDER BY timestamp
-            ''', (user_id, user_id))
-            all_messages = c.fetchall()
-            
-            response_times = []
-            for i in range(len(all_messages)-1):
-                if all_messages[i]['receiver_id'] == user_id and all_messages[i+1]['sender_id'] == user_id:
-                    time_diff = all_messages[i+1]['timestamp'] - all_messages[i]['timestamp']
-                    if 0 < time_diff < 3600:  # Исключаем отрицательные и большие перерывы
-                        response_times.append(time_diff)
-            
-            if response_times:
-                stats['avg_response_time'] = sum(response_times) / len(response_times)
-            else:
-                stats['avg_response_time'] = 0
-            
-            return stats
-
-    # ====== МЕТОДЫ ДЛЯ КАСТОМНЫХ МЕНЮ ======
-    
-    def create_custom_menu(self, name, description, parent_id, button_text, message_text):
-        """Создание кастомного меню"""
-        with self.get_connection() as conn:
-            c = conn.cursor()
-            now = int(time.time())
-            
-            # Получаем максимальный order_index для родителя
-            c.execute('SELECT MAX(order_index) FROM custom_menus WHERE parent_id = ?', (parent_id,))
-            max_order = c.fetchone()[0] or 0
-            
-            c.execute('''
-                INSERT INTO custom_menus 
-                (name, description, parent_id, button_text, message_text, created_at, order_index)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            ''', (name, description, parent_id, button_text, message_text, now, max_order + 1))
-            
-            return c.lastrowid
-    
-    def get_custom_menus(self, parent_id=0):
-        """Получение кастомных меню"""
-        with self.get_connection() as conn:
-            c = conn.cursor()
-            c.execute('''
-                SELECT * FROM custom_menus 
-                WHERE parent_id = ? AND is_active = 1
-                ORDER BY order_index
-            ''', (parent_id,))
-            rows = c.fetchall()
-            return [dict(row) for row in rows]
-    
-    def get_custom_menu_by_id(self, menu_id):
-        """Получение кастомного меню по ID"""
-        with self.get_connection() as conn:
-            c = conn.cursor()
-            c.execute('SELECT * FROM custom_menus WHERE id = ?', (menu_id,))
-            row = c.fetchone()
-            return dict(row) if row else None
-    
-    def delete_custom_menu(self, menu_id):
-        """Удаление кастомного меню"""
-        with self.get_connection() as conn:
-            c = conn.cursor()
-            c.execute('DELETE FROM custom_menus WHERE id = ?', (menu_id,))
-            return c.rowcount > 0
 
 db = Database()
 
@@ -1115,6 +1175,24 @@ def get_admin_log_keyboard(show_text, lang='ru'):
     )
     return keyboard
 
+def create_chart(data, max_width=10):
+    """Создает текстовую диаграмму"""
+    if not data:
+        return "Нет данных"
+    
+    max_value = max(data.values())
+    result = []
+    
+    for key, value in sorted(data.items()):
+        if max_value > 0:
+            width = int((value / max_value) * max_width)
+        else:
+            width = 0
+        bar = "█" * width + "░" * (max_width - width)
+        result.append(f"{key}: {bar} {value}")
+    
+    return "\n".join(result)
+
 # ====== КЛАВИАТУРЫ ======
 def main_keyboard(is_admin=False, lang='ru'):
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
@@ -1122,16 +1200,13 @@ def main_keyboard(is_admin=False, lang='ru'):
     buttons = [
         types.KeyboardButton(t(lang, 'btn_my_link')),
         types.KeyboardButton(t(lang, 'btn_profile')),
+        types.KeyboardButton(t(lang, 'btn_stats')),
         types.KeyboardButton(t(lang, 'btn_settings')),
         types.KeyboardButton(t(lang, 'btn_qr')),
         types.KeyboardButton(t(lang, 'btn_help')),
-        types.KeyboardButton(t(lang, 'btn_support'))
+        types.KeyboardButton(t(lang, 'btn_support')),
+        types.KeyboardButton(t(lang, 'btn_history'))
     ]
-    
-    # Добавляем кастомные меню
-    custom_menus = db.get_custom_menus(parent_id=0)
-    for menu in custom_menus:
-        buttons.append(types.KeyboardButton(menu['button_text']))
     
     if is_admin:
         buttons.append(types.KeyboardButton(t(lang, 'btn_admin')))
@@ -1155,12 +1230,13 @@ def admin_keyboard(lang='ru'):
     buttons = [
         types.KeyboardButton(t(lang, 'btn_admin_stats')),
         types.KeyboardButton(t(lang, 'btn_admin_broadcast')),
-        types.KeyboardButton(t(lang, 'btn_admin_manage_users')),
         types.KeyboardButton(t(lang, 'btn_admin_find')),
+        types.KeyboardButton(t(lang, 'btn_admin_block')),
         types.KeyboardButton(t(lang, 'btn_admin_logs')),
         types.KeyboardButton(t(lang, 'btn_admin_tickets')),
         types.KeyboardButton(t(lang, 'btn_admin_settings')),
-        types.KeyboardButton(t(lang, 'btn_admin_custom_menus')),
+        types.KeyboardButton(t(lang, 'btn_admin_backup')),
+        types.KeyboardButton(t(lang, 'btn_admin_export')),
         types.KeyboardButton(t(lang, 'btn_back'))
     ]
     keyboard.add(*buttons)
@@ -1177,24 +1253,8 @@ def language_keyboard():
     )
     return keyboard
 
-def custom_menu_keyboard(menu_id, lang='ru'):
-    """Клавиатура для кастомного меню"""
-    keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    
-    # Получаем подменю
-    submenus = db.get_custom_menus(parent_id=menu_id)
-    
-    buttons = []
-    for menu in submenus:
-        buttons.append(types.KeyboardButton(menu['button_text']))
-    
-    buttons.append(types.KeyboardButton(t(lang, 'btn_back')))
-    
-    keyboard.add(*buttons)
-    return keyboard
-
 # ====== ОБРАБОТЧИКИ КОМАНД ======
-@bot.message_handler(commands=['start', 'lang', 'menu'])
+@bot.message_handler(commands=['start', 'lang', 'menu', 'stats', 'history'])
 def start_command(message):
     user_id = message.from_user.id
     username = message.from_user.username or ""
@@ -1226,6 +1286,20 @@ def start_command(message):
                         reply_markup=main_keyboard(user_id == ADMIN_ID, lang))
         return
     
+    # Обработка команды /stats
+    if message.text.startswith('/stats'):
+        user = db.get_user(user_id)
+        lang = user['language'] if user else 'ru'
+        show_user_stats(user_id, lang)
+        return
+    
+    # Обработка команды /history
+    if message.text.startswith('/history'):
+        user = db.get_user(user_id)
+        lang = user['language'] if user else 'ru'
+        show_user_history(user_id, lang)
+        return
+    
     # Обработка реферальной ссылки
     if len(args) > 1 and args[1].isdigit():
         target_id = int(args[1])
@@ -1255,7 +1329,7 @@ def handle_link_click(clicker_id, target_id):
     
     user_reply_targets[clicker_id] = target_id
     db.increment_stat(target_id, 'link_clicks')
-    db.track_link_click(target_id, clicker_id)  # Для статистики
+    db.track_link_click(target_id, clicker_id)
     
     user = db.get_user(clicker_id)
     lang = user['language'] if user else 'ru'
@@ -1329,20 +1403,21 @@ def handle_callback(call):
                 return
             
             target_id = int(data.split("_")[2])
-            db.block_user(target_id, ADMIN_ID, "Админ-панель")
-            db.add_admin_log("block", user_id, target_id, "Админ-панель")
-            bot.answer_callback_query(call.id, t(lang, 'block_user', user_id=target_id))
-            
-            try:
-                user_info = t(lang, 'user_blocked')
-                bot.edit_message_text(
-                    chat_id=call.message.chat.id,
-                    message_id=call.message.message_id,
-                    text=call.message.text + f"\n\n{user_info}",
-                    reply_markup=get_admin_user_keyboard(target_id, True, lang)
-                )
-            except:
-                pass
+            if db.block_user(target_id, ADMIN_ID, "Админ-панель"):
+                db.add_admin_log("block", user_id, target_id, "Админ-панель")
+                bot.answer_callback_query(call.id, t(lang, 'block_user', user_id=target_id))
+                
+                try:
+                    bot.edit_message_text(
+                        chat_id=call.message.chat.id,
+                        message_id=call.message.message_id,
+                        text=call.message.text + f"\n\n{t(lang, 'user_blocked')}",
+                        reply_markup=get_admin_user_keyboard(target_id, True, lang)
+                    )
+                except:
+                    pass
+            else:
+                bot.answer_callback_query(call.id, t(lang, 'user_already_blocked'))
         
         elif data.startswith("admin_unblock_"):
             if user_id != ADMIN_ID:
@@ -1350,20 +1425,21 @@ def handle_callback(call):
                 return
             
             target_id = int(data.split("_")[2])
-            db.unblock_user(target_id)
-            db.add_admin_log("unblock", user_id, target_id, "Админ-панель")
-            bot.answer_callback_query(call.id, t(lang, 'unblock_user', user_id=target_id))
-            
-            try:
-                user_info = "✅ Разблокирован"
-                bot.edit_message_text(
-                    chat_id=call.message.chat.id,
-                    message_id=call.message.message_id,
-                    text=call.message.text + f"\n\n{user_info}",
-                    reply_markup=get_admin_user_keyboard(target_id, False, lang)
-                )
-            except:
-                pass
+            if db.unblock_user(target_id):
+                db.add_admin_log("unblock", user_id, target_id, "Админ-панель")
+                bot.answer_callback_query(call.id, t(lang, 'unblock_user', user_id=target_id))
+                
+                try:
+                    bot.edit_message_text(
+                        chat_id=call.message.chat.id,
+                        message_id=call.message.message_id,
+                        text=call.message.text + "\n\n✅ Разблокирован",
+                        reply_markup=get_admin_user_keyboard(target_id, False, lang)
+                    )
+                except:
+                    pass
+            else:
+                bot.answer_callback_query(call.id, t(lang, 'user_not_blocked_msg'))
         
         elif data.startswith("admin_msg_"):
             if user_id != ADMIN_ID:
@@ -1454,13 +1530,6 @@ def handle_message(message):
                         reply_markup=admin_keyboard(lang))
         return
     
-    # Обработка кастомных меню
-    custom_menus = db.get_custom_menus(parent_id=0)
-    for menu in custom_menus:
-        if text == menu['button_text']:
-            handle_custom_menu(user_id, menu, lang)
-            return
-    
     if user_id == ADMIN_ID and user_id in admin_modes:
         mode = admin_modes[user_id]
         
@@ -1496,24 +1565,6 @@ def handle_message(message):
     if message_type == 'text':
         handle_text_button(user_id, text, lang)
 
-def handle_custom_menu(user_id, menu, lang):
-    """Обработка кастомного меню"""
-    # Проверяем есть ли подменю
-    submenus = db.get_custom_menus(parent_id=menu['id'])
-    
-    if submenus:
-        # Если есть подменю, показываем их
-        bot.send_message(user_id, menu['description'] or "Выберите пункт меню:",
-                        reply_markup=custom_menu_keyboard(menu['id'], lang))
-    else:
-        # Если нет подменю, показываем сообщение
-        if menu['message_text']:
-            bot.send_message(user_id, menu['message_text'], 
-                           reply_markup=main_keyboard(user_id == ADMIN_ID, lang))
-        else:
-            bot.send_message(user_id, "Это кастомное меню. Сообщение не настроено.",
-                           reply_markup=main_keyboard(user_id == ADMIN_ID, lang))
-
 def clear_user_state(user_id):
     if user_id in user_reply_targets:
         del user_reply_targets[user_id]
@@ -1544,6 +1595,9 @@ def handle_text_button(user_id, text, lang):
     elif text == t(lang, 'btn_help'):
         show_help(user_id, lang)
     
+    elif text == t(lang, 'btn_history'):
+        show_user_history(user_id, lang)
+    
     elif text == t(lang, 'btn_turn_on'):
         db.set_receive_messages(user_id, True)
         bot.send_message(user_id, t(lang, 'turn_on'),
@@ -1565,12 +1619,11 @@ def handle_text_button(user_id, text, lang):
     elif is_admin:
         handle_admin_command(user_id, text, lang)
 
-def show_user_stats(user_id, lang):
-    """Показать статистику пользователя"""
+def show_profile(user_id, lang):
     user = db.get_user(user_id)
     
     if not user:
-        bot.send_message(user_id, "❌", reply_markup=main_keyboard(user_id == ADMIN_ID, lang))
+        bot.send_message(user_id, "❌ Профиль не найден", reply_markup=main_keyboard(user_id == ADMIN_ID, lang))
         return
     
     stats = db.get_user_messages_stats(user_id)
@@ -1579,61 +1632,163 @@ def show_user_stats(user_id, lang):
     receive_status = "✅ Включён" if user['receive_messages'] else "❌ Выключен"
     username = f"@{user['username']}" if user['username'] else "❌ отсутствует"
     
-    # Анализ времени ответа
-    avg_response = detailed_stats.get('avg_response_time', 0) if detailed_stats else 0
-    response_time = f"{int(avg_response//60)} мин {int(avg_response%60)} сек" if avg_response > 0 else "N/A"
+    # Анализ статистики
+    peak_hour = "N/A"
+    active_day = "N/A"
+    fav_type = "N/A"
     
-    # Анализ пиковой активности
-    if detailed_stats and detailed_stats.get('messages_by_hour'):
-        peak_hour = max(detailed_stats['messages_by_hour'].items(), key=lambda x: x[1])[0] if detailed_stats['messages_by_hour'] else "N/A"
-    else:
-        peak_hour = "N/A"
-    
-    # Анализ дней
     if detailed_stats:
-        most_active_day = detailed_stats.get('most_active_day', 'N/A')
-        day_names = {
-            'Monday': 'понедельник',
-            'Tuesday': 'вторник',
-            'Wednesday': 'среда',
-            'Thursday': 'четверг',
-            'Friday': 'пятница',
-            'Saturday': 'суббота',
-            'Sunday': 'воскресенье'
-        }
-        active_day = day_names.get(most_active_day, most_active_day)
-    else:
-        active_day = "N/A"
+        # Пиковая активность по часам
+        if detailed_stats['messages_by_hour']:
+            max_hour = max(detailed_stats['messages_by_hour'].items(), key=lambda x: x[1])
+            peak_hour = max_hour[0]
+        
+        # Самый активный день
+        if detailed_stats['messages_by_day']:
+            max_day = max(detailed_stats['messages_by_day'].items(), key=lambda x: x[1])
+            day_names = {
+                'Monday': 'понедельник',
+                'Tuesday': 'вторник',
+                'Wednesday': 'среда',
+                'Thursday': 'четверг',
+                'Friday': 'пятница',
+                'Saturday': 'суббота',
+                'Sunday': 'воскресенье'
+            }
+            active_day = day_names.get(max_day[0], max_day[0])
+        
+        # Любимый тип сообщений
+        if detailed_stats['message_types']:
+            max_type = max(detailed_stats['message_types'].items(), key=lambda x: x[1])
+            type_names = {
+                'text': '📝 Текст',
+                'photo': '📸 Фото',
+                'video': '🎬 Видео',
+                'voice': '🎤 Голос',
+                'document': '📎 Документ',
+                'sticker': '😜 Стикер'
+            }
+            fav_type = type_names.get(max_type[0], max_type[0])
     
-    # Любимый тип сообщений
-    if detailed_stats and detailed_stats.get('message_types'):
-        fav_type = max(detailed_stats['message_types'].items(), key=lambda x: x[1])[0] if detailed_stats['message_types'] else "N/A"
-        type_names = {
-            'text': '📝 Текст',
-            'photo': '📸 Фото',
-            'video': '🎬 Видео',
-            'voice': '🎤 Голос'
-        }
-        fav_type_display = type_names.get(fav_type, fav_type)
-    else:
-        fav_type_display = "N/A"
+    # Время ответа
+    avg_response = detailed_stats['avg_response_time'] if detailed_stats and 'avg_response_time' in detailed_stats else 0
+    response_time = f"{int(avg_response//60)} мин {int(avg_response%60)} сек" if avg_response > 0 else "N/A"
     
     profile_text = t(lang, 'profile',
                     user_id=user['user_id'],
                     first_name=user['first_name'],
                     username=username,
-                    received=user['messages_received'],
-                    sent=user['messages_sent'],
+                    received=stats['messages_received'],
+                    sent=stats['messages_sent'],
                     clicks=user['link_clicks'],
                     response_time=response_time,
                     receive_status=receive_status,
+                    language=user['language'].upper(),
                     last_active=format_time(user['last_active'], lang),
                     peak_hour=peak_hour,
                     active_day=active_day,
-                    fav_type=fav_type_display,
+                    fav_type=fav_type,
                     link=generate_link(user_id))
     
     bot.send_message(user_id, profile_text, 
+                    reply_markup=main_keyboard(user_id == ADMIN_ID, lang))
+
+def show_user_stats(user_id, lang):
+    """Показывает детальную статистику пользователя"""
+    user = db.get_user(user_id)
+    
+    if not user:
+        bot.send_message(user_id, "❌ Пользователь не найден", reply_markup=main_keyboard(user_id == ADMIN_ID, lang))
+        return
+    
+    stats = db.get_user_messages_stats(user_id)
+    detailed_stats = db.get_user_detailed_stats(user_id)
+    
+    # Время ответа
+    avg_response = detailed_stats['avg_response_time'] if detailed_stats and 'avg_response_time' in detailed_stats else 0
+    response_time = f"{int(avg_response//60)} мин {int(avg_response%60)} сек" if avg_response > 0 else "N/A"
+    
+    # Среднее время в боте в день
+    if detailed_stats and detailed_stats['total_time_spent'] > 0:
+        days_registered = max(1, (time.time() - user['created_at']) / 86400)
+        avg_time_per_day = detailed_stats['total_time_spent'] / days_registered / 60
+        avg_time = f"{avg_time_per_day:.1f}"
+    else:
+        avg_time = "N/A"
+    
+    # Создаем графики
+    hours_chart = create_chart(detailed_stats['messages_by_hour'] if detailed_stats else {}, 5)
+    days_chart = create_chart(detailed_stats['messages_by_day'] if detailed_stats else {}, 5)
+    types_chart = create_chart(detailed_stats['message_types'] if detailed_stats else {}, 5)
+    
+    # Определяем ачивки
+    achievements = []
+    if stats['messages_sent'] >= 100:
+        achievements.append("🏆 Мастер анонимок (100+ отправленных)")
+    elif stats['messages_sent'] >= 50:
+        achievements.append("🥈 Любитель секретов (50+ отправленных)")
+    elif stats['messages_sent'] >= 10:
+        achievements.append("🥉 Новичок (10+ отправленных)")
+    
+    if stats['messages_received'] >= 100:
+        achievements.append("🏆 Популярная личность (100+ полученных)")
+    elif stats['messages_received'] >= 50:
+        achievements.append("🥈 Интересный человек (50+ полученных)")
+    elif stats['messages_received'] >= 10:
+        achievements.append("🥉 Общительный (10+ полученных)")
+    
+    if user['link_clicks'] >= 100:
+        achievements.append("🏆 Вирусная ссылка (100+ переходов)")
+    elif user['link_clicks'] >= 50:
+        achievements.append("🥈 Популярная ссылка (50+ переходов)")
+    elif user['link_clicks'] >= 10:
+        achievements.append("🥉 Активный (10+ переходов)")
+    
+    if not achievements:
+        achievements.append("📌 Начни общение для получения ачивок!")
+    
+    achievements_text = "\n".join([f"├ {achievement}" for achievement in achievements])
+    
+    stats_text = t(lang, 'user_stats',
+                  received=stats['messages_received'],
+                  sent=stats['messages_sent'],
+                  clicks=user['link_clicks'],
+                  response_time=response_time,
+                  registered=format_time(user['created_at'], lang),
+                  last_active=format_time(user['last_active'], lang),
+                  avg_time=avg_time,
+                  hours_chart=hours_chart,
+                  days_chart=days_chart,
+                  types_chart=types_chart,
+                  achievements=achievements_text)
+    
+    bot.send_message(user_id, stats_text, 
+                    reply_markup=main_keyboard(user_id == ADMIN_ID, lang))
+
+def show_user_history(user_id, lang):
+    """Показывает историю сообщений пользователя"""
+    history = db.get_user_history(user_id, limit=20)
+    
+    if not history:
+        bot.send_message(user_id, t(lang, 'history_empty'),
+                        reply_markup=main_keyboard(user_id == ADMIN_ID, lang))
+        return
+    
+    history_text = t(lang, 'history') + "\n\n"
+    
+    for i, item in enumerate(history, 1):
+        direction = t(lang, 'history_incoming') if item['direction'] == 'incoming' else t(lang, 'history_outgoing')
+        name = item['partner_name'] or f"ID: {item['partner_id']}"
+        time_str = format_time(item['timestamp'], lang)
+        
+        history_text += t(lang, 'history_item',
+                         index=i,
+                         direction=direction,
+                         name=name,
+                         time=time_str,
+                         preview=item['preview']) + "\n\n"
+    
+    bot.send_message(user_id, history_text,
                     reply_markup=main_keyboard(user_id == ADMIN_ID, lang))
 
 def send_anonymous_message(sender_id, receiver_id, message, lang):
@@ -1673,9 +1828,6 @@ def send_anonymous_message(sender_id, receiver_id, message, lang):
         message_id = db.save_message(sender_id, receiver_id, message_type, 
                        message.text or message.caption or "", 
                        file_id, file_unique_id)
-        
-        # Обновляем детальную статистику
-        db.update_detailed_stats(sender_id, message_type, int(time.time()))
         
         message_text = message.text or message.caption or ""
         caption = t(receiver['language'] if receiver else 'ru', 'anonymous_message', 
@@ -1972,76 +2124,6 @@ def generate_qr_code(user_id, lang):
 def show_help(user_id, lang):
     bot.send_message(user_id, t(lang, 'help'), reply_markup=main_keyboard(user_id == ADMIN_ID, lang))
 
-def show_profile(user_id, lang):
-    user = db.get_user(user_id)
-    
-    if not user:
-        bot.send_message(user_id, "❌", reply_markup=main_keyboard(user_id == ADMIN_ID, lang))
-        return
-    
-    stats = db.get_user_messages_stats(user_id)
-    detailed_stats = db.get_user_detailed_stats(user_id)
-    
-    receive_status = "✅ Включён" if user['receive_messages'] else "❌ Выключен"
-    username = f"@{user['username']}" if user['username'] else "❌ отсутствует"
-    
-    # Анализ времени ответа
-    avg_response = detailed_stats.get('avg_response_time', 0) if detailed_stats else 0
-    response_time = f"{int(avg_response//60)} мин {int(avg_response%60)} сек" if avg_response > 0 else "N/A"
-    
-    # Анализ пиковой активности
-    if detailed_stats and detailed_stats.get('messages_by_hour'):
-        peak_hour = max(detailed_stats['messages_by_hour'].items(), key=lambda x: x[1])[0] if detailed_stats['messages_by_hour'] else "N/A"
-    else:
-        peak_hour = "N/A"
-    
-    # Анализ дней
-    if detailed_stats:
-        most_active_day = detailed_stats.get('most_active_day', 'N/A')
-        day_names = {
-            'Monday': 'понедельник',
-            'Tuesday': 'вторник',
-            'Wednesday': 'среда',
-            'Thursday': 'четверг',
-            'Friday': 'пятница',
-            'Saturday': 'суббота',
-            'Sunday': 'воскресенье'
-        }
-        active_day = day_names.get(most_active_day, most_active_day)
-    else:
-        active_day = "N/A"
-    
-    # Любимый тип сообщений
-    if detailed_stats and detailed_stats.get('message_types'):
-        fav_type = max(detailed_stats['message_types'].items(), key=lambda x: x[1])[0] if detailed_stats['message_types'] else "N/A"
-        type_names = {
-            'text': '📝 Текст',
-            'photo': '📸 Фото',
-            'video': '🎬 Видео',
-            'voice': '🎤 Голос'
-        }
-        fav_type_display = type_names.get(fav_type, fav_type)
-    else:
-        fav_type_display = "N/A"
-    
-    profile_text = t(lang, 'profile',
-                    user_id=user['user_id'],
-                    first_name=user['first_name'],
-                    username=username,
-                    received=user['messages_received'],
-                    sent=user['messages_sent'],
-                    clicks=user['link_clicks'],
-                    response_time=response_time,
-                    receive_status=receive_status,
-                    last_active=format_time(user['last_active'], lang),
-                    peak_hour=peak_hour,
-                    active_day=active_day,
-                    fav_type=fav_type_display,
-                    link=generate_link(user_id))
-    
-    bot.send_message(user_id, profile_text, 
-                    reply_markup=main_keyboard(user_id == ADMIN_ID, lang))
-
 # ====== АДМИНСКИЕ ФУНКЦИИ ======
 def handle_admin_command(admin_id, text, lang):
     
@@ -2052,13 +2134,13 @@ def handle_admin_command(admin_id, text, lang):
         admin_modes[admin_id] = 'broadcast'
         bot.send_message(admin_id, t(lang, 'broadcast_start'), reply_markup=cancel_keyboard(lang))
     
-    elif text == t(lang, 'btn_admin_manage_users'):
-        bot.send_message(admin_id, t(lang, 'users_management'), 
-                        reply_markup=admin_keyboard(lang))
-    
     elif text == t(lang, 'btn_admin_find'):
         admin_modes[admin_id] = 'find_user'
         bot.send_message(admin_id, t(lang, 'find_user'), reply_markup=cancel_keyboard(lang))
+    
+    elif text == t(lang, 'btn_admin_block'):
+        admin_modes[admin_id] = 'block_user'
+        bot.send_message(admin_id, t(lang, 'block_instruction'), reply_markup=cancel_keyboard(lang))
     
     elif text == t(lang, 'btn_admin_logs'):
         show_message_logs(admin_id, lang)
@@ -2069,8 +2151,11 @@ def handle_admin_command(admin_id, text, lang):
     elif text == t(lang, 'btn_admin_settings'):
         show_admin_settings(admin_id, lang)
     
-    elif text == t(lang, 'btn_admin_custom_menus'):
-        handle_custom_menus_management(admin_id, lang)
+    elif text == t(lang, 'btn_admin_backup'):
+        create_backup(admin_id, lang)
+    
+    elif text == t(lang, 'btn_admin_export'):
+        show_export_options(admin_id, lang)
     
     elif text == t(lang, 'btn_back'):
         bot.send_message(admin_id, t(lang, 'main_menu'), reply_markup=main_keyboard(True, lang))
@@ -2088,18 +2173,32 @@ def handle_admin_command(admin_id, text, lang):
             if admin_id in admin_modes:
                 del admin_modes[admin_id]
         
-        elif mode == 'create_menu':
-            create_custom_menu_handler(admin_id, text, lang)
+        elif mode == 'block_user':
+            handle_block_user(admin_id, text, lang)
+            if admin_id in admin_modes:
+                del admin_modes[admin_id]
+        
+        elif mode == 'export_users':
+            export_users_data(admin_id)
+            if admin_id in admin_modes:
+                del admin_modes[admin_id]
+        
+        elif mode == 'export_messages':
+            export_messages_data(admin_id)
+            if admin_id in admin_modes:
+                del admin_modes[admin_id]
+        
+        elif mode == 'export_stats':
+            export_stats_data(admin_id)
             if admin_id in admin_modes:
                 del admin_modes[admin_id]
 
 def show_admin_stats(admin_id, lang):
     stats = db.get_admin_stats()
-    today_active = db.get_today_active_users()
     
     bot.send_message(admin_id, t(lang, 'admin_stats',
                                total_users=stats['total_users'],
-                               today_active=today_active,
+                               today_active=stats['today_active'],
                                total_messages=stats['total_messages'],
                                messages_24h=stats['messages_24h'],
                                new_users_24h=stats['new_users_24h'],
@@ -2206,8 +2305,8 @@ def find_user_info(admin_id, query, lang):
                      username=username,
                      registered=format_time(user['created_at'], lang),
                      last_active=format_time(user['last_active'], lang),
-                     received=user['messages_received'],
-                     sent=user['messages_sent'],
+                     received=stats['messages_received'],
+                     sent=stats['messages_sent'],
                      clicks=user['link_clicks'],
                      receive_status=receive_status,
                      block_status=block_status)
@@ -2217,6 +2316,44 @@ def find_user_info(admin_id, query, lang):
         
     except Exception as e:
         logger.error(f"Find user error: {e}")
+        bot.send_message(admin_id, f"❌ Ошибка: {e}", reply_markup=admin_keyboard(lang))
+
+def handle_block_user(admin_id, query, lang):
+    try:
+        user = None
+        
+        if query.isdigit():
+            user_id = int(query)
+            user = db.get_user(user_id)
+        else:
+            username = query.lstrip('@')
+            user = db.get_user_by_username(username)
+        
+        if not user:
+            bot.send_message(admin_id, t(lang, 'user_not_found'), reply_markup=admin_keyboard(lang))
+            return
+        
+        is_blocked = db.is_user_blocked(user['user_id'])
+        
+        if is_blocked:
+            if db.unblock_user(user['user_id']):
+                db.add_admin_log("unblock", admin_id, user['user_id'], "Панель блокировки")
+                bot.send_message(admin_id, t(lang, 'unblock_success', user_id=user['user_id']),
+                               reply_markup=admin_keyboard(lang))
+            else:
+                bot.send_message(admin_id, t(lang, 'user_not_blocked_msg'),
+                               reply_markup=admin_keyboard(lang))
+        else:
+            if db.block_user(user['user_id'], admin_id, "Панель блокировки"):
+                db.add_admin_log("block", admin_id, user['user_id'], "Панель блокировки")
+                bot.send_message(admin_id, t(lang, 'block_success', user_id=user['user_id']),
+                               reply_markup=admin_keyboard(lang))
+            else:
+                bot.send_message(admin_id, t(lang, 'block_already'),
+                               reply_markup=admin_keyboard(lang))
+        
+    except Exception as e:
+        logger.error(f"Block user error: {e}")
         bot.send_message(admin_id, f"❌ Ошибка: {e}", reply_markup=admin_keyboard(lang))
 
 def show_message_logs(admin_id, lang):
@@ -2282,116 +2419,131 @@ def show_admin_settings(admin_id, lang):
     
     bot.send_message(admin_id, settings_text, reply_markup=admin_keyboard(lang))
 
-def handle_custom_menus_management(admin_id, lang):
-    """Управление кастомными меню"""
+def create_backup(admin_id, lang):
+    try:
+        # Создаем резервную копию базы данных
+        backup_filename = f"backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
+        
+        with open(DB_PATH, 'rb') as f:
+            db_content = f.read()
+        
+        # Отправляем файл админу
+        bio = BytesIO(db_content)
+        bio.name = backup_filename
+        
+        bot.send_document(admin_id, bio, caption=f"💾 Резервная копия базы данных\n📅 {datetime.now().strftime('%d.%m.%Y %H:%M')}")
+        db.add_admin_log("backup", admin_id, None, "Создана резервная копия")
+        
+    except Exception as e:
+        logger.error(f"Backup error: {e}")
+        bot.send_message(admin_id, f"❌ Ошибка создания бэкапа: {e}")
+
+def show_export_options(admin_id, lang):
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     buttons = [
-        types.KeyboardButton("➕ Создать меню"),
-        types.KeyboardButton("📋 Список меню"),
-        types.KeyboardButton("🗑️ Удалить меню"),
-        types.KeyboardButton("⬅️ Назад")
+        types.KeyboardButton(t(lang, 'export_users')),
+        types.KeyboardButton(t(lang, 'export_messages')),
+        types.KeyboardButton(t(lang, 'export_stats')),
+        types.KeyboardButton(t(lang, 'btn_cancel'))
     ]
     keyboard.add(*buttons)
     
-    bot.send_message(admin_id, "🛠️ <b>Управление кастомными меню</b>\n\n"
-                    "Выберите действие:", reply_markup=keyboard)
-    
-    admin_modes[admin_id] = 'custom_menus'
+    bot.send_message(admin_id, t(lang, 'export_instruction'), reply_markup=keyboard)
+    admin_modes[admin_id] = 'export_options'
 
-def create_custom_menu_handler(admin_id, text, lang):
-    """Обработчик создания кастомного меню"""
-    if admin_id not in admin_modes:
-        return
-    
-    mode = admin_modes[admin_id]
-    
-    if mode == 'create_menu_name':
-        admin_modes[admin_id] = 'create_menu_desc'
-        admin_modes[f'{admin_id}_menu_name'] = text
+def export_users_data(admin_id):
+    try:
+        bot.send_message(admin_id, t('ru', 'export_processing'))
         
-        bot.send_message(admin_id, "📝 Введите описание меню:")
-    
-    elif mode == 'create_menu_desc':
-        admin_modes[admin_id] = 'create_menu_parent'
-        admin_modes[f'{admin_id}_menu_desc'] = text
+        with db.get_connection() as conn:
+            c = conn.cursor()
+            c.execute('SELECT * FROM users ORDER BY user_id')
+            users = c.fetchall()
         
-        # Список существующих меню для выбора родителя
-        menus = db.get_custom_menus()
-        keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        # Создаем CSV файл
+        csv_content = "ID;Username;First Name;Language;Created At;Last Active;Messages Received;Messages Sent;Link Clicks;Receive Messages\n"
         
-        if menus:
-            for menu in menus:
-                keyboard.add(types.KeyboardButton(f"📁 {menu['name']}"))
+        for user in users:
+            csv_content += f"{user['user_id']};{user['username'] or ''};{user['first_name'] or ''};{user['language']};"
+            csv_content += f"{format_time(user['created_at'])};{format_time(user['last_active'])};"
+            csv_content += f"{user['messages_received']};{user['messages_sent']};{user['link_clicks']};{user['receive_messages']}\n"
         
-        keyboard.add(types.KeyboardButton("🏠 Главное меню (0)"))
-        keyboard.add(types.KeyboardButton("❌ Отмена"))
+        # Отправляем файл
+        bio = BytesIO(csv_content.encode('utf-8'))
+        bio.name = f"users_export_{datetime.now().strftime('%Y%m%d')}.csv"
         
-        bot.send_message(admin_id, "📂 Выберите родительское меню (ID):\n"
-                        "0 - Главное меню\n\n"
-                        "Или напишите ID существующего меню:", 
-                        reply_markup=keyboard)
-    
-    elif mode == 'create_menu_parent':
-        if text == "🏠 Главное меню (0)":
-            parent_id = 0
-        elif text.startswith("📁 "):
-            # Найдем меню по имени
-            menu_name = text[3:]
-            menus = db.get_custom_menus()
-            parent_id = 0
-            for menu in menus:
-                if menu['name'] == menu_name:
-                    parent_id = menu['id']
-                    break
-        else:
-            try:
-                parent_id = int(text)
-            except:
-                bot.send_message(admin_id, "❌ Неверный формат ID")
-                return
+        bot.send_document(admin_id, bio, caption="👥 Экспорт пользователей")
+        db.add_admin_log("export", admin_id, None, "Экспорт пользователей")
         
-        admin_modes[admin_id] = 'create_menu_button'
-        admin_modes[f'{admin_id}_menu_parent'] = parent_id
+    except Exception as e:
+        logger.error(f"Export users error: {e}")
+        bot.send_message(admin_id, f"❌ Ошибка экспорта: {e}")
+
+def export_messages_data(admin_id):
+    try:
+        bot.send_message(admin_id, t('ru', 'export_processing'))
         
-        bot.send_message(admin_id, "🔘 Введите текст для кнопки меню:", 
-                        reply_markup=cancel_keyboard(lang))
-    
-    elif mode == 'create_menu_button':
-        admin_modes[admin_id] = 'create_menu_message'
-        admin_modes[f'{admin_id}_menu_button'] = text
+        with db.get_connection() as conn:
+            c = conn.cursor()
+            c.execute('SELECT * FROM messages ORDER BY timestamp DESC LIMIT 1000')
+            messages = c.fetchall()
         
-        bot.send_message(admin_id, "💬 Введите сообщение, которое будет показываться при нажатии на меню:\n"
-                        "(Используйте HTML-разметку)")
-    
-    elif mode == 'create_menu_message':
-        # Получаем все сохраненные данные
-        menu_name = admin_modes.get(f'{admin_id}_menu_name')
-        menu_desc = admin_modes.get(f'{admin_id}_menu_desc')
-        menu_parent = admin_modes.get(f'{admin_id}_menu_parent')
-        menu_button = admin_modes.get(f'{admin_id}_menu_button')
-        menu_message = text
+        # Создаем CSV файл
+        csv_content = "ID;Sender ID;Receiver ID;Type;Text;Timestamp\n"
         
-        # Создаем меню
-        try:
-            menu_id = db.create_custom_menu(menu_name, menu_desc, menu_parent, menu_button, menu_message)
-            
-            # Очищаем временные данные
-            for key in [f'{admin_id}_menu_name', f'{admin_id}_menu_desc', 
-                       f'{admin_id}_menu_parent', f'{admin_id}_menu_button']:
-                if key in admin_modes:
-                    del admin_modes[key]
-            
-            if admin_id in admin_modes:
-                del admin_modes[admin_id]
-            
-            bot.send_message(admin_id, f"✅ Меню '{menu_name}' успешно создано!\n"
-                            f"ID: {menu_id}", 
-                            reply_markup=admin_keyboard(lang))
-            
-        except Exception as e:
-            logger.error(f"Create menu error: {e}")
-            bot.send_message(admin_id, f"❌ Ошибка создания меню: {e}", 
-                            reply_markup=admin_keyboard(lang))
+        for msg in messages:
+            text = (msg['text'] or '').replace(';', ',').replace('\n', ' ').replace('\r', '')
+            csv_content += f"{msg['id']};{msg['sender_id']};{msg['receiver_id']};{msg['message_type']};{text};{format_time(msg['timestamp'])}\n"
+        
+        # Отправляем файл
+        bio = BytesIO(csv_content.encode('utf-8'))
+        bio.name = f"messages_export_{datetime.now().strftime('%Y%m%d')}.csv"
+        
+        bot.send_document(admin_id, bio, caption="📨 Экспорт сообщений (последние 1000)")
+        db.add_admin_log("export", admin_id, None, "Экспорт сообщений")
+        
+    except Exception as e:
+        logger.error(f"Export messages error: {e}")
+        bot.send_message(admin_id, f"❌ Ошибка экспорта: {e}")
+
+def export_stats_data(admin_id):
+    try:
+        bot.send_message(admin_id, t('ru', 'export_processing'))
+        
+        stats = db.get_admin_stats()
+        
+        # Создаем текстовый файл со статистикой
+        stats_text = f"""📊 Статистика бота Anony SMS
+📅 {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}
+
+Основные метрики:
+├ Всего пользователей: {stats['total_users']}
+├ Активных сегодня: {stats['today_active']}
+├ Всего сообщений: {stats['total_messages']}
+├ Сообщений за 24ч: {stats['messages_24h']}
+├ Новых за 24ч: {stats['new_users_24h']}
+├ Заблокированных: {stats['blocked_users']}
+├ Открытых тикетов: {stats['open_tickets']}
+└ Сред. активность в час: {stats['avg_hourly']}
+
+Детальная статистика:
+├ Пользователей за неделю: {stats['users_week']}
+├ Сообщений за неделю: {stats['messages_week']}
+├ Активных за неделю: {stats['active_week']}
+├ Удерживание (30 дней): {stats['retention_30d']}%
+└ Конверсия в сообщения: {stats['conversion_rate']}%
+"""
+        
+        # Отправляем файл
+        bio = BytesIO(stats_text.encode('utf-8'))
+        bio.name = f"stats_export_{datetime.now().strftime('%Y%m%d')}.txt"
+        
+        bot.send_document(admin_id, bio, caption="📊 Экспорт статистики")
+        db.add_admin_log("export", admin_id, None, "Экспорт статистики")
+        
+    except Exception as e:
+        logger.error(f"Export stats error: {e}")
+        bot.send_message(admin_id, f"❌ Ошибка экспорта: {e}")
 
 # ====== FLASK РОУТЫ ======
 @app.route('/webhook', methods=['POST'])
@@ -2415,8 +2567,9 @@ def health_check():
             'status': 'ok', 
             'time': datetime.now().isoformat(),
             'bot': 'Anony SMS',
-            'version': '5.0',
-            'users': db.get_admin_stats()['total_users']
+            'version': '6.0',
+            'users': db.get_admin_stats()['total_users'],
+            'messages': db.get_admin_stats()['total_messages']
         })
     except Exception as e:
         logger.error(f"Health check error: {e}")
@@ -2505,7 +2658,7 @@ def keep_alive():
 
 # ====== ЗАПУСК ======
 if __name__ == '__main__':
-    logger.info("=== Anony SMS Bot v5.0 запущен ===")
+    logger.info("=== Anony SMS Bot v6.0 запущен ===")
     logger.info(f"Admin ID: {ADMIN_ID}")
     
     try:
