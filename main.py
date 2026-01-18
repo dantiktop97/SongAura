@@ -628,7 +628,7 @@ TEXTS = {
         'btn_unblock': "✅ Разблокировать",
         'btn_message': "✉️ Написать ему",
         'btn_refresh': "🔄 Обновить",
-        'btn_toggle_text': "🔕 Скрыть текст",
+        'btn_hide_text': "🔕 Скрыть текст",
         'btn_show_text': "🔔 Показать текст",
         'btn_reply_ticket': "📝 Ответить",
         'btn_close_ticket': "✅ Закрыть",
@@ -672,6 +672,10 @@ TEXTS = {
         'activity': "Активность",
         'messages': "сообщений",
         'active_days': "активных дней",
+        
+        'broadcast_progress': "📢 <b>Рассылка начата</b>\n\n<i>Всего пользователей: {total}</i>\n⏳ Отправка...",
+        'broadcast_result': "✅ <b>Рассылка завершена</b>\n\n📊 <b>Результаты:</b>\n├ Всего пользователей: {total}\n├ Успешно отправлено: {sent}\n├ Не удалось отправить: {failed}\n└ Заблокировано ботом: {blocked}",
+        'find_user': "🔍 <b>Поиск пользователя</b>\n\n<i>Введите ID пользователя или username:</i>"
     },
     
     'en': {
@@ -1094,7 +1098,7 @@ You can send text, photo or video.</i>""",
         'btn_unblock': "✅ Unblock",
         'btn_message': "✉️ Message",
         'btn_refresh': "🔄 Refresh",
-        'btn_toggle_text': "🔕 Hide text",
+        'btn_hide_text': "🔕 Hide text",
         'btn_show_text': "🔔 Show text",
         'btn_reply_ticket': "📝 Reply",
         'btn_close_ticket': "✅ Close",
@@ -1138,6 +1142,10 @@ You can send text, photo or video.</i>""",
         'activity': "Activity",
         'messages': "messages",
         'active_days': "active days",
+        
+        'broadcast_progress': "📢 <b>Broadcast started</b>\n\n<i>Total users: {total}</i>\n⏳ Sending...",
+        'broadcast_result': "✅ <b>Broadcast completed</b>\n\n📊 <b>Results:</b>\n├ Total users: {total}\n├ Successfully sent: {sent}\n├ Failed to send: {failed}\n└ Blocked by bot: {blocked}",
+        'find_user': "🔍 <b>Find user</b>\n\n<i>Enter user ID or username:</i>"
     }
 }
 
@@ -1158,23 +1166,26 @@ def format_time(timestamp, lang='ru'):
     if not timestamp:
         return get_text(lang, 'never')
     
-    dt = datetime.fromtimestamp(timestamp)
-    now = datetime.now()
-    diff = now - dt
-    
-    if diff.days == 0:
-        if diff.seconds < 60:
-            return get_text(lang, 'just_now')
-        elif diff.seconds < 3600:
-            minutes = diff.seconds // 60
-            return get_text(lang, 'minutes_ago', minutes=minutes)
+    try:
+        dt = datetime.fromtimestamp(timestamp)
+        now = datetime.now()
+        diff = now - dt
+        
+        if diff.days == 0:
+            if diff.seconds < 60:
+                return get_text(lang, 'just_now')
+            elif diff.seconds < 3600:
+                minutes = diff.seconds // 60
+                return get_text(lang, 'minutes_ago', minutes=minutes)
+            else:
+                hours = diff.seconds // 3600
+                return get_text(lang, 'hours_ago', hours=hours)
+        elif diff.days == 1:
+            return get_text(lang, 'yesterday')
         else:
-            hours = diff.seconds // 3600
-            return get_text(lang, 'hours_ago', hours=hours)
-    elif diff.days == 1:
-        return get_text(lang, 'yesterday')
-    else:
-        return dt.strftime("%d.%m.%Y %H:%M")
+            return dt.strftime("%d.%m.%Y %H:%M")
+    except:
+        return get_text(lang, 'never')
 
 def check_rate_limit(user_id):
     now = time.time()
@@ -1250,12 +1261,13 @@ def get_top_words(user_id, limit=5):
             
             all_words = []
             for row in rows:
-                words = extract_words(row['text'])
+                words = extract_words(row[0])
                 all_words.extend(words)
             
             word_count = collections.Counter(all_words)
             return word_count.most_common(limit)
-    except:
+    except Exception as e:
+        logger.error(f"Error getting top words: {e}")
         return []
 
 def get_user_activity_stats(user_id):
@@ -1277,7 +1289,7 @@ def get_user_activity_stats(user_id):
             
             all_words = []
             for row in rows:
-                words = extract_words(row['text'])
+                words = extract_words(row[0])
                 all_words.extend(words)
             
             unique_words = len(set(all_words))
@@ -1287,15 +1299,17 @@ def get_user_activity_stats(user_id):
                 'active_days': active_days,
                 'unique_words': unique_words
             }
-    except:
+    except Exception as e:
+        logger.error(f"Error getting user activity stats: {e}")
         return {'messages_week': 0, 'active_days': 0, 'unique_words': 0}
 
 def generate_link(user_id):
     try:
         bot_username = bot.get_me().username
         return f"https://t.me/{bot_username}?start={user_id}"
-    except:
-        return f"https://t.me/{bot.get_me().username}?start={user_id}"
+    except Exception as e:
+        logger.error(f"Error generating link: {e}")
+        return ""
 
 def main_keyboard(is_admin=False, lang='ru'):
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
@@ -1358,13 +1372,19 @@ def admin_settings_keyboard(lang='ru'):
         types.InlineKeyboardButton(f"{notify_user_status} Уведом. о новых пользователях", 
                                  callback_data="toggle_notify_new_user"),
         types.InlineKeyboardButton(f"{notify_message_status} Уведом. о новых сообщениях", 
-                                 callback_data="toggle_notify_new_message"),
+                                 callback_data="toggle_notify_new_message")
+    )
+    
+    keyboard.add(
         types.InlineKeyboardButton("🕐 Интервал авто-бэкапа", 
                                  callback_data="change_backup_interval"),
         types.InlineKeyboardButton("📨 Лимит сообщений в день", 
                                  callback_data="change_max_messages"),
         types.InlineKeyboardButton("🌐 Язык бота", 
-                                 callback_data="change_bot_language"),
+                                 callback_data="change_bot_language")
+    )
+    
+    keyboard.add(
         types.InlineKeyboardButton("⬅️ Назад", callback_data="admin_back")
     )
     
@@ -1450,11 +1470,16 @@ def get_admin_user_keyboard(user_id, is_blocked, lang='ru'):
 
 def get_admin_log_keyboard(show_text, lang='ru'):
     keyboard = types.InlineKeyboardMarkup(row_width=2)
-    keyboard.add(
-        types.InlineKeyboardButton(get_text(lang, 'btn_refresh'), callback_data="refresh_logs"),
-        types.InlineKeyboardButton(get_text(lang, 'btn_hide_text') if show_text else get_text(lang, 'btn_show_text'), 
-                                 callback_data="toggle_text")
-    )
+    if show_text:
+        keyboard.add(
+            types.InlineKeyboardButton(get_text(lang, 'btn_refresh'), callback_data="refresh_logs"),
+            types.InlineKeyboardButton(get_text(lang, 'btn_hide_text'), callback_data="toggle_text")
+        )
+    else:
+        keyboard.add(
+            types.InlineKeyboardButton(get_text(lang, 'btn_refresh'), callback_data="refresh_logs"),
+            types.InlineKeyboardButton(get_text(lang, 'btn_show_text'), callback_data="toggle_text")
+        )
     return keyboard
 
 def export_keyboard(lang='ru'):
@@ -1637,79 +1662,97 @@ class Database:
         return stats
     
     def _get_admin_stats_impl(self):
-        with self.get_connection() as conn:
-            c = conn.cursor()
-            
-            c.execute('SELECT COUNT(*) FROM users')
-            total_users = c.fetchone()[0]
-            
-            c.execute('SELECT COUNT(*) FROM messages')
-            total_messages = c.fetchone()[0]
-            
-            c.execute('SELECT COUNT(*) FROM users WHERE is_blocked = 1')
-            blocked_users = c.fetchone()[0]
-            
-            c.execute('SELECT COUNT(*) FROM support_tickets WHERE status = "open"')
-            open_tickets = c.fetchone()[0]
-            
-            today_start = int(time.time()) - 86400
-            c.execute('SELECT COUNT(DISTINCT user_id) FROM users WHERE last_active > ?', (today_start,))
-            today_active = c.fetchone()[0]
-            
-            c.execute('SELECT COUNT(*) FROM messages WHERE timestamp > ?', 
-                     (int(time.time()) - 86400,))
-            messages_24h = c.fetchone()[0]
-            
-            c.execute('SELECT COUNT(*) FROM users WHERE created_at > ?', 
-                     (int(time.time()) - 86400,))
-            new_users_24h = c.fetchone()[0]
-            
-            c.execute('SELECT COUNT(*) / 24.0 FROM messages WHERE timestamp > ?', 
-                     (int(time.time()) - 86400,))
-            avg_hourly_result = c.fetchone()[0]
-            avg_hourly = round(avg_hourly_result, 2) if avg_hourly_result else 0
-            
-            c.execute('SELECT COUNT(*) FROM users WHERE created_at > ?', 
-                     (int(time.time()) - 604800,))
-            users_week = c.fetchone()[0]
-            
-            c.execute('SELECT COUNT(*) FROM messages WHERE timestamp > ?', 
-                     (int(time.time()) - 604800,))
-            messages_week = c.fetchone()[0]
-            
-            c.execute('SELECT COUNT(DISTINCT user_id) FROM messages WHERE timestamp > ?', 
-                     (int(time.time()) - 604800,))
-            active_week = c.fetchone()[0]
-            
-            c.execute('SELECT COUNT(DISTINCT user_id) FROM messages WHERE timestamp > ?', 
-                     (int(time.time()) - 2592000,))
-            active_30d = c.fetchone()[0]
-            
-            c.execute('SELECT COUNT(*) FROM users WHERE created_at < ?', 
-                     (int(time.time()) - 2592000,))
-            old_users = c.fetchone()[0]
-            
-            retention_30d = round((active_30d / old_users * 100), 2) if old_users > 0 else 100
-            
-            c.execute('SELECT COUNT(DISTINCT sender_id) FROM messages')
-            users_with_messages = c.fetchone()[0]
-            
-            conversion_rate = round((users_with_messages / total_users * 100), 2) if total_users > 0 else 0
-            
+        try:
+            with self.get_connection() as conn:
+                c = conn.cursor()
+                
+                c.execute('SELECT COUNT(*) FROM users')
+                total_users = c.fetchone()[0]
+                
+                c.execute('SELECT COUNT(*) FROM messages')
+                total_messages = c.fetchone()[0]
+                
+                c.execute('SELECT COUNT(*) FROM users WHERE is_blocked = 1')
+                blocked_users = c.fetchone()[0]
+                
+                c.execute('SELECT COUNT(*) FROM support_tickets WHERE status = "open"')
+                open_tickets = c.fetchone()[0]
+                
+                today_start = int(time.time()) - 86400
+                c.execute('SELECT COUNT(DISTINCT user_id) FROM users WHERE last_active > ?', (today_start,))
+                today_active = c.fetchone()[0]
+                
+                c.execute('SELECT COUNT(*) FROM messages WHERE timestamp > ?', 
+                         (int(time.time()) - 86400,))
+                messages_24h = c.fetchone()[0]
+                
+                c.execute('SELECT COUNT(*) FROM users WHERE created_at > ?', 
+                         (int(time.time()) - 86400,))
+                new_users_24h = c.fetchone()[0]
+                
+                c.execute('SELECT COUNT(*) / 24.0 FROM messages WHERE timestamp > ?', 
+                         (int(time.time()) - 86400,))
+                avg_hourly_result = c.fetchone()[0]
+                avg_hourly = round(avg_hourly_result, 2) if avg_hourly_result else 0
+                
+                c.execute('SELECT COUNT(*) FROM users WHERE created_at > ?', 
+                         (int(time.time()) - 604800,))
+                users_week = c.fetchone()[0]
+                
+                c.execute('SELECT COUNT(*) FROM messages WHERE timestamp > ?', 
+                         (int(time.time()) - 604800,))
+                messages_week = c.fetchone()[0]
+                
+                c.execute('SELECT COUNT(DISTINCT user_id) FROM messages WHERE timestamp > ?', 
+                         (int(time.time()) - 604800,))
+                active_week = c.fetchone()[0]
+                
+                c.execute('SELECT COUNT(DISTINCT user_id) FROM messages WHERE timestamp > ?', 
+                         (int(time.time()) - 2592000,))
+                active_30d = c.fetchone()[0]
+                
+                c.execute('SELECT COUNT(*) FROM users WHERE created_at < ?', 
+                         (int(time.time()) - 2592000,))
+                old_users = c.fetchone()[0]
+                
+                retention_30d = round((active_30d / old_users * 100), 2) if old_users > 0 else 100
+                
+                c.execute('SELECT COUNT(DISTINCT sender_id) FROM messages')
+                users_with_messages = c.fetchone()[0]
+                
+                conversion_rate = round((users_with_messages / total_users * 100), 2) if total_users > 0 else 0
+                
+                return {
+                    'total_users': total_users,
+                    'total_messages': total_messages,
+                    'blocked_users': blocked_users,
+                    'open_tickets': open_tickets,
+                    'today_active': today_active,
+                    'messages_24h': messages_24h,
+                    'new_users_24h': new_users_24h,
+                    'avg_hourly': avg_hourly,
+                    'users_week': users_week,
+                    'messages_week': messages_week,
+                    'active_week': active_week,
+                    'retention_30d': retention_30d,
+                    'conversion_rate': conversion_rate
+                }
+        except Exception as e:
+            logger.error(f"Error getting admin stats: {e}")
             return {
-                'total_users': total_users,
-                'total_messages': total_messages,
-                'blocked_users': blocked_users,
-                'open_tickets': open_tickets,
-                'today_active': today_active,
-                'messages_24h': messages_24h,
-                'new_users_24h': new_users_24h,
-                'avg_hourly': avg_hourly,
-                'users_week': users_week,
-                'messages_week': messages_week,
-                'active_week': active_week,
-                'retention_30d': retention_30d,
-                'conversion_rate': conversion_rate
+                'total_users': 0,
+                'total_messages': 0,
+                'blocked_users': 0,
+                'open_tickets': 0,
+                'today_active': 0,
+                'messages_24h': 0,
+                'new_users_24h': 0,
+                'avg_hourly': 0,
+                'users_week': 0,
+                'messages_week': 0,
+                'active_week': 0,
+                'retention_30d': 0,
+                'conversion_rate': 0
             }
     
     def register_user(self, user_id, username, first_name):
@@ -1745,8 +1788,8 @@ ID: <code>{user_id}</code>
 Всего пользователей: {self.get_admin_stats()['total_users']}"""
                     
                     bot.send_message(ADMIN_ID, notification, parse_mode="HTML")
-                except:
-                    pass
+                except Exception as e:
+                    logger.error(f"Error sending new user notification: {e}")
     
     def update_last_active(self, user_id):
         with self.get_connection() as conn:
@@ -1841,8 +1884,8 @@ ID: <code>{user_id}</code>
 ⏰ Время: {format_time(int(time.time()), 'ru')}"""
                     
                     bot.send_message(ADMIN_ID, notification)
-                except:
-                    pass
+                except Exception as e:
+                    logger.error(f"Error sending new message notification: {e}")
             
             return message_id
     
@@ -1854,9 +1897,9 @@ ID: <code>{user_id}</code>
             
             if row:
                 return {
-                    'messages_received': row['messages_received'],
-                    'messages_sent': row['messages_sent'],
-                    'link_clicks': row['link_clicks']
+                    'messages_received': row[0],
+                    'messages_sent': row[1],
+                    'link_clicks': row[2]
                 }
             return {'messages_received': 0, 'messages_sent': 0, 'link_clicks': 0}
     
@@ -1876,13 +1919,13 @@ ID: <code>{user_id}</code>
             history = []
             for row in rows:
                 history.append({
-                    'message_id': row['message_id'],
-                    'partner_id': row['partner_id'],
-                    'partner_name': row['partner_name'],
-                    'partner_username': row['partner_username'],
-                    'direction': row['direction'],
-                    'timestamp': row['timestamp'],
-                    'preview': row['preview']
+                    'message_id': row[0],
+                    'partner_id': row[1],
+                    'partner_name': row[5] if len(row) > 5 else '',
+                    'partner_username': row[6] if len(row) > 6 else '',
+                    'direction': row[3],
+                    'timestamp': row[4],
+                    'preview': row[5] if len(row) > 5 else ''
                 })
             return history
     
@@ -1894,7 +1937,7 @@ ID: <code>{user_id}</code>
             c = conn.cursor()
             c.execute('SELECT is_blocked FROM users WHERE user_id = ?', (user_id,))
             row = c.fetchone()
-            return row['is_blocked'] == 1 if row else False
+            return bool(row and row[0] == 1)
     
     def block_user(self, user_id, admin_id, reason=""):
         if user_id == ADMIN_ID:
@@ -1903,8 +1946,10 @@ ID: <code>{user_id}</code>
         with self.get_connection() as conn:
             c = conn.cursor()
             c.execute('UPDATE users SET is_blocked = 1 WHERE user_id = ?', (user_id,))
-            self._clear_user_cache(user_id)
-            return True
+            success = c.rowcount > 0
+            if success:
+                self._clear_user_cache(user_id)
+            return success
     
     def unblock_user(self, user_id):
         with self.get_connection() as conn:
@@ -1938,7 +1983,21 @@ ID: <code>{user_id}</code>
                 ORDER BY s.created_at DESC
             ''')
             rows = c.fetchall()
-            return [dict(row) for row in rows]
+            tickets = []
+            for row in rows:
+                tickets.append({
+                    'id': row[0],
+                    'user_id': row[1],
+                    'message': row[2],
+                    'file_id': row[3],
+                    'file_unique_id': row[4],
+                    'message_type': row[5],
+                    'status': row[6],
+                    'created_at': row[7],
+                    'first_name': row[9],
+                    'username': row[10]
+                })
+            return tickets
     
     def update_support_ticket(self, ticket_id, admin_id, 
                             reply_text, status='answered'):
@@ -1966,9 +2025,24 @@ ID: <code>{user_id}</code>
             rows = c.fetchall()
             messages = []
             for row in rows:
-                msg = dict(row)
-                if not include_text:
-                    msg['text'] = '[HIDDEN]' if msg['text'] else ''
+                msg = {
+                    'id': row[0],
+                    'sender_id': row[1],
+                    'receiver_id': row[2],
+                    'message_type': row[3],
+                    'text': '[HIDDEN]' if not include_text and row[4] else row[4],
+                    'file_id': row[5],
+                    'file_unique_id': row[6],
+                    'file_size': row[7],
+                    'timestamp': row[8],
+                    'replied_to': row[9],
+                    'is_read': row[10],
+                    'moderated': row[11],
+                    'sender_name': row[12],
+                    'sender_username': row[13],
+                    'receiver_name': row[14],
+                    'receiver_username': row[15]
+                }
                 messages.append(msg)
             return messages
 
@@ -1985,11 +2059,11 @@ ID: <code>{user_id}</code>
             
             csv_content = "ID;Username;First Name;Language;Created At;Last Active;Messages Received;Messages Sent;Link Clicks;Receive Messages;Is Blocked\n"
             for row in rows:
-                created = datetime.fromtimestamp(row['created_at']).strftime('%Y-%m-%d %H:%M')
-                last_active = datetime.fromtimestamp(row['last_active']).strftime('%Y-%m-%d %H:%M') if row['last_active'] else "Never"
-                csv_content += f"{row['user_id']};{row['username'] or ''};{row['first_name'] or ''};{row['language']};"
-                csv_content += f"{created};{last_active};{row['messages_received']};{row['messages_sent']};"
-                csv_content += f"{row['link_clicks']};{row['receive_messages']};{row['is_blocked']}\n"
+                created = datetime.fromtimestamp(row[4]).strftime('%Y-%m-%d %H:%M') if row[4] else ""
+                last_active = datetime.fromtimestamp(row[5]).strftime('%Y-%m-%d %H:%M') if row[5] else "Never"
+                csv_content += f"{row[0]};{row[1] or ''};{row[2] or ''};{row[3]};"
+                csv_content += f"{created};{last_active};{row[6]};{row[7]};"
+                csv_content += f"{row[8]};{row[9]};{row[10]}\n"
             
             return csv_content
 
@@ -2004,9 +2078,9 @@ ID: <code>{user_id}</code>
             
             csv_content = "ID;Sender ID;Receiver ID;Type;Text;Timestamp\n"
             for row in rows:
-                timestamp = datetime.fromtimestamp(row['timestamp']).strftime('%Y-%m-%d %H:%M')
-                text = (row['text'] or '').replace(';', ',').replace('\n', ' ').replace('\r', '')
-                csv_content += f"{row['id']};{row['sender_id']};{row['receiver_id']};{row['message_type']};{text};{timestamp}\n"
+                timestamp = datetime.fromtimestamp(row[5]).strftime('%Y-%m-%d %H:%M') if row[5] else ""
+                text = (row[4] or '').replace(';', ',').replace('\n', ' ').replace('\r', '')
+                csv_content += f"{row[0]};{row[1]};{row[2]};{row[3]};{text};{timestamp}\n"
             
             return csv_content
 
@@ -2113,14 +2187,14 @@ def handle_callback(call):
                 c.execute('SELECT sender_id, receiver_id FROM messages WHERE id = ?', (message_id,))
                 msg = c.fetchone()
                 
-                if msg and msg['receiver_id'] == user_id:
+                if msg and msg[1] == user_id:  # receiver_id
                     user_sessions[user_id] = {
-                        'target_id': msg['sender_id'],
+                        'target_id': msg[0],  # sender_id
                         'mode': 'anonymous',
                         'reply_to': message_id
                     }
                     
-                    bot.send_message(user_id, "💌 Введите ваш ответ:",
+                    bot.send_message(user_id, get_text(lang, 'send_reply'),
                                     reply_markup=cancel_keyboard(lang))
                     bot.answer_callback_query(call.id)
                 else:
@@ -2142,8 +2216,8 @@ def handle_callback(call):
                         text=call.message.text + f"\n\n{get_text(lang, 'user_blocked')}",
                         reply_markup=get_admin_user_keyboard(target_id, True, lang)
                     )
-                except:
-                    pass
+                except Exception as e:
+                    logger.error(f"Error editing message: {e}")
             else:
                 bot.answer_callback_query(call.id, get_text(lang, 'user_already_blocked'))
         
@@ -2163,8 +2237,8 @@ def handle_callback(call):
                         text=call.message.text + "\n\n✅ Unblocked",
                         reply_markup=get_admin_user_keyboard(target_id, False, lang)
                     )
-                except:
-                    pass
+                except Exception as e:
+                    logger.error(f"Error editing message: {e}")
             else:
                 bot.answer_callback_query(call.id, get_text(lang, 'user_not_blocked_msg'))
         
@@ -2207,8 +2281,8 @@ def handle_callback(call):
                     message_id=call.message.message_id,
                     text=call.message.text + "\n\n✅ Ticket closed"
                 )
-            except:
-                pass
+            except Exception as e:
+                logger.error(f"Error editing message: {e}")
         
         elif data.startswith("admin_user_"):
             if user_id != ADMIN_ID:
@@ -2500,7 +2574,7 @@ def show_profile(user_id, lang):
     
     stats = db.get_user_messages_stats(user_id)
     
-    receive_status = "✅ Включен" if user['receive_messages'] else "❌ Выключен"
+    receive_status = "✅ Включен" if user['receive_messages'] == 1 else "❌ Выключен"
     username = f"@{user['username']}" if user['username'] else "❌ отсутствует"
     language = "🇷🇺 Русский" if user['language'] == 'ru' else "🇺🇸 English"
     
@@ -2540,7 +2614,7 @@ def show_user_stats(user_id, lang):
 └ 📅 Последняя активность: <b>{format_time(user['last_active'], lang)}</b>
 
 <b>⚙️ Настройки:</b>
-├ Приём сообщений: {'✅ Включен' if user['receive_messages'] else '❌ Выключен'}
+├ Приём сообщений: {'✅ Включен' if user['receive_messages'] == 1 else '❌ Выключен'}
 └ Язык: {'🇷🇺 Русский' if user['language'] == 'ru' else '🇺🇸 English'}"""
     
     bot.send_message(user_id, stats_text, 
@@ -2799,7 +2873,7 @@ def reply_to_support_ticket(message, ticket_id, lang):
                 bot.send_message(ADMIN_ID, "❌ Тикет не найден.")
                 return
             
-            user_id, user_message = row
+            user_id, user_message = row[0], row[1]
         
         message_type = message.content_type
         reply_text = message.text or message.caption or ""
@@ -2909,6 +2983,10 @@ def send_direct_admin_message(message, target_user_id, lang):
 def generate_qr_code(user_id, lang):
     link = generate_link(user_id)
     
+    if not link:
+        bot.send_message(user_id, "❌ Ошибка генерации ссылки")
+        return
+    
     try:
         qr = qrcode.QRCode(
             version=1,
@@ -3007,13 +3085,10 @@ def show_admin_stats(admin_id, lang):
     
     bot.send_message(admin_id, stats_text, reply_markup=admin_keyboard(lang))
 
-def start_broadcast(admin_id, message, lang):
+def start_broadcast(admin_id, message_text, lang):
     try:
-        if isinstance(message, str):
-            text = message
-        else:
-            text = message.text or message.caption or ""
-            
+        text = message_text
+        
         if not text:
             bot.send_message(admin_id, "❌ Введите текст рассылки")
             return
@@ -3040,7 +3115,8 @@ def start_broadcast(admin_id, message, lang):
                 bot.send_message(user_id, text, parse_mode="HTML")
                 sent += 1
                 time.sleep(0.05)
-            except:
+            except Exception as e:
+                logger.error(f"Error sending broadcast to {user_id}: {e}")
                 failed += 1
         
         bot.edit_message_text(
@@ -3078,7 +3154,7 @@ def find_user_info(admin_id, query, lang=None):
         top_words = get_top_words(user['user_id'], 5)
         
         username = f"@{user['username']}" if user['username'] else "❌ отсутствует"
-        receive_status = "✅ Включен" if user['receive_messages'] else "❌ Выключен"
+        receive_status = "✅ Включен" if user['receive_messages'] == 1 else "❌ Выключен"
         block_status = "🔴 ЗАБЛОКИРОВАН" if is_blocked else "🟢 АКТИВЕН"
         language = "🇷🇺 Русский" if user['language'] == 'ru' else "🇺🇸 English"
         
