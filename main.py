@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Anony SMS Bot - Ultimate Professional Version v9.0
-Merged from v7.0 and v8.0 with all features
+Anony SMS Bot - Ultimate Professional Version v10.0
+Полностью рабочий бот с полным функционалом
 """
 
 import os
@@ -18,14 +18,11 @@ import string
 from datetime import datetime, timedelta
 from io import BytesIO
 from contextlib import contextmanager
-from functools import lru_cache
-from concurrent.futures import ThreadPoolExecutor, as_completed
 import sqlite3
 import requests
-import base64
 from typing import Dict, List, Optional, Any, Tuple
 
-from flask import Flask, request, jsonify, Response
+from flask import Flask, request, jsonify
 from telebot import TeleBot, types
 from telebot.apihelper import ApiException, ApiTelegramException
 from PIL import Image, ImageDraw, ImageFont
@@ -45,10 +42,6 @@ MAX_REQUESTS_PER_MINUTE = 30
 MAX_FILE_SIZE = 50 * 1024 * 1024
 MAX_MESSAGE_LENGTH = 4000
 SESSION_TIMEOUT = 300
-
-# Капча конфиг
-CAPTCHA_ENABLED = True
-CAPTCHA_AFTER_ATTEMPTS = 5
 
 # Модерация
 BLACKLIST_WORDS = [
@@ -78,32 +71,34 @@ user_sessions = {}
 admin_modes = {}
 message_cooldown = {}
 request_counts = {}
-captcha_data = {}
-user_attempts = {}
 rate_limit_cache = {}
-achievements_cache = {}
 file_cache = {}
 session_timestamps = {}
 
-# ====== ПЕРЕВОДЫ (ОБЪЕДИНЕННЫЕ) ======
+# ====== ПОЛНЫЕ ПЕРЕВОДЫ (РУССКИЙ И АНГЛИЙСКИЙ) ======
 TRANSLATIONS = {
     'ru': {
-        # Основные
+        # Основные команды
         'start': """🎉 <b>Добро пожаловать в Anony SMS!</b> 🎉
 
+Рады видеть тебя 💬✨
+Здесь тайны и эмоции превращаются в сообщения 👀💌
+
+<b>🔥 Отправляй и получай абсолютно анонимные сообщения —</b>
+никаких имён, только честность, интрига и эмоции 🕶️✨
+
+<b>Хочешь узнать, что о тебе думают друзья?</b>
+Получить тайное признание или анонимный комплимент? 😏💖
+
+<b>🔗 Твоя личная ссылка:</b>
 <code>{link}</code>
 
-<b>📨 Получай анонимные сообщения:</b>
-1. Поделись ссылкой выше
-2. Жди сообщения от анонимов
-3. Читай и отвечай анонимно
+<b>🚀 Поделись ею в чатах или сторис —</b>
+и жди анонимные сообщения 💌🤫
 
-<b>✉️ Отправь анонимное сообщение:</b>
-1. Перейди по чужой ссылке
-2. Напиши сообщение
-3. Отправь — получатель не узнает кто ты
+<b>Каждое сообщение — маленькая загадка</b> 👀✨
 
-<b>🔐 Полная анонимность гарантирована!</b>""",
+👇 <b>Жми кнопки ниже и погнали!</b> 🚀""",
         
         'start_ref': """🎯 <b>Вы перешли по ссылке пользователя!</b>
 
@@ -119,11 +114,17 @@ TRANSLATIONS = {
 • Документ 📎
 • Стикер 😜""",
         
-        'my_link': """🔗 <b>Ваша уникальная ссылка:</b>
+        'my_link': """🔗 <b>Ваша уникальная ссылка для анонимок:</b>
 
 <code>{link}</code>
 
-<i>Поделитесь этой ссылкой чтобы получать анонимные сообщения!</i>""",
+<i>📤 Поделитесь этой ссылкой с друзьями в:</i>
+• Чатах 💬
+• Социальных сетях 🌐
+• Сторис 📲
+
+<i>🎭 Каждый переход — новый анонимный отправитель!
+🔥 Чем больше делитесь, тем больше тайн узнаёте 😏</i>""",
         
         'profile': """👤 <b>Ваш профиль</b>
 
@@ -155,59 +156,191 @@ TRANSLATIONS = {
 <b>Хотите отправить ещё?</b>
 Напишите новое сообщение""",
         
-        'help': """ℹ️ <b>Помощь по Anony SMS</b>
+        'help': """ℹ️ <b>Полное руководство по Anony SMS</b>
 
-<b>Как получать сообщения?</b>
-1. Нажмите "📩 Моя ссылка"
-2. Поделитесь своей ссылкой с друзьями
-3. Ждите анонимные сообщения
+<b>🎯 Что это такое?</b>
+Anony SMS — это бот для <b>полностью анонимных</b> сообщений! 
+Никто не узнает, кто отправил послание 👻
 
-<b>Как отправлять сообщения?</b>
-1. Перейдите по чужой ссылке
-2. Напишите сообщение
-3. Отправьте — получатель не узнает кто вы
+<b>📨 КАК ПОЛУЧАТЬ сообщения:</b>
+1. Нажми «📩 Моя ссылка»
+2. Скопируй свою уникальную ссылку
+3. Поделись с друзьями
+4. Жди анонимные сообщения! 💌
 
-<b>Что можно отправлять?</b>
-✅ Текст
-✅ Фото
-✅ Видео
-✅ Голосовые
-✅ Документы
-✅ Стикеры""",
+<b>✉️ КАК ОТПРАВЛЯТЬ сообщения:</b>
+1. Перейди по чужой ссылке
+2. Напиши сообщение
+3. Отправь — получатель не узнает твою личность! 🎭
+
+<b>📎 ЧТО МОЖНО ОТПРАВИТЬ:</b>
+✅ Текстовые сообщения ✍️
+✅ Фотографии 📸
+✅ Видео 🎬
+✅ Голосовые сообщения 🎤
+✅ Стикеры 😜
+✅ GIF 🎞️
+✅ Документы 📎
+
+<b>⚙️ НАСТРОЙКИ:</b>
+• Включить/выключить приём сообщений
+• Просмотр статистики
+• Генерация QR-кода
+
+<b>🔒 БЕЗОПАСНОСТЬ:</b>
+• <b>Полная анонимность</b>
+• Конфиденциальность гарантирована 🔐
+• Автоматическая модерация
+• Защита от спама
+
+<b>🆘 ПОДДЕРЖКА:</b>
+Возникли проблемы? Нажми «🆘 Поддержка»""",
         
-        'support': """🆘 <b>Поддержка</b>
+        'settings': "⚙️ <b>Настройки</b>\n\n<i>Настрой бот под себя:</i>",
+        'turn_on': "✅ <b>Приём анонимных сообщений включён!</b>\n\n<i>Теперь друзья могут отправлять тебе тайные послания 🔮</i>",
+        'turn_off': "✅ <b>Приём анонимных сообщений отключён!</b>\n\n<i>Ты не будешь получать новые анонимки 🔒\nМожешь включить в любой момент ⚡</i>",
+        'language': "🌐 <b>Выберите язык</b>\n\n<i>Выбор языка изменит интерфейс бота.</i>",
+        'blocked': "🚫 <b>Вы заблокированы в этом боте.</b>\n\n<i>Если это ошибка, обратитесь в поддержку.</i>",
+        'user_not_found': "❌ Пользователь не найден.",
+        'messages_disabled': "❌ Этот пользователь отключил получение сообщений.",
+        'wait': "⏳ Подождите 2 секунды перед следующим сообщением.",
+        'canceled': "❌ Действие отменено",
+        'spam_wait': "⏳ Подождите 2 секунды перед следующим сообщением.",
+        'qr_code': """📱 <b>Ваш персональный QR-код</b>
 
-<i>Опишите вашу проблему:</i>""",
+<i>Сканируйте и отправляйте анонимные сообщения мгновенно! ⚡</i>
+
+<b>🔗 Ссылка:</b>
+<code>{link}</code>""",
         
-        'support_sent': "✅ <b>Запрос отправлен в поддержку</b>",
-        'settings': "⚙️ <b>Настройки</b>",
-        'turn_on': "✅ <b>Получение сообщений включено</b>",
-        'turn_off': "❌ <b>Получение сообщений отключено</b>",
-        'language': "🌐 <b>Выберите язык</b>",
-        'blocked': "🚫 <b>Вы заблокированы</b>",
-        'user_not_found': "❌ Пользователь не найден",
-        'messages_disabled': "❌ Пользователь отключил получение сообщений",
-        'wait': "⏳ Подождите 2 секунды",
-        'canceled': "❌ Отменено",
-        'spam_wait': "⏳ Слишком быстро, подождите",
-        'qr_code': "📱 <b>QR-код вашей ссылки</b>",
+        # Статистика пользователя
+        'user_stats': """📊 <b>Ваша детальная статистика</b>
+
+<b>📈 ОСНОВНЫЕ МЕТРИКИ:</b>
+├ 📨 Получено: <b>{received}</b> сообщений
+├ 📤 Отправлено: <b>{sent}</b> сообщений
+├ 🔗 Переходов: <b>{clicks}</b> раз
+└ ⏱️ Сред. ответ: <b>{response_time}</b>
+
+<b>📅 АКТИВНОСТЬ:</b>
+├ 📆 Зарегистрирован: <b>{registered}</b>
+├ 📅 Последняя активность: <b>{last_active}</b>
+└ 🕐 Сред. время в боте: <b>{avg_time}</b> мин/день
+
+<b>📊 ДЕТАЛЬНО:</b>
+├ 📈 Активность по часам: {hours_chart}
+├ 📅 Активность по дням: {days_chart}
+└ 📝 Типы сообщений: {types_chart}
+
+<b>🏆 ДОСТИЖЕНИЯ ({achievements_count}):</b>
+{achievements}""",
         
         # Админ
-        'admin_panel': "👑 <b>Панель администратора</b>",
-        'admin_stats': "📊 <b>Статистика бота</b>",
-        'broadcast_start': "📢 <b>Создание рассылки</b>",
-        'users_management': "👥 <b>Управление пользователями</b>",
-        'find_user': "🔍 <b>Поиск пользователя</b>",
-        'user_info': "👤 <b>Информация о пользователе</b>",
-        'logs': "📋 <b>Логи</b>",
-        'no_logs': "📋 <b>Логи пусты</b>",
-        'tickets': "🆘 <b>Тикеты поддержки</b>",
-        'no_tickets': "🆘 <b>Нет открытых тикетов</b>",
-        'admin_settings': "⚙️ <b>Настройки админа</b>",
-        'direct_message': "✉️ <b>Отправка сообщения</b>",
-        'message_sent_admin': "✅ <b>Сообщение отправлено</b>",
-        'block_user': "🚫 <b>Пользователь заблокирован</b>",
-        'unblock_user': "✅ <b>Пользователь разблокирован</b>",
+        'admin_panel': "👑 <b>Панель администратора</b>\n\n<i>Доступ к управлению ботом 🔧</i>",
+        'admin_stats': """👑 <b>Статистика бота</b>
+
+<b>📊 ОСНОВНЫЕ МЕТРИКИ:</b>
+├ Всего пользователей: <b>{total_users}</b>
+├ Активных сегодня: <b>{today_active}</b>
+├ Всего сообщений: <b>{total_messages}</b>
+├ Сообщений за 24ч: <b>{messages_24h}</b>
+├ Новых за 24ч: <b>{new_users_24h}</b>
+├ Заблокированных: <b>{blocked_users}</b>
+├ Открытых тикетов: <b>{open_tickets}</b>
+└ Сред. активность в час: <b>{avg_hourly}</b>
+
+<b>📈 ДЕТАЛЬНАЯ СТАТИСТИКА:</b>
+├ Пользователей за неделю: <b>{users_week}</b>
+├ Сообщений за неделю: <b>{messages_week}</b>
+├ Активных за неделю: <b>{active_week}</b>
+├ Удерживание (30 дней): <b>{retention_30d}%</b>
+└ Конверсия в сообщения: <b>{conversion_rate}%</b>""",
+        
+        'broadcast_start': """📢 <b>Создание рассылки</b>
+
+<i>Отправьте сообщение которое будет отправлено всем пользователям.</i>
+
+<b>📎 Можно отправить:</b>
+• Текст с HTML-разметкой ✍️
+• Фото с подписью 📸
+• Видео с описанием 🎬
+• Документ с комментарием 📎
+• Стикер 😜""",
+        
+        'broadcast_progress': "⏳ <b>Начинаю рассылку...</b>\n\nВсего пользователей: {total}",
+        'broadcast_result': """✅ <b>Рассылка завершена!</b>
+
+<b>📊 РЕЗУЛЬТАТЫ:</b>
+├ Всего пользователей: <b>{total}</b>
+├ Успешно отправлено: <b>{sent}</b>
+├ Не удалось отправить: <b>{failed}</b>
+└ Пропущено (заблок.): <b>{blocked}</b>""",
+        
+        'users_management': "👥 <b>Управление пользователями</b>\n\n<i>Поиск и управление пользователями бота 🔧</i>",
+        
+        'find_user': "🔍 <b>Поиск пользователя</b>\n\n<i>Введите ID пользователя или юзернейм (без @):</i>",
+        'user_info': """🔍 <b>ИНФОРМАЦИЯ О ПОЛЬЗОВАТЕЛЕ</b>
+
+<b>👤 ОСНОВНЫЕ ДАННЫЕ:</b>
+├ ID: <code>{user_id}</code>
+├ Имя: <b>{first_name}</b>
+├ Юзернейм: {username}
+├ Зарегистрирован: {registered}
+└ Последняя активность: {last_active}
+
+<b>📊 СТАТИСТИКА:</b>
+├ 📨 Получено: <b>{received}</b>
+├ 📤 Отправлено: <b>{sent}</b>
+├ 🔗 Переходов: <b>{clicks}</b>
+└ ⚙️ Приём сообщений: {receive_status}
+
+<b>🚫 СТАТУС:</b> {block_status}""",
+        
+        'logs': "📋 <b>Логи сообщений</b>",
+        'no_logs': "📋 <b>Логи сообщений пусты</b>\n\n<i>Пока нет отправленных сообщений.</i>",
+        'tickets': "🆘 <b>Открытые тикеты</b>",
+        'no_tickets': "🆘 <b>Открытых тикетов нет</b>\n\n<i>Все обращения обработаны ✅</i>",
+        'admin_settings': """⚙️ <b>Настройки администратора</b>
+
+<b>🔔 УВЕДОМЛЕНИЯ:</b>
+├ Новые сообщения: {notifications}
+└ В канал: {channel_status}
+
+<b>⚡ ПРОИЗВОДИТЕЛЬНОСТЬ:</b>
+├ Антиспам: {antispam} сек.
+└ База данных: ✅ Работает""",
+        
+        'direct_message': """✉️ <b>Отправьте сообщение для пользователя</b> <code>{user_id}</code>
+
+<i>Сообщение придёт как от бота 🤖
+Можно отправить текст, фото или видео.</i>""",
+        
+        'message_sent_admin': """✅ <b>Сообщение отправлено</b>
+
+👤 Пользователь: <code>{user_id}</code>
+📝 Тип: {message_type}""",
+        
+        'block_user': "✅ Пользователь <code>{user_id}</code> заблокирован.",
+        'unblock_user': "✅ Пользователь <code>{user_id}</code> разблокирован.",
+        'user_blocked': "🚫 <b>Пользователь заблокирован</b>",
+        'user_already_blocked': "✅ Пользователь уже заблокирован",
+        'user_not_blocked': "✅ Пользователь не заблокирован",
+        
+        # Новые переводы
+        'main_menu': "🏠 Главное меню",
+        'just_now': "только что",
+        'minutes_ago': "{minutes} минут назад",
+        'hours_ago': "{hours} часов назад",
+        'yesterday': "вчера",
+        'days_ago': "{days} дней назад",
+        'never': "никогда",
+        'language_changed': "✅ Язык изменен",
+        'send_anonymous_to': "Отправьте анонимное сообщение",
+        'send_anonymous_description': "Напишите сообщение, фото, видео или голосовое сообщение",
+        'send_reply': "Отправьте ответное сообщение",
+        'reply_to_ticket': "Ответить на тикет",
+        'user_blocked_bot': "❌ Пользователь заблокировал бота",
+        'text': "Текст",
         
         # Кнопки
         'btn_my_link': "📩 Моя ссылка",
@@ -218,69 +351,440 @@ TRANSLATIONS = {
         'btn_help': "ℹ️ Помощь",
         'btn_support': "🆘 Поддержка",
         'btn_admin': "👑 Админ",
-        'btn_turn_on': "✅ Включить получение",
-        'btn_turn_off': "❌ Выключить получение",
+        'btn_turn_on': "🔔 Вкл. сообщения",
+        'btn_turn_off': "🔕 Выкл. сообщения",
         'btn_language': "🌐 Язык",
         'btn_back': "⬅️ Назад",
         'btn_cancel': "❌ Отмена",
         'btn_history': "📜 История",
         
-        'btn_reply': "💌 Ответить",
-        'btn_ignore': "🚫 Игнорировать",
-        'btn_block': "🚫 Заблокировать",
-        'btn_unblock': "✅ Разблокировать",
-        'btn_message': "✉️ Написать",
-        'btn_refresh': "🔄 Обновить",
-        'btn_show_text': "🔍 Показать текст",
-        'btn_hide_text': "👁️ Скрыть текст",
-        'btn_reply_ticket': "📝 Ответить",
-        'btn_close_ticket': "✅ Закрыть",
-        
-        # Админ кнопки
         'btn_admin_stats': "📊 Статистика",
         'btn_admin_broadcast': "📢 Рассылка",
-        'btn_admin_manage_users': "👥 Пользователи",
+        'btn_admin_manage_users': "👥 Управление",
         'btn_admin_find': "🔍 Найти",
         'btn_admin_logs': "📋 Логи",
         'btn_admin_tickets': "🆘 Тикеты",
         'btn_admin_settings': "⚙️ Настройки",
-        'btn_admin_block': "🚫 Блокировка",
+        'btn_admin_block': "🚫 Блок/Разблок",
         'btn_admin_backup': "💾 Бэкап",
         'btn_admin_export': "📤 Экспорт",
         
-        # Дополнительные из v7.0
-        'reply_to_ticket': "📝 <b>Ответ на тикет</b>",
-        'user_blocked_bot': "❌ Пользователь заблокировал бота",
-        'text': "Текст",
-        'main_menu': "🏠 Главное меню",
+        'btn_reply': "💌 Ответить",
+        'btn_ignore': "🚫 Игнор",
+        'btn_block': "🚫 Заблокировать",
+        'btn_unblock': "✅ Разблокировать",
+        'btn_message': "✉️ Написать ему",
+        'btn_refresh': "🔄 Обновить",
+        'btn_toggle_text': "🔕 Скрыть текст",
+        'btn_show_text': "🔔 Показать текст",
+        'btn_reply_ticket': "📝 Ответить",
+        'btn_close_ticket': "✅ Закрыть",
+        
+        # Поддержка
+        'support': """🆘 <b>Служба поддержки</b>
+
+<i>Опишите вашу проблему как можно подробнее 💭
+Мы постараемся ответить в кратчайшие сроки ⏰</i>
+
+<b>📎 Что можно отправить:</b>
+• Текстовое описание проблемы ✍️
+• Скриншот ошибки 📸
+• Видео с багом 🎬
+• Любой медиафайл 📎""",
+        
+        'support_sent': """✅ <b>Запрос в поддержку отправлен!</b>
+
+<i>Ваш тикет: <b>#{ticket_id}</b>
+Мы ответим вам в ближайшее время ⏰</i>""",
+        
+        # История
+        'history': "📜 <b>История сообщений</b>\n\n<i>Последние 20 сообщений:</i>",
+        'history_empty': "📜 <b>У вас пока нет сообщений</b>\n\n<i>Начните общение, отправив первую анонимку!</i>",
+        'history_item': """<b>{index}. {direction} {name}</b> <i>({time})</i>
+💬 <i>{preview}</i>""",
+        'history_incoming': "⬇️ От",
+        'history_outgoing': "⬆️ Кому",
+        
+        # Блокировка
+        'block_instruction': "🚫 <b>Блокировка/Разблокировка пользователя</b>\n\nВведите ID пользователя или юзернейм (без @):",
+        'block_success': "✅ Пользователь <code>{user_id}</code> заблокирован.",
+        'unblock_success': "✅ Пользователь <code>{user_id}</code> разблокирован.",
+        'block_already': "✅ Пользователь уже заблокирован.",
+        'user_not_blocked_msg': "✅ Пользователь не был заблокирован.",
+        
+        # Ошибки
+        'file_too_large': "❌ Файл слишком большой (максимум {max_size}MB).",
+        'message_too_long': "❌ Сообщение слишком длинное (максимум {max_length} символов).",
+        'rate_limit_exceeded': "⏳ Слишком много запросов. Подождите {seconds} секунд.",
+        'content_blocked': "❌ Сообщение содержит запрещённые слова.",
+        'session_expired': "⏰ Сессия истекла. Начните заново.",
         
         # Экспорт
-        'export_instruction': "📤 <b>Экспорт данных</b>",
+        'export_instruction': "📤 <b>Экспорт данных</b>\n\n<i>Выберите что экспортировать:</i>",
         'export_users': "👥 Экспорт пользователей",
         'export_messages': "📨 Экспорт сообщений",
         'export_stats': "📊 Экспорт статистики",
+        'export_processing': "⏳ <b>Экспорт данных...</b>\n\n<i>Пожалуйста, подождите.</i>",
+        'export_complete': "✅ <b>Экспорт завершен!</b>\n\n<i>Данные успешно сохранены.</i>",
         
-        # Капча
-        'captcha_required': "🔒 <b>Требуется проверка безопасности</b>",
-        'captcha_correct': "✅ Капча пройдена!",
-        'captcha_incorrect': "❌ Неверная капча",
-        'captcha_failed': "❌ Превышено количество попыток",
-        'captcha_timeout': "⏰ Время истекло",
+        # Системные
+        'system_error': "❌ Произошла системная ошибка. Пожалуйста, попробуйте позже.",
+        'maintenance': "🔧 Бот находится на техническом обслуживании. Приносим извинения за неудобства.",
+    },
+    
+    'en': {
+        # Main commands
+        'start': """🎉 <b>Welcome to Anony SMS!</b> 🎉
+
+Glad to see you 💬✨
+Here secrets and emotions turn into messages 👀💌
+
+<b>🔥 Send and receive completely anonymous messages —</b>
+no names, just honesty, intrigue and emotions 🕶️✨
+
+<b>Want to know what your friends think about you?</b>
+Get a secret confession or anonymous compliment? 😏💖
+
+<b>🔗 Your personal link:</b>
+<code>{link}</code>
+
+<b>🚀 Share it in chats or stories —</b>
+and wait for anonymous messages 💌🤫
+
+<b>Every message is a little mystery</b> 👀✨
+
+👇 <b>Click the buttons below and let's go!</b> 🚀""",
         
-        # Ошибки
-        'file_too_large': "❌ Файл слишком большой",
-        'message_too_long': "❌ Сообщение слишком длинное",
-        'rate_limit_exceeded': "⏳ Слишком много запросов",
-        'content_blocked': "❌ Сообщение содержит запрещённые слова",
-        'session_expired': "⏰ Сессия истекла",
-        'system_error': "❌ Системная ошибка",
+        'start_ref': """🎯 <b>You followed a user's link!</b>
+
+Now you can send this user a <b>completely anonymous message</b>.
+
+💌 <i>Write your message below:</i>
+
+<i>You can send:</i>
+• Text ✍️
+• Photo 📸
+• Video 🎬
+• Voice message 🎤
+• Document 📎
+• Sticker 😜""",
         
-        # Блокировка
-        'block_instruction': "🚫 <b>Блокировка/Разблокировка</b>",
-        'block_success': "✅ Пользователь заблокирован",
-        'unblock_success': "✅ Пользователь разблокирован",
-        'user_already_blocked': "✅ Пользователь уже заблокирован",
-        'user_not_blocked_msg': "✅ Пользователь не был заблокирован",
+        'my_link': """🔗 <b>Your unique link for anonymous messages:</b>
+
+<code>{link}</code>
+
+<i>📤 Share with friends in:</i>
+• Chats 💬
+• Social networks 🌐
+• Stories 📲
+
+<i>🎭 Every click — a new anonymous sender!
+🔥 The more you share, the more secrets you discover 😏</i>""",
+        
+        'profile': """👤 <b>Your Profile</b>
+
+<b>📊 Statistics:</b>
+├ Messages received: <b>{received}</b>
+├ Messages sent: <b>{sent}</b>
+├ Link clicks: <b>{clicks}</b>
+├ Registered: <b>{registered}</b>
+└ Last active: <b>{last_active}</b>
+
+<b>⚙️ Settings:</b>
+├ Receive messages: {receive_status}
+└ Language: 🇺🇸 English""",
+        
+        'anonymous_message': """📨 <b>You have a new anonymous message!</b>
+
+💌 <i>Someone sent you a secret message...</i>
+
+{message_content}
+
+<i>🔒 The sender will remain unknown...</i>""",
+        
+        'message_sent': """✅ <b>Message sent anonymously!</b>
+
+<i>🎯 Your message delivered
+🔒 Your identity hidden
+💌 Recipient won't know who you are</i>
+
+<b>Want to send more?</b>
+Write a new message""",
+        
+        'help': """ℹ️ <b>Complete Anony SMS Guide</b>
+
+<b>🎯 What is it?</b>
+Anony SMS is a bot for <b>completely anonymous</b> messages!
+No one will know who sent the message 👻
+
+<b>📨 HOW TO RECEIVE messages:</b>
+1. Click "📩 My link"
+2. Copy your unique link
+3. Share with friends
+4. Wait for anonymous messages! 💌
+
+<b>✉️ HOW TO SEND messages:</b>
+1. Follow someone's link
+2. Write a message
+3. Send — the recipient won't know your identity! 🎭
+
+<b>📎 WHAT CAN BE SENT:</b>
+✅ Text messages ✍️
+✅ Photos 📸
+✅ Videos 🎬
+✅ Voice messages 🎤
+✅ Stickers 😜
+✅ GIFs 🎞️
+✅ Documents 📎
+
+<b>⚙️ SETTINGS:</b>
+• Enable/disable message reception
+• View statistics
+• Generate QR code
+
+<b>🔒 SECURITY:</b>
+• <b>Complete anonymity</b>
+• Confidentiality guaranteed 🔐
+• Automatic moderation
+• Spam protection
+
+<b>🆘 SUPPORT:</b>
+Having problems? Click "🆘 Support" """,
+        
+        'settings': "⚙️ <b>Settings</b>\n\n<i>Customize the bot for yourself:</i>",
+        'turn_on': "✅ <b>Anonymous message reception enabled!</b>\n\n<i>Now friends can send you secret messages 🔮</i>",
+        'turn_off': "✅ <b>Anonymous message reception disabled!</b>\n\n<i>You won't receive new anonymous messages 🔒\nYou can enable it at any time ⚡</i>",
+        'language': "🌐 <b>Choose language</b>\n\n<i>Language selection will change the bot interface.</i>",
+        'blocked': "🚫 <b>You are blocked in this bot.</b>\n\n<i>If this is an error, please contact support.</i>",
+        'user_not_found': "❌ User not found.",
+        'messages_disabled': "❌ This user has disabled message reception.",
+        'wait': "⏳ Wait 2 seconds before the next message.",
+        'canceled': "❌ Action canceled",
+        'spam_wait': "⏳ Wait 2 seconds before the next message.",
+        'qr_code': """📱 <b>Your personal QR code</b>
+
+<i>Scan and send anonymous messages instantly! ⚡</i>
+
+<b>🔗 Link:</b>
+<code>{link}</code>""",
+        
+        # User statistics
+        'user_stats': """📊 <b>Your detailed statistics</b>
+
+<b>📈 MAIN METRICS:</b>
+├ 📨 Received: <b>{received}</b> messages
+├ 📤 Sent: <b>{sent}</b> messages
+├ 🔗 Clicks: <b>{clicks}</b> times
+└ ⏱️ Avg. response: <b>{response_time}</b>
+
+<b>📅 ACTIVITY:</b>
+├ 📆 Registered: <b>{registered}</b>
+├ 📅 Last activity: <b>{last_active}</b>
+└ 🕐 Avg. time in bot: <b>{avg_time}</b> min/day
+
+<b>📊 DETAILED:</b>
+├ 📈 Activity by hour: {hours_chart}
+├ 📅 Activity by day: {days_chart}
+└ 📝 Message types: {types_chart}
+
+<b>🏆 ACHIEVEMENTS ({achievements_count}):</b>
+{achievements}""",
+        
+        # Admin
+        'admin_panel': "👑 <b>Administrator Panel</b>\n\n<i>Access to bot management 🔧</i>",
+        'admin_stats': """👑 <b>Bot Statistics</b>
+
+<b>📊 MAIN METRICS:</b>
+├ Total users: <b>{total_users}</b>
+├ Active today: <b>{today_active}</b>
+├ Total messages: <b>{total_messages}</b>
+├ Messages in 24h: <b>{messages_24h}</b>
+├ New in 24h: <b>{new_users_24h}</b>
+├ Blocked: <b>{blocked_users}</b>
+├ Open tickets: <b>{open_tickets}</b>
+└ Avg. activity per hour: <b>{avg_hourly}</b>
+
+<b>📈 DETAILED STATISTICS:</b>
+├ Users this week: <b>{users_week}</b>
+├ Messages this week: <b>{messages_week}</b>
+├ Active this week: <b>{active_week}</b>
+├ Retention (30 days): <b>{retention_30d}%</b>
+└ Conversion to messages: <b>{conversion_rate}%</b>""",
+        
+        'broadcast_start': """📢 <b>Create Broadcast</b>
+
+<i>Send a message that will be sent to all users.</i>
+
+<b>📎 Can send:</b>
+• Text with HTML markup ✍️
+• Photo with caption 📸
+• Video with description 🎬
+• Document with comment 📎
+• Sticker 😜""",
+        
+        'broadcast_progress': "⏳ <b>Starting broadcast...</b>\n\nTotal users: {total}",
+        'broadcast_result': """✅ <b>Broadcast completed!</b>
+
+<b>📊 RESULTS:</b>
+├ Total users: <b>{total}</b>
+├ Successfully sent: <b>{sent}</b>
+├ Failed to send: <b>{failed}</b>
+└ Skipped (blocked): <b>{blocked}</b>""",
+        
+        'users_management': "👥 <b>User Management</b>\n\n<i>Search and manage bot users 🔧</i>",
+        
+        'find_user': "🔍 <b>Find user</b>\n\n<i>Enter user ID or username (without @):</i>",
+        'user_info': """🔍 <b>USER INFORMATION</b>
+
+<b>👤 BASIC DATA:</b>
+├ ID: <code>{user_id}</code>
+├ Name: <b>{first_name}</b>
+├ Username: {username}
+├ Registered: {registered}
+└ Last activity: {last_active}
+
+<b>📊 STATISTICS:</b>
+├ 📨 Received: <b>{received}</b>
+├ 📤 Sent: <b>{sent}</b>
+├ 🔗 Clicks: <b>{clicks}</b>
+└ ⚙️ Receive messages: {receive_status}
+
+<b>🚫 STATUS:</b> {block_status}""",
+        
+        'logs': "📋 <b>Message logs</b>",
+        'no_logs': "📋 <b>Message logs are empty</b>\n\n<i>No messages sent yet.</i>",
+        'tickets': "🆘 <b>Open tickets</b>",
+        'no_tickets': "🆘 <b>No open tickets</b>\n\n<i>All requests processed ✅</i>",
+        'admin_settings': """⚙️ <b>Administrator Settings</b>
+
+<b>🔔 NOTIFICATIONS:</b>
+├ New messages: {notifications}
+└ To channel: {channel_status}
+
+<b>⚡ PERFORMANCE:</b>
+├ Anti-spam: {antispam} sec.
+└ Database: ✅ Working""",
+        
+        'direct_message': """✉️ <b>Send message for user</b> <code>{user_id}</code>
+
+<i>The message will come from the bot 🤖
+You can send text, photo or video.</i>""",
+        
+        'message_sent_admin': """✅ <b>Message sent</b>
+
+👤 User: <code>{user_id}</code>
+📝 Type: {message_type}""",
+        
+        'block_user': "✅ User <code>{user_id}</code> blocked.",
+        'unblock_user': "✅ User <code>{user_id}</code> unblocked.",
+        'user_blocked': "🚫 <b>User blocked</b>",
+        'user_already_blocked': "✅ User already blocked",
+        'user_not_blocked': "✅ User not blocked",
+        
+        # New translations
+        'main_menu': "🏠 Main menu",
+        'just_now': "just now",
+        'minutes_ago': "{minutes} minutes ago",
+        'hours_ago': "{hours} hours ago",
+        'yesterday': "yesterday",
+        'days_ago': "{days} days ago",
+        'never': "never",
+        'language_changed': "✅ Language changed",
+        'send_anonymous_to': "Send anonymous message",
+        'send_anonymous_description': "Write a message, photo, video or voice message",
+        'send_reply': "Send reply message",
+        'reply_to_ticket': "Reply to ticket",
+        'user_blocked_bot': "❌ User blocked the bot",
+        'text': "Text",
+        
+        # Buttons
+        'btn_my_link': "📩 My link",
+        'btn_profile': "👤 Profile",
+        'btn_stats': "📊 Statistics",
+        'btn_settings': "⚙️ Settings",
+        'btn_qr': "📱 QR code",
+        'btn_help': "ℹ️ Help",
+        'btn_support': "🆘 Support",
+        'btn_admin': "👑 Admin",
+        'btn_turn_on': "🔔 Enable messages",
+        'btn_turn_off': "🔕 Disable messages",
+        'btn_language': "🌐 Language",
+        'btn_back': "⬅️ Back",
+        'btn_cancel': "❌ Cancel",
+        'btn_history': "📜 History",
+        
+        'btn_admin_stats': "📊 Statistics",
+        'btn_admin_broadcast': "📢 Broadcast",
+        'btn_admin_manage_users': "👥 Manage",
+        'btn_admin_find': "🔍 Find",
+        'btn_admin_logs': "📋 Logs",
+        'btn_admin_tickets': "🆘 Tickets",
+        'btn_admin_settings': "⚙️ Settings",
+        'btn_admin_block': "🚫 Block/Unblock",
+        'btn_admin_backup': "💾 Backup",
+        'btn_admin_export': "📤 Export",
+        
+        'btn_reply': "💌 Reply",
+        'btn_ignore': "🚫 Ignore",
+        'btn_block': "🚫 Block",
+        'btn_unblock': "✅ Unblock",
+        'btn_message': "✉️ Message",
+        'btn_refresh': "🔄 Refresh",
+        'btn_toggle_text': "🔕 Hide text",
+        'btn_show_text': "🔔 Show text",
+        'btn_reply_ticket': "📝 Reply",
+        'btn_close_ticket': "✅ Close",
+        
+        # Support
+        'support': """🆘 <b>Support Service</b>
+
+<i>Describe your problem in as much detail as possible 💭
+We will try to respond as soon as possible ⏰</i>
+
+<b>📎 What can be sent:</b>
+• Text description of the problem ✍️
+• Error screenshot 📸
+• Bug video 🎬
+• Any media file 📎""",
+        
+        'support_sent': """✅ <b>Support request sent!</b>
+
+<i>Your ticket: <b>#{ticket_id}</b>
+We will respond to you as soon as possible ⏰</i>""",
+        
+        # History
+        'history': "📜 <b>Message history</b>\n\n<i>Last 20 messages:</i>",
+        'history_empty': "📜 <b>You don't have messages yet</b>\n\n<i>Start communication by sending your first anonymous message!</i>",
+        'history_item': """<b>{index}. {direction} {name}</b> <i>({time})</i>
+💬 <i>{preview}</i>""",
+        'history_incoming': "⬇️ From",
+        'history_outgoing': "⬆️ To",
+        
+        # Block
+        'block_instruction': "🚫 <b>Block/Unblock user</b>\n\nEnter user ID or username (without @):",
+        'block_success': "✅ User <code>{user_id}</code> blocked.",
+        'unblock_success': "✅ User <code>{user_id}</code> unblocked.",
+        'block_already': "✅ User already blocked.",
+        'user_not_blocked_msg': "✅ User was not blocked.",
+        
+        # Errors
+        'file_too_large': "❌ File is too large (maximum {max_size}MB).",
+        'message_too_long': "❌ Message is too long (maximum {max_length} characters).",
+        'rate_limit_exceeded': "⏳ Too many requests. Wait {seconds} seconds.",
+        'content_blocked': "❌ Message contains forbidden words.",
+        'session_expired': "⏰ Session expired. Start over.",
+        
+        # Export
+        'export_instruction': "📤 <b>Export data</b>\n\n<i>Choose what to export:</i>",
+        'export_users': "👥 Export users",
+        'export_messages': "📨 Export messages",
+        'export_stats': "📊 Export statistics",
+        'export_processing': "⏳ <b>Exporting data...</b>\n\n<i>Please wait.</i>",
+        'export_complete': "✅ <b>Export completed!</b>\n\n<i>Data successfully saved.</i>",
+        
+        # System
+        'system_error': "❌ A system error occurred. Please try again later.",
+        'maintenance': "🔧 The bot is under maintenance. We apologize for the inconvenience.",
     }
 }
 
@@ -290,6 +794,9 @@ def t(lang: str, key: str, **kwargs) -> str:
     if lang not in TRANSLATIONS:
         lang = 'ru'
     if key not in TRANSLATIONS[lang]:
+        # Fallback to Russian if key not found in current language
+        if 'ru' in TRANSLATIONS and key in TRANSLATIONS['ru']:
+            return TRANSLATIONS['ru'][key].format(**kwargs) if kwargs else TRANSLATIONS['ru'][key]
         return key
     return TRANSLATIONS[lang][key].format(**kwargs) if kwargs else TRANSLATIONS[lang][key]
 
@@ -301,13 +808,13 @@ def format_time(timestamp: int, lang: str = 'ru') -> str:
     
     if diff.days == 0:
         if diff.seconds < 60:
-            return "только что"
+            return t(lang, 'just_now')
         elif diff.seconds < 3600:
-            return f"{diff.seconds // 60} мин назад"
+            return t(lang, 'minutes_ago', minutes=diff.seconds // 60)
         else:
-            return f"{diff.seconds // 3600} ч назад"
+            return t(lang, 'hours_ago', hours=diff.seconds // 3600)
     elif diff.days == 1:
-        return "вчера"
+        return t(lang, 'yesterday')
     else:
         return dt.strftime("%d.%m.%Y")
 
@@ -396,52 +903,6 @@ def create_chart(data: Dict, max_width: int = 10) -> str:
     
     return "\n".join(result)
 
-def generate_captcha() -> Tuple[Image.Image, str]:
-    """Генерация капчи"""
-    captcha_text = ''.join(random.choices('ABCDEFGHJKLMNPQRSTUVWXYZ23456789', k=6))
-    
-    image = Image.new('RGB', (200, 80), color=(255, 255, 255))
-    draw = ImageDraw.Draw(image)
-    
-    try:
-        font = ImageFont.truetype("arial.ttf", 36)
-    except:
-        font = ImageFont.load_default()
-    
-    # Шум
-    for _ in range(100):
-        x = random.randint(0, 200)
-        y = random.randint(0, 80)
-        draw.point((x, y), fill=(
-            random.randint(150, 255),
-            random.randint(150, 255),
-            random.randint(150, 255)
-        ))
-    
-    # Текст
-    for i, char in enumerate(captcha_text):
-        x = 20 + i * 30 + random.randint(-5, 5)
-        y = 20 + random.randint(-5, 5)
-        draw.text((x, y), char, font=font, fill=(
-            random.randint(0, 100),
-            random.randint(0, 100),
-            random.randint(0, 100)
-        ))
-    
-    # Линии
-    for _ in range(5):
-        x1 = random.randint(0, 200)
-        y1 = random.randint(0, 80)
-        x2 = random.randint(0, 200)
-        y2 = random.randint(0, 80)
-        draw.line((x1, y1, x2, y2), fill=(
-            random.randint(100, 200),
-            random.randint(100, 200),
-            random.randint(100, 200)
-        ), width=1)
-    
-    return image, captcha_text
-
 # ====== КЛАВИАТУРЫ ======
 def main_keyboard(is_admin: bool = False, lang: str = 'ru') -> types.ReplyKeyboardMarkup:
     """Основная клавиатура"""
@@ -482,11 +943,11 @@ def admin_keyboard(lang: str = 'ru') -> types.ReplyKeyboardMarkup:
     buttons = [
         types.KeyboardButton(t(lang, 'btn_admin_stats')),
         types.KeyboardButton(t(lang, 'btn_admin_broadcast')),
-        types.KeyboardButton(t(lang, 'btn_admin_manage_users')),
         types.KeyboardButton(t(lang, 'btn_admin_find')),
         types.KeyboardButton(t(lang, 'btn_admin_logs')),
         types.KeyboardButton(t(lang, 'btn_admin_tickets')),
         types.KeyboardButton(t(lang, 'btn_admin_settings')),
+        types.KeyboardButton(t(lang, 'btn_admin_block')),
         types.KeyboardButton(t(lang, 'btn_admin_backup')),
         types.KeyboardButton(t(lang, 'btn_admin_export')),
         types.KeyboardButton(t(lang, 'btn_back'))
@@ -551,6 +1012,17 @@ def get_admin_log_keyboard(show_text: bool, lang: str = 'ru') -> types.InlineKey
         types.InlineKeyboardButton(t(lang, 'btn_refresh'), callback_data="refresh_logs"),
         types.InlineKeyboardButton(t(lang, 'btn_hide_text') if show_text else t(lang, 'btn_show_text'), 
                                  callback_data="toggle_text")
+    )
+    return keyboard
+
+def export_keyboard(lang: str = 'ru') -> types.InlineKeyboardMarkup:
+    """Клавиатура для экспорта"""
+    keyboard = types.InlineKeyboardMarkup(row_width=2)
+    keyboard.add(
+        types.InlineKeyboardButton(t(lang, 'export_users'), callback_data="export_users"),
+        types.InlineKeyboardButton(t(lang, 'export_messages'), callback_data="export_messages"),
+        types.InlineKeyboardButton(t(lang, 'export_stats'), callback_data="export_stats"),
+        types.InlineKeyboardButton(t(lang, 'btn_cancel'), callback_data="export_cancel")
     )
     return keyboard
 
@@ -622,17 +1094,6 @@ class Database:
                 )
             ''')
             
-            # Блокировки
-            c.execute('''
-                CREATE TABLE IF NOT EXISTS blocked_users (
-                    user_id INTEGER PRIMARY KEY,
-                    blocked_at INTEGER,
-                    blocked_by INTEGER,
-                    reason TEXT,
-                    UNIQUE(user_id)
-                )
-            ''')
-            
             # Поддержка
             c.execute('''
                 CREATE TABLE IF NOT EXISTS support_tickets (
@@ -664,69 +1125,6 @@ class Database:
                 )
             ''')
             
-            # Статистика пользователя (из v7.0)
-            c.execute('''
-                CREATE TABLE IF NOT EXISTS user_stats (
-                    user_id INTEGER PRIMARY KEY,
-                    messages_by_hour TEXT DEFAULT '{}',
-                    messages_by_day TEXT DEFAULT '{}',
-                    message_types TEXT DEFAULT '{}',
-                    total_time_spent INTEGER DEFAULT 0,
-                    last_session_start INTEGER,
-                    achievements TEXT DEFAULT '[]',
-                    FOREIGN KEY (user_id) REFERENCES users(user_id)
-                )
-            ''')
-            
-            # Логи для админа
-            c.execute('''
-                CREATE TABLE IF NOT EXISTS admin_logs (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    log_type TEXT,
-                    user_id INTEGER,
-                    target_id INTEGER,
-                    details TEXT,
-                    timestamp INTEGER,
-                    ip_address TEXT
-                )
-            ''')
-            
-            # Настройки бота
-            c.execute('''
-                CREATE TABLE IF NOT EXISTS bot_settings (
-                    key TEXT PRIMARY KEY,
-                    value TEXT,
-                    updated_at INTEGER
-                )
-            ''')
-            
-            c.execute('''
-                INSERT OR IGNORE INTO bot_settings (key, value, updated_at) 
-                VALUES ('notifications_enabled', '1', ?)
-            ''', (int(time.time()),))
-            
-            # Капчи
-            c.execute('''
-                CREATE TABLE IF NOT EXISTS captcha_attempts (
-                    user_id INTEGER PRIMARY KEY,
-                    attempts INTEGER DEFAULT 0,
-                    last_attempt INTEGER,
-                    captcha_text TEXT
-                )
-            ''')
-            
-            # Модерация
-            c.execute('''
-                CREATE TABLE IF NOT EXISTS moderation_logs (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER,
-                    message TEXT,
-                    reason TEXT,
-                    action TEXT,
-                    timestamp INTEGER
-                )
-            ''')
-            
             # Индексы
             c.execute('CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_id)')
             c.execute('CREATE INDEX IF NOT EXISTS idx_messages_receiver ON messages(receiver_id)')
@@ -734,7 +1132,7 @@ class Database:
             c.execute('CREATE INDEX IF NOT EXISTS idx_users_last_active ON users(last_active)')
             c.execute('CREATE INDEX IF NOT EXISTS idx_tickets_status ON support_tickets(status)')
             
-            logger.info("✅ Database initialized with all tables")
+            logger.info("✅ Database initialized with indexes")
     
     def _get_cached_user(self, user_id: int):
         """Получение пользователя с кэшированием"""
@@ -822,7 +1220,7 @@ class Database:
             c.execute('SELECT COUNT(*) FROM messages')
             total_messages = c.fetchone()[0]
             
-            c.execute('SELECT COUNT(*) FROM blocked_users')
+            c.execute('SELECT COUNT(*) FROM users WHERE is_blocked = 1')
             blocked_users = c.fetchone()[0]
             
             c.execute('SELECT COUNT(*) FROM support_tickets WHERE status = "open"')
@@ -832,12 +1230,67 @@ class Database:
             c.execute('SELECT COUNT(DISTINCT user_id) FROM users WHERE last_active > ?', (today_start,))
             today_active = c.fetchone()[0]
             
+            # Статистика за 24 часа
+            c.execute('SELECT COUNT(*) FROM messages WHERE timestamp > ?', 
+                     (int(time.time()) - 86400,))
+            messages_24h = c.fetchone()[0]
+            
+            c.execute('SELECT COUNT(*) FROM users WHERE created_at > ?', 
+                     (int(time.time()) - 86400,))
+            new_users_24h = c.fetchone()[0]
+            
+            # Средняя активность в час
+            c.execute('SELECT COUNT(*) / 24.0 FROM messages WHERE timestamp > ?', 
+                     (int(time.time()) - 86400,))
+            avg_hourly_result = c.fetchone()[0]
+            avg_hourly = round(avg_hourly_result, 2) if avg_hourly_result else 0
+            
+            # Пользователи за неделю
+            c.execute('SELECT COUNT(*) FROM users WHERE created_at > ?', 
+                     (int(time.time()) - 604800,))
+            users_week = c.fetchone()[0]
+            
+            # Сообщения за неделю
+            c.execute('SELECT COUNT(*) FROM messages WHERE timestamp > ?', 
+                     (int(time.time()) - 604800,))
+            messages_week = c.fetchone()[0]
+            
+            # Активные за неделю
+            c.execute('SELECT COUNT(DISTINCT user_id) FROM messages WHERE timestamp > ?', 
+                     (int(time.time()) - 604800,))
+            active_week = c.fetchone()[0]
+            
+            # Удерживание
+            c.execute('SELECT COUNT(DISTINCT user_id) FROM messages WHERE timestamp > ?', 
+                     (int(time.time()) - 2592000,))
+            active_30d = c.fetchone()[0]
+            
+            c.execute('SELECT COUNT(*) FROM users WHERE created_at < ?', 
+                     (int(time.time()) - 2592000,))
+            old_users = c.fetchone()[0]
+            
+            retention_30d = round((active_30d / old_users * 100), 2) if old_users > 0 else 100
+            
+            # Конверсия
+            c.execute('SELECT COUNT(DISTINCT sender_id) FROM messages')
+            users_with_messages = c.fetchone()[0]
+            
+            conversion_rate = round((users_with_messages / total_users * 100), 2) if total_users > 0 else 0
+            
             return {
                 'total_users': total_users,
                 'total_messages': total_messages,
                 'blocked_users': blocked_users,
                 'open_tickets': open_tickets,
-                'today_active': today_active
+                'today_active': today_active,
+                'messages_24h': messages_24h,
+                'new_users_24h': new_users_24h,
+                'avg_hourly': avg_hourly,
+                'users_week': users_week,
+                'messages_week': messages_week,
+                'active_week': active_week,
+                'retention_30d': retention_30d,
+                'conversion_rate': conversion_rate
             }
     
     def register_user(self, user_id: int, username: str, first_name: str):
@@ -906,6 +1359,13 @@ class Database:
             rows = c.fetchall()
             return [row[0] for row in rows]
     
+    def get_all_users_count(self) -> int:
+        """Получение количества всех пользователей"""
+        with self.get_connection() as conn:
+            c = conn.cursor()
+            c.execute('SELECT COUNT(*) FROM users')
+            return c.fetchone()[0]
+    
     def save_message(self, sender_id: int, receiver_id: int, message_type: str, 
                     text: str = "", file_id: Optional[str] = None, 
                     file_unique_id: Optional[str] = None, file_size: int = 0,
@@ -956,6 +1416,33 @@ class Database:
                 }
             return {'messages_received': 0, 'messages_sent': 0, 'link_clicks': 0}
     
+    def get_user_history(self, user_id: int, limit: int = 20) -> List[Dict]:
+        """История сообщений пользователя"""
+        with self.get_connection() as conn:
+            c = conn.cursor()
+            c.execute('''
+                SELECT h.*, u.first_name as partner_name, u.username as partner_username
+                FROM user_history h
+                LEFT JOIN users u ON h.partner_id = u.user_id
+                WHERE h.user_id = ?
+                ORDER BY h.timestamp DESC
+                LIMIT ?
+            ''', (user_id, limit))
+            
+            rows = c.fetchall()
+            history = []
+            for row in rows:
+                history.append({
+                    'message_id': row['message_id'],
+                    'partner_id': row['partner_id'],
+                    'partner_name': row['partner_name'],
+                    'partner_username': row['partner_username'],
+                    'direction': row['direction'],
+                    'timestamp': row['timestamp'],
+                    'preview': row['preview']
+                })
+            return history
+    
     def is_user_blocked(self, user_id: int) -> bool:
         """Проверка блокировки пользователя"""
         if user_id == ADMIN_ID:
@@ -974,25 +1461,15 @@ class Database:
         
         with self.get_connection() as conn:
             c = conn.cursor()
-            now = int(time.time())
-            try:
-                # Обновляем обе таблицы
-                c.execute('UPDATE users SET is_blocked = 1 WHERE user_id = ?', (user_id,))
-                c.execute('''
-                    INSERT OR REPLACE INTO blocked_users (user_id, blocked_at, blocked_by, reason)
-                    VALUES (?, ?, ?, ?)
-                ''', (user_id, now, admin_id, reason))
-                self._clear_user_cache(user_id)
-                return True
-            except:
-                return False
+            c.execute('UPDATE users SET is_blocked = 1 WHERE user_id = ?', (user_id,))
+            self._clear_user_cache(user_id)
+            return True
     
     def unblock_user(self, user_id: int) -> bool:
         """Разблокировка пользователя"""
         with self.get_connection() as conn:
             c = conn.cursor()
             c.execute('UPDATE users SET is_blocked = 0 WHERE user_id = ?', (user_id,))
-            c.execute('DELETE FROM blocked_users WHERE user_id = ?', (user_id,))
             success = c.rowcount > 0
             if success:
                 self._clear_user_cache(user_id)
@@ -1059,66 +1536,45 @@ class Database:
                 messages.append(msg)
             return messages
 
-    def add_admin_log(self, log_type: str, user_id: int, target_id: Optional[int] = None,
-                     details: str = "", ip_address: str = ""):
-        """Добавление лога админа"""
+    def export_users_data(self) -> str:
+        """Экспорт данных пользователей в CSV"""
         with self.get_connection() as conn:
             c = conn.cursor()
             c.execute('''
-                INSERT INTO admin_logs (log_type, user_id, target_id, details, timestamp, ip_address)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ''', (log_type, user_id, target_id, details, int(time.time()), ip_address))
+                SELECT user_id, username, first_name, language, 
+                       created_at, last_active, messages_received, 
+                       messages_sent, link_clicks, receive_messages, is_blocked
+                FROM users ORDER BY user_id
+            ''')
+            rows = c.fetchall()
+            
+            csv_content = "ID;Username;First Name;Language;Created At;Last Active;Messages Received;Messages Sent;Link Clicks;Receive Messages;Is Blocked\n"
+            for row in rows:
+                created = datetime.fromtimestamp(row['created_at']).strftime('%Y-%m-%d %H:%M')
+                last_active = datetime.fromtimestamp(row['last_active']).strftime('%Y-%m-%d %H:%M') if row['last_active'] else "Never"
+                csv_content += f"{row['user_id']};{row['username'] or ''};{row['first_name'] or ''};{row['language']};"
+                csv_content += f"{created};{last_active};{row['messages_received']};{row['messages_sent']};"
+                csv_content += f"{row['link_clicks']};{row['receive_messages']};{row['is_blocked']}\n"
+            
+            return csv_content
 
-    def get_setting(self, key: str, default: Optional[str] = None) -> Optional[str]:
-        """Получение настройки"""
-        with self.get_connection() as conn:
-            c = conn.cursor()
-            c.execute('SELECT value FROM bot_settings WHERE key = ?', (key,))
-            row = c.fetchone()
-            return row[0] if row else default
-
-    def set_setting(self, key: str, value: str):
-        """Установка настройки"""
-        with self.get_connection() as conn:
-            c = conn.cursor()
-            c.execute('INSERT OR REPLACE INTO bot_settings (key, value, updated_at) VALUES (?, ?, ?)', 
-                     (key, value, int(time.time())))
-
-    def add_captcha_attempt(self, user_id: int, captcha_text: str = ""):
-        """Добавление попытки капчи"""
-        with self.get_connection() as conn:
-            c = conn.cursor()
-            now = int(time.time())
-            c.execute('''
-                INSERT OR REPLACE INTO captcha_attempts 
-                (user_id, attempts, last_attempt, captcha_text)
-                VALUES (?, COALESCE((SELECT attempts FROM captcha_attempts WHERE user_id = ?), 0) + 1, ?, ?)
-            ''', (user_id, user_id, now, captcha_text))
-
-    def get_captcha_attempts(self, user_id: int) -> Tuple[int, Optional[str]]:
-        """Получение попыток капчи"""
-        with self.get_connection() as conn:
-            c = conn.cursor()
-            c.execute('SELECT attempts, captcha_text FROM captcha_attempts WHERE user_id = ?', (user_id,))
-            row = c.fetchone()
-            if row:
-                return row['attempts'], row['captcha_text']
-            return 0, None
-
-    def reset_captcha_attempts(self, user_id: int):
-        """Сброс попыток капчи"""
-        with self.get_connection() as conn:
-            c = conn.cursor()
-            c.execute('DELETE FROM captcha_attempts WHERE user_id = ?', (user_id,))
-
-    def add_moderation_log(self, user_id: int, message: str, reason: str, action: str):
-        """Добавление лога модерации"""
+    def export_messages_data(self) -> str:
+        """Экспорт данных сообщений в CSV"""
         with self.get_connection() as conn:
             c = conn.cursor()
             c.execute('''
-                INSERT INTO moderation_logs (user_id, message, reason, action, timestamp)
-                VALUES (?, ?, ?, ?, ?)
-            ''', (user_id, message, reason, action, int(time.time())))
+                SELECT id, sender_id, receiver_id, message_type, text, timestamp
+                FROM messages ORDER BY timestamp DESC LIMIT 1000
+            ''')
+            rows = c.fetchall()
+            
+            csv_content = "ID;Sender ID;Receiver ID;Type;Text;Timestamp\n"
+            for row in rows:
+                timestamp = datetime.fromtimestamp(row['timestamp']).strftime('%Y-%m-%d %H:%M')
+                text = (row['text'] or '').replace(';', ',').replace('\n', ' ').replace('\r', '')
+                csv_content += f"{row['id']};{row['sender_id']};{row['receiver_id']};{row['message_type']};{text};{timestamp}\n"
+            
+            return csv_content
 
 db = Database()
 
@@ -1203,7 +1659,7 @@ def handle_callback(call):
         elif data == "refresh_logs":
             if user_id == ADMIN_ID:
                 show_message_logs(admin_id=user_id)
-                bot.answer_callback_query(call.id, "✅ Refreshed")
+                bot.answer_callback_query(call.id, t(lang, 'btn_refresh'))
             return
         
         elif data == "toggle_text":
@@ -1211,13 +1667,13 @@ def handle_callback(call):
                 current = admin_modes.get(user_id, {}).get('show_text', True)
                 admin_modes[user_id] = {'show_text': not current}
                 show_message_logs(admin_id=user_id)
-                bot.answer_callback_query(call.id, "✅ Settings changed")
+                bot.answer_callback_query(call.id, t(lang, 'settings'))
             return
         
         elif data.startswith("lang_"):
             language = data.split("_")[1]
             db.set_language(user_id, language)
-            bot.answer_callback_query(call.id, f"✅ Language changed to {language}")
+            bot.answer_callback_query(call.id, t(language, 'language_changed'))
             
             link = generate_link(user_id)
             bot.send_message(user_id, t(language, 'start', link=link), 
@@ -1253,7 +1709,6 @@ def handle_callback(call):
             
             target_id = int(data.split("_")[2])
             if db.block_user(target_id, ADMIN_ID, "Admin panel"):
-                db.add_admin_log("block", user_id, target_id, "Admin panel")
                 bot.answer_callback_query(call.id, t(lang, 'block_user'))
                 
                 try:
@@ -1275,7 +1730,6 @@ def handle_callback(call):
             
             target_id = int(data.split("_")[2])
             if db.unblock_user(target_id):
-                db.add_admin_log("unblock", user_id, target_id, "Admin panel")
                 bot.answer_callback_query(call.id, t(lang, 'unblock_user'))
                 
                 try:
@@ -1321,7 +1775,6 @@ def handle_callback(call):
             
             ticket_id = int(data.split("_")[2])
             db.update_support_ticket(ticket_id, user_id, "Closed", "closed")
-            db.add_admin_log("ticket_close", user_id, None, f"Ticket #{ticket_id}")
             bot.answer_callback_query(call.id, "✅ Closed")
             
             try:
@@ -1341,6 +1794,35 @@ def handle_callback(call):
             target_id = int(data.split("_")[2])
             find_user_info(admin_id=user_id, query=str(target_id))
             bot.answer_callback_query(call.id)
+        
+        elif data == "export_users":
+            if user_id != ADMIN_ID:
+                bot.answer_callback_query(call.id, "❌ No access")
+                return
+            
+            export_users_data(admin_id=user_id, lang=lang)
+            bot.answer_callback_query(call.id, t(lang, 'export_processing'))
+        
+        elif data == "export_messages":
+            if user_id != ADMIN_ID:
+                bot.answer_callback_query(call.id, "❌ No access")
+                return
+            
+            export_messages_data(admin_id=user_id, lang=lang)
+            bot.answer_callback_query(call.id, t(lang, 'export_processing'))
+        
+        elif data == "export_stats":
+            if user_id != ADMIN_ID:
+                bot.answer_callback_query(call.id, "❌ No access")
+                return
+            
+            export_stats_data(admin_id=user_id, lang=lang)
+            bot.answer_callback_query(call.id, t(lang, 'export_processing'))
+        
+        elif data == "export_cancel":
+            bot.answer_callback_query(call.id, t(lang, 'canceled'))
+            bot.send_message(user_id, t(lang, 'main_menu'), 
+                           reply_markup=admin_keyboard(lang))
         
         else:
             bot.answer_callback_query(call.id, "⚠️ Unknown command")
@@ -1386,11 +1868,6 @@ def handle_message(message):
     db.update_last_active(user_id)
     user = db.get_user(user_id)
     lang = user['language'] if user else 'ru'
-    
-    # Обработка капчи
-    if user_id in captcha_data:
-        handle_captcha_response(message, user_id, lang)
-        return
     
     # Обработка кнопки "Отмена"
     if text == t(lang, 'btn_cancel'):
@@ -1446,73 +1923,12 @@ def handle_message(message):
     if message_type == 'text':
         handle_text_button(user_id, text, lang)
 
-def handle_captcha_response(message, user_id: int, lang: str):
-    """Обработка ответа на капчу"""
-    if user_id not in captcha_data:
-        return
-    
-    captcha_info = captcha_data[user_id]
-    user_response = message.text.strip().upper()
-    
-    # Проверка времени
-    if time.time() - captcha_info['timestamp'] > 300:  # 5 минут
-        del captcha_data[user_id]
-        db.reset_captcha_attempts(user_id)
-        bot.send_message(user_id, t(lang, 'captcha_timeout'))
-        bot.send_message(user_id, t(lang, 'main_menu'), 
-                        reply_markup=main_keyboard(user_id == ADMIN_ID, lang))
-        return
-    
-    # Увеличиваем количество попыток
-    captcha_info['attempts'] += 1
-    db.add_captcha_attempt(user_id)
-    
-    # Проверка капчи
-    if user_response == captcha_info['text']:
-        # Капча пройдена
-        del captcha_data[user_id]
-        db.reset_captcha_attempts(user_id)
-        bot.send_message(user_id, t(lang, 'captcha_correct'))
-        
-        # Возвращаем к предыдущему действию
-        user = db.get_user(user_id)
-        bot.send_message(user_id, t(lang, 'main_menu'), 
-                        reply_markup=main_keyboard(user_id == ADMIN_ID, lang))
-    else:
-        # Неверная капча
-        if captcha_info['attempts'] >= 3:
-            # Превышено количество попыток
-            del captcha_data[user_id]
-            bot.send_message(user_id, t(lang, 'captcha_failed'))
-            bot.send_message(user_id, t(lang, 'main_menu'), 
-                            reply_markup=main_keyboard(user_id == ADMIN_ID, lang))
-        else:
-            # Пробуем снова
-            bot.send_message(user_id, t(lang, 'captcha_incorrect'))
-            
-            # Генерация новой капчи
-            captcha_image, captcha_text = generate_captcha()
-            captcha_data[user_id] = {
-                'text': captcha_text,
-                'timestamp': time.time(),
-                'attempts': captcha_info['attempts']
-            }
-            
-            bio = BytesIO()
-            captcha_image.save(bio, 'PNG')
-            bio.seek(0)
-            
-            bot.send_photo(user_id, photo=bio, 
-                          caption=t(lang, 'captcha_required'))
-
 def clear_user_state(user_id: int):
     """Очистка состояния пользователя"""
     if user_id in user_sessions:
         del user_sessions[user_id]
     if user_id in admin_modes:
         del admin_modes[user_id]
-    if user_id in captcha_data:
-        del captcha_data[user_id]
 
 def handle_text_button(user_id: int, text: str, lang: str):
     """Обработка текстовых кнопок"""
@@ -1617,43 +2033,36 @@ def show_user_stats(user_id: int, lang: str):
 
 <b>⚙️ Настройки:</b>
 ├ Приём сообщений: {'✅ Включен' if user['receive_messages'] else '❌ Выключен'}
-└ Язык: 🇷🇺 Русский"""
+└ Язык: {'🇷🇺 Русский' if user['language'] == 'ru' else '🇺🇸 English'}"""
     
     bot.send_message(user_id, stats_text, 
                     reply_markup=main_keyboard(user_id == ADMIN_ID, lang))
 
 def show_user_history(user_id: int, lang: str):
     """Показ истории сообщений"""
-    with db.get_connection() as conn:
-        c = conn.cursor()
-        c.execute('''
-            SELECT h.*, u.first_name as partner_name
-            FROM user_history h
-            LEFT JOIN users u ON h.partner_id = u.user_id
-            WHERE h.user_id = ?
-            ORDER BY h.timestamp DESC
-            LIMIT 20
-        ''', (user_id,))
-        
-        rows = c.fetchall()
-        
-        if not rows:
-            bot.send_message(user_id, "📜 У тебя пока нет сообщений\n\nНачни общение, отправив первую анонимку!",
-                            reply_markup=main_keyboard(user_id == ADMIN_ID, lang))
-            return
-        
-        history_text = "📜 <b>История сообщений</b>\n\n<i>Последние 20 сообщений:</i>\n\n"
-        
-        for i, row in enumerate(rows, 1):
-            direction = "⬇️ От" if row['direction'] == 'incoming' else "⬆️ Кому"
-            name = row['partner_name'] or f"ID: {row['partner_id']}"
-            time_str = format_time(row['timestamp'], lang)
-            
-            history_text += f"<b>{i}. {direction} {name}</b> <i>({time_str})</i>\n"
-            history_text += f"💬 <i>{row['preview']}</i>\n\n"
-        
-        bot.send_message(user_id, history_text,
+    history = db.get_user_history(user_id, limit=20)
+    
+    if not history:
+        bot.send_message(user_id, t(lang, 'history_empty'),
                         reply_markup=main_keyboard(user_id == ADMIN_ID, lang))
+        return
+    
+    history_text = t(lang, 'history') + "\n\n"
+    
+    for i, item in enumerate(history, 1):
+        direction = t(lang, 'history_incoming') if item['direction'] == 'incoming' else t(lang, 'history_outgoing')
+        name = item['partner_name'] or f"ID: {item['partner_id']}"
+        time_str = format_time(item['timestamp'], lang)
+        
+        history_text += t(lang, 'history_item',
+                         index=i,
+                         direction=direction,
+                         name=name,
+                         time=time_str,
+                         preview=item['preview']) + "\n\n"
+    
+    bot.send_message(user_id, history_text,
+                    reply_markup=main_keyboard(user_id == ADMIN_ID, lang))
 
 def send_anonymous_message(sender_id: int, receiver_id: int, message, lang: str):
     """Отправка анонимного сообщения"""
@@ -1675,14 +2084,6 @@ def send_anonymous_message(sender_id: int, receiver_id: int, message, lang: str)
         # Проверка модерации
         if not check_content_moderation(text):
             bot.send_message(sender_id, t(lang, 'content_blocked'))
-            db.add_moderation_log(sender_id, text[:100], "Blacklisted word", "blocked")
-            
-            # Уведомление админа
-            if CHANNEL and CHANNEL != "":
-                try:
-                    bot.send_message(CHANNEL, f"🚨 Обнаружено подозрительное сообщение от пользователя {sender_id}")
-                except:
-                    pass
             return
         
         file_id = None
@@ -1816,10 +2217,6 @@ def send_anonymous_message(sender_id: int, receiver_id: int, message, lang: str)
             except Exception as e:
                 logger.error(f"Channel error: {e}")
         
-        # Логирование для админа
-        db.add_admin_log("anonymous_message", sender_id, receiver_id, 
-                        f"{message_type}: {text[:50] if text else 'no text'}")
-        
     except Exception as e:
         logger.error(f"Send error: {e}")
         bot.send_message(sender_id, t(lang, 'system_error'))
@@ -1856,7 +2253,7 @@ def create_support_ticket(message, lang: str):
         
         ticket_id = db.create_support_ticket(user_id, text, file_id, file_unique_id, message_type)
         
-        bot.send_message(user_id, t(lang, 'support_sent'),
+        bot.send_message(user_id, t(lang, 'support_sent', ticket_id=ticket_id),
                         reply_markup=main_keyboard(user_id == ADMIN_ID, lang))
         
         notify_admin_about_ticket(ticket_id, user_id, message_type, text, file_id)
@@ -1910,11 +2307,22 @@ def notify_admin_about_ticket(ticket_id: int, user_id: int, message_type: str,
 def reply_to_support_ticket(message, ticket_id: int, lang: str):
     """Ответ на тикет поддержки"""
     try:
+        with db.get_connection() as conn:
+            c = conn.cursor()
+            c.execute('SELECT user_id, message FROM support_tickets WHERE id = ?', (ticket_id,))
+            row = c.fetchone()
+            
+            if not row:
+                bot.send_message(ADMIN_ID, "❌ Ticket not found.")
+                return
+            
+            user_id, user_message = row
+        
         message_type = message.content_type
         reply_text = message.text or message.caption or ""
         
         if not reply_text and message_type == 'text':
-            bot.send_message(ADMIN_ID, "❌ Введите текст")
+            bot.send_message(ADMIN_ID, "❌ Enter text")
             return
         
         file_id = None
@@ -1927,34 +2335,37 @@ def reply_to_support_ticket(message, ticket_id: int, lang: str):
         
         db.update_support_ticket(ticket_id, ADMIN_ID, reply_text, 'answered')
         
-        user_reply = f"""🆘 Ответ от поддержки
+        user_reply = f"""🆘 Support response
 
+Your message:
+{user_message[:500]}
+
+Our response:
 {reply_text}
 
-<i>С уважением, команда бота 🤖</i>"""
+<i>Best regards, bot team 🤖</i>"""
         
-        # Отправляем ответ пользователю
         try:
             if message_type == 'text':
-                bot.send_message(ticket_id, user_reply)
+                bot.send_message(user_id, user_reply)
             elif message_type == 'photo':
-                bot.send_photo(ticket_id, file_id, caption=user_reply)
+                bot.send_photo(user_id, file_id, caption=user_reply)
             elif message_type == 'video':
-                bot.send_video(ticket_id, file_id, caption=user_reply)
+                bot.send_video(user_id, file_id, caption=user_reply)
             elif message_type == 'document':
-                bot.send_document(ticket_id, file_id, caption=user_reply)
+                bot.send_document(user_id, file_id, caption=user_reply)
         except ApiTelegramException as e:
             if e.error_code == 403:
-                bot.send_message(ADMIN_ID, f"❌ Пользователь заблокировал бота.")
+                bot.send_message(ADMIN_ID, f"❌ User {user_id} blocked the bot.")
             else:
                 raise
         
-        bot.send_message(ADMIN_ID, f"✅ Ответ на тикет #{ticket_id} отправлен",
+        bot.send_message(ADMIN_ID, f"✅ Response to ticket #{ticket_id} sent",
                         reply_markup=admin_keyboard(lang))
         
     except Exception as e:
         logger.error(f"Reply error: {e}")
-        bot.send_message(ADMIN_ID, "❌ Ошибка отправки ответа")
+        bot.send_message(ADMIN_ID, "❌ Response sending error")
 
 def send_direct_admin_message(message, target_user_id: int, lang: str):
     """Отправка прямого сообщения от админа"""
@@ -1963,7 +2374,7 @@ def send_direct_admin_message(message, target_user_id: int, lang: str):
         text = message.text or message.caption or ""
         
         if not text and message_type == 'text':
-            bot.send_message(ADMIN_ID, "❌ Введите текст")
+            bot.send_message(ADMIN_ID, "❌ Enter text")
             return
         
         file_id = None
@@ -1977,11 +2388,11 @@ def send_direct_admin_message(message, target_user_id: int, lang: str):
             file_id = message.sticker.file_id
         
         # Формирование сообщения
-        user_message = f"""📢 Важное уведомление
+        user_message = f"""📢 Important notification
 
 {text}
 
-<i>С уважением, команда бота 🤖</i>"""
+<i>Best regards, bot team 🤖</i>"""
         
         try:
             # Отправка пользователю
@@ -1998,7 +2409,7 @@ def send_direct_admin_message(message, target_user_id: int, lang: str):
                 bot.send_sticker(target_user_id, file_id)
         except ApiTelegramException as e:
             if e.error_code == 403:
-                bot.send_message(ADMIN_ID, f"❌ Пользователь {target_user_id} заблокировал бота.")
+                bot.send_message(ADMIN_ID, f"❌ User {target_user_id} blocked the bot.")
                 return
             else:
                 raise
@@ -2007,13 +2418,9 @@ def send_direct_admin_message(message, target_user_id: int, lang: str):
         bot.send_message(ADMIN_ID, t(lang, 'message_sent_admin', user_id=target_user_id, message_type=message_type),
                         reply_markup=admin_keyboard(lang))
         
-        # Логирование
-        db.add_admin_log("direct_message", ADMIN_ID, target_user_id, 
-                        f"{message_type}: {text[:50] if text else 'no text'}")
-        
     except Exception as e:
         logger.error(f"Direct message error: {e}")
-        bot.send_message(ADMIN_ID, "❌ Ошибка отправки")
+        bot.send_message(ADMIN_ID, "❌ Sending error")
 
 def generate_qr_code(user_id: int, lang: str):
     """Генерация QR-кода"""
@@ -2038,7 +2445,7 @@ def generate_qr_code(user_id: int, lang: str):
                       reply_markup=main_keyboard(user_id == ADMIN_ID, lang))
     except Exception as e:
         logger.error(f"QR error: {e}")
-        bot.send_message(user_id, "❌ Ошибка генерации QR-кода")
+        bot.send_message(user_id, "❌ QR code generation error")
 
 def show_help(user_id: int, lang: str):
     """Показ помощи"""
@@ -2071,8 +2478,13 @@ def handle_admin_command(admin_id: int, text: str, lang: str):
     
     elif text == t(lang, 'btn_admin_block'):
         admin_modes[admin_id] = 'block_user'
-        bot.send_message(admin_id, t(lang, 'block_instruction'),
-                        reply_markup=cancel_keyboard(lang))
+        bot.send_message(admin_id, t(lang, 'block_instruction'), reply_markup=cancel_keyboard(lang))
+    
+    elif text == t(lang, 'btn_admin_backup'):
+        create_backup(admin_id, lang)
+    
+    elif text == t(lang, 'btn_admin_export'):
+        bot.send_message(admin_id, t(lang, 'export_instruction'), reply_markup=export_keyboard(lang))
     
     elif text == t(lang, 'btn_back'):
         bot.send_message(admin_id, t(lang, 'main_menu'), reply_markup=main_keyboard(True, lang))
@@ -2099,14 +2511,20 @@ def show_admin_stats(admin_id: int, lang: str):
     """Показ статистики админа"""
     stats = db.get_admin_stats()
     
-    stats_text = f"""👑 <b>Статистика бота</b>
-
-<b>📊 Основные метрики:</b>
-├ Всего пользователей: <b>{stats['total_users']}</b>
-├ Активных сегодня: <b>{stats['today_active']}</b>
-├ Всего сообщений: <b>{stats['total_messages']}</b>
-├ Заблокированных: <b>{stats['blocked_users']}</b>
-└ Открытых тикетов: <b>{stats['open_tickets']}</b>"""
+    stats_text = t(lang, 'admin_stats',
+                   total_users=stats['total_users'],
+                   today_active=stats['today_active'],
+                   total_messages=stats['total_messages'],
+                   messages_24h=stats['messages_24h'],
+                   new_users_24h=stats['new_users_24h'],
+                   blocked_users=stats['blocked_users'],
+                   open_tickets=stats['open_tickets'],
+                   avg_hourly=stats['avg_hourly'],
+                   users_week=stats['users_week'],
+                   messages_week=stats['messages_week'],
+                   active_week=stats['active_week'],
+                   retention_30d=stats['retention_30d'],
+                   conversion_rate=stats['conversion_rate'])
     
     bot.send_message(admin_id, stats_text, reply_markup=admin_keyboard(lang))
 
@@ -2119,21 +2537,21 @@ def start_broadcast(admin_id: int, message, lang: str):
             text = message.text or message.caption or ""
             
         if not text:
-            bot.send_message(admin_id, "❌ Введите текст рассылки")
+            bot.send_message(admin_id, "❌ Enter broadcast text")
             return
         
         users = db.get_all_users_list()
         total = len(users)
         
         if total == 0:
-            bot.send_message(admin_id, "❌ Нет пользователей")
+            bot.send_message(admin_id, "❌ No users found")
             return
         
         sent = 0
         failed = 0
         blocked = 0
         
-        progress_msg = bot.send_message(admin_id, f"⏳ Начинаю рассылку... Всего: {total}")
+        progress_msg = bot.send_message(admin_id, t(lang, 'broadcast_progress', total=total))
         
         for user_id in users:
             try:
@@ -2150,21 +2568,12 @@ def start_broadcast(admin_id: int, message, lang: str):
         bot.edit_message_text(
             chat_id=admin_id,
             message_id=progress_msg.message_id,
-            text=f"""✅ <b>Рассылка завершена!</b>
-
-<b>📊 Результаты:</b>
-├ Всего пользователей: <b>{total}</b>
-├ Успешно отправлено: <b>{sent}</b>
-├ Не удалось отправить: <b>{failed}</b>
-└ Пропущено (заблок.): <b>{blocked}</b>"""
+            text=t(lang, 'broadcast_result', total=total, sent=sent, failed=failed, blocked=blocked)
         )
-        
-        # Логирование
-        db.add_admin_log("broadcast", admin_id, None, f"Sent: {sent}/{total}")
         
     except Exception as e:
         logger.error(f"Broadcast error: {e}")
-        bot.send_message(admin_id, f"❌ Ошибка: {e}")
+        bot.send_message(admin_id, f"❌ Error: {e}")
 
 def find_user_info(admin_id: int, query: str, lang: str):
     """Поиск информации о пользователе"""
@@ -2186,32 +2595,27 @@ def find_user_info(admin_id: int, query: str, lang: str):
         is_blocked = db.is_user_blocked(user['user_id'])
         
         username = f"@{user['username']}" if user['username'] else "❌ нет"
-        receive_status = "✅ Включено" if user['receive_messages'] else "❌ Выключено"
-        block_status = "🔴 ЗАБЛОКИРОВАН" if is_blocked else "🟢 АКТИВЕН"
+        receive_status = "✅ Enabled" if user['receive_messages'] else "❌ Disabled"
+        block_status = "🔴 BLOCKED" if is_blocked else "🟢 ACTIVE"
         
-        user_info = f"""🔍 <b>ИНФОРМАЦИЯ О ПОЛЬЗОВАТЕЛЕ</b>
-
-<b>👤 Основные данные:</b>
-├ ID: <code>{user['user_id']}</code>
-├ Имя: <b>{user['first_name']}</b>
-├ Юзернейм: {username}
-├ Зарегистрирован: {format_time(user['created_at'], lang)}
-└ Последняя активность: {format_time(user['last_active'], lang)}
-
-<b>📊 Статистика:</b>
-├ 📨 Получено: <b>{stats['messages_received']}</b>
-├ 📤 Отправлено: <b>{stats['messages_sent']}</b>
-├ 🔗 Переходов: <b>{stats['link_clicks']}</b>
-└ ⚙️ Приём сообщений: {receive_status}
-
-<b>🚫 Статус:</b> {block_status}"""
+        user_info = t(lang, 'user_info',
+                     user_id=user['user_id'],
+                     first_name=user['first_name'],
+                     username=username,
+                     registered=format_time(user['created_at'], lang),
+                     last_active=format_time(user['last_active'], lang),
+                     received=stats['messages_received'],
+                     sent=stats['messages_sent'],
+                     clicks=user['link_clicks'],
+                     receive_status=receive_status,
+                     block_status=block_status)
         
         bot.send_message(admin_id, user_info, 
                         reply_markup=get_admin_user_keyboard(user['user_id'], is_blocked, lang))
         
     except Exception as e:
         logger.error(f"Find user error: {e}")
-        bot.send_message(admin_id, f"❌ Ошибка: {e}", reply_markup=admin_keyboard(lang))
+        bot.send_message(admin_id, f"❌ Error: {e}", reply_markup=admin_keyboard(lang))
 
 def handle_block_user(admin_id: int, query: str, lang: str):
     """Обработка блокировки пользователя"""
@@ -2233,7 +2637,6 @@ def handle_block_user(admin_id: int, query: str, lang: str):
         
         if is_blocked:
             if db.unblock_user(user['user_id']):
-                db.add_admin_log("unblock", admin_id, user['user_id'], "Admin panel")
                 bot.send_message(admin_id, t(lang, 'unblock_success', user_id=user['user_id']),
                                reply_markup=admin_keyboard(lang))
             else:
@@ -2241,7 +2644,6 @@ def handle_block_user(admin_id: int, query: str, lang: str):
                                reply_markup=admin_keyboard(lang))
         else:
             if db.block_user(user['user_id'], admin_id, "Block panel"):
-                db.add_admin_log("block", admin_id, user['user_id'], "Admin panel")
                 bot.send_message(admin_id, t(lang, 'block_success', user_id=user['user_id']),
                                reply_markup=admin_keyboard(lang))
             else:
@@ -2250,7 +2652,7 @@ def handle_block_user(admin_id: int, query: str, lang: str):
         
     except Exception as e:
         logger.error(f"Block user error: {e}")
-        bot.send_message(admin_id, f"❌ Ошибка: {e}", reply_markup=admin_keyboard(lang))
+        bot.send_message(admin_id, f"❌ Error: {e}", reply_markup=admin_keyboard(lang))
 
 def show_message_logs(admin_id: int, lang: str):
     """Показ логов сообщений"""
@@ -2305,22 +2707,93 @@ def show_support_tickets(admin_id: int, lang: str):
 
 def show_admin_settings(admin_id: int, lang: str):
     """Показ настроек админа"""
-    notifications = db.get_setting('notifications_enabled', '1')
-    notifications_status = "✅ Enabled" if notifications == '1' else "❌ Disabled"
     channel_status = "✅ Настроен" if CHANNEL and CHANNEL != "" else "❌ Не настроен"
     
-    settings_text = f"""⚙️ <b>Настройки администратора</b>
-
-<b>🔔 Уведомления:</b>
-├ В боте: {notifications_status}
-├ В канал: {channel_status}
-└ Антиспам: {ANTISPAM_INTERVAL} сек.
-
-<b>⚡ Производительность:</b>
-├ База данных: ✅ Работает
-└ Кэширование: ✅ Активно"""
+    settings_text = t(lang, 'admin_settings',
+                     notifications="✅ Включены",
+                     channel_status=channel_status,
+                     antispam=ANTISPAM_INTERVAL)
     
     bot.send_message(admin_id, settings_text, reply_markup=admin_keyboard(lang))
+
+def create_backup(admin_id: int, lang: str):
+    """Создание бэкапа базы данных"""
+    try:
+        backup_filename = f"backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
+        
+        with open(DB_PATH, 'rb') as f:
+            db_content = f.read()
+        
+        bio = BytesIO(db_content)
+        bio.name = backup_filename
+        
+        bot.send_document(admin_id, bio, 
+                         caption=f"💾 Database backup\n📅 {datetime.now().strftime('%d.%m.%Y %H:%M')}")
+        
+    except Exception as e:
+        logger.error(f"Backup error: {e}")
+        bot.send_message(admin_id, f"❌ Backup error: {e}")
+
+def export_users_data(admin_id: int, lang: str):
+    """Экспорт данных пользователей"""
+    try:
+        csv_content = db.export_users_data()
+        bio = BytesIO(csv_content.encode('utf-8'))
+        bio.name = f"users_export_{datetime.now().strftime('%Y%m%d')}.csv"
+        
+        bot.send_document(admin_id, bio, caption=t(lang, 'export_complete'))
+        
+    except Exception as e:
+        logger.error(f"Export users error: {e}")
+        bot.send_message(admin_id, f"❌ Export error: {e}")
+
+def export_messages_data(admin_id: int, lang: str):
+    """Экспорт данных сообщений"""
+    try:
+        csv_content = db.export_messages_data()
+        bio = BytesIO(csv_content.encode('utf-8'))
+        bio.name = f"messages_export_{datetime.now().strftime('%Y%m%d')}.csv"
+        
+        bot.send_document(admin_id, bio, caption=t(lang, 'export_complete'))
+        
+    except Exception as e:
+        logger.error(f"Export messages error: {e}")
+        bot.send_message(admin_id, f"❌ Export error: {e}")
+
+def export_stats_data(admin_id: int, lang: str):
+    """Экспорт статистики"""
+    try:
+        stats = db.get_admin_stats()
+        
+        stats_text = f"""📊 Anony SMS Bot Statistics
+📅 {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}
+
+Main metrics:
+├ Total users: {stats['total_users']}
+├ Active today: {stats['today_active']}
+├ Total messages: {stats['total_messages']}
+├ Messages in 24h: {stats['messages_24h']}
+├ New in 24h: {stats['new_users_24h']}
+├ Blocked: {stats['blocked_users']}
+├ Open tickets: {stats['open_tickets']}
+└ Avg. activity per hour: {stats['avg_hourly']}
+
+Detailed statistics:
+├ Users this week: {stats['users_week']}
+├ Messages this week: {stats['messages_week']}
+├ Active this week: {stats['active_week']}
+├ Retention (30 days): {stats['retention_30d']}%
+└ Conversion to messages: {stats['conversion_rate']}%
+"""
+        
+        bio = BytesIO(stats_text.encode('utf-8'))
+        bio.name = f"stats_export_{datetime.now().strftime('%Y%m%d')}.txt"
+        
+        bot.send_document(admin_id, bio, caption=t(lang, 'export_complete'))
+        
+    except Exception as e:
+        logger.error(f"Export stats error: {e}")
+        bot.send_message(admin_id, f"❌ Export error: {e}")
 
 # ====== FLASK РОУТЫ ======
 @app.route('/webhook', methods=['POST'])
@@ -2346,7 +2819,7 @@ def health_check():
             'status': 'ok', 
             'time': datetime.now().isoformat(),
             'bot': 'Anony SMS',
-            'version': '9.0',
+            'version': '10.0',
             'users': stats['total_users'],
             'messages': stats['total_messages'],
         })
@@ -2359,79 +2832,11 @@ def ping():
     """Пинг для поддержания активности"""
     return jsonify({'status': 'active', 'timestamp': time.time()})
 
-@app.route('/admin', methods=['GET'])
-def admin_panel_web():
-    """Веб-панель админа (из v7.0)"""
-    if not CHANNEL:
-        return "Admin panel not configured"
-    
-    stats = db.get_admin_stats()
-    
-    html = f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>Anony SMS Admin</title>
-        <meta charset="utf-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1">
-        <style>
-            body {{ font-family: Arial, sans-serif; padding: 20px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; }}
-            .container {{ max-width: 1200px; margin: 0 auto; background: rgba(255, 255, 255, 0.1); backdrop-filter: blur(10px); padding: 30px; border-radius: 20px; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3); }}
-            .header {{ text-align: center; margin-bottom: 40px; }}
-            .stats {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 40px; }}
-            .stat-card {{ background: rgba(255, 255, 255, 0.2); padding: 25px; border-radius: 15px; text-align: center; box-shadow: 0 4px 15px rgba(0,0,0,0.2); transition: transform 0.3s; }}
-            .stat-card:hover {{ transform: translateY(-5px); }}
-            .stat-value {{ font-size: 36px; font-weight: bold; margin: 15px 0; color: #fff; }}
-            .stat-label {{ font-size: 14px; opacity: 0.9; }}
-            h1 {{ font-size: 2.5em; margin-bottom: 10px; }}
-            .footer {{ text-align: center; margin-top: 40px; opacity: 0.7; font-size: 14px; }}
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <div class="header">
-                <h1>🤖 Anony SMS Admin Panel</h1>
-                <p>Real-time bot statistics and management</p>
-            </div>
-            <div class="stats">
-                <div class="stat-card"><div class="stat-label">👥 Users</div><div class="stat-value">{stats['total_users']}</div></div>
-                <div class="stat-card"><div class="stat-label">📨 Messages</div><div class="stat-value">{stats['total_messages']}</div></div>
-                <div class="stat-card"><div class="stat-label">🚫 Blocked</div><div class="stat-value">{stats['blocked_users']}</div></div>
-                <div class="stat-card"><div class="stat-label">🆘 Tickets</div><div class="stat-value">{stats['open_tickets']}</div></div>
-                <div class="stat-card"><div class="stat-label">📈 Today Active</div><div class="stat-value">{stats['today_active']}</div></div>
-            </div>
-            <div class="footer">
-                <p>Anony SMS Bot v9.0 | Last update: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
-                <p>© 2024 Anony SMS. All rights reserved.</p>
-            </div>
-        </div>
-    </body>
-    </html>
-    """
-    
-    return html
-
 # ====== МОНИТОРИНГ ======
 def monitor_bot():
     """Мониторинг состояния бота"""
     while True:
         try:
-            stats = db.get_admin_stats()
-            
-            # Проверка низкой активности
-            if stats['messages_24h'] < 10 and stats['total_users'] > 100:
-                try:
-                    bot.send_message(ADMIN_ID, f"⚠️ Low activity\nLast 24h: {stats['messages_24h']} messages\nUsers: {stats['total_users']}")
-                except:
-                    pass
-            
-            # Проверка большого количества тикетов
-            if stats['open_tickets'] > 10:
-                try:
-                    bot.send_message(ADMIN_ID, f"⚠️ Many tickets: {stats['open_tickets']}")
-                except:
-                    pass
-            
             # Проверка целостности БД
             try:
                 with db.get_connection() as conn:
@@ -2439,7 +2844,7 @@ def monitor_bot():
                     c.execute('PRAGMA integrity_check')
                     result = c.fetchone()
                     if result[0] != 'ok':
-                        bot.send_message(ADMIN_ID, f"⚠️ DB integrity issue: {result[0]}")
+                        logger.warning(f"DB integrity issue: {result[0]}")
             except Exception as e:
                 logger.error(f"DB check error: {e}")
             
@@ -2463,27 +2868,11 @@ def monitor_bot():
             logger.error(f"Monitor error: {e}")
             time.sleep(300)
 
-def keep_alive():
-    """Поддержание активности на Render"""
-    while True:
-        try:
-            if WEBHOOK_HOST:
-                response = requests.get(f"{WEBHOOK_HOST}/ping", timeout=10)
-                if response.status_code == 200:
-                    logger.debug("✅ Ping successful")
-                else:
-                    logger.warning(f"⚠️ Ping failed: {response.status_code}")
-        except Exception as e:
-            logger.error(f"❌ Ping error: {e}")
-        time.sleep(300)  # Пинг каждые 5 минут
-
 # ====== ЗАПУСК БОТА ======
 if __name__ == '__main__':
     logger.info("=" * 60)
-    logger.info("🚀 Anony SMS Bot v9.0 - Merged Professional Edition")
+    logger.info("🚀 Anony SMS Bot v10.0 - Ultimate Professional Edition")
     logger.info("=" * 60)
-    
-    start_time = time.time()
     
     # Проверка токена
     if not TOKEN:
@@ -2506,13 +2895,6 @@ if __name__ == '__main__':
         monitor_thread = threading.Thread(target=monitor_bot, daemon=True)
         monitor_thread.start()
         logger.info("✅ Monitoring started")
-        
-        # Keep-alive для Render
-        if WEBHOOK_HOST:
-            ping_thread = threading.Thread(target=keep_alive, daemon=True)
-            ping_thread.start()
-            logger.info("✅ Keep-alive service started")
-            
     except Exception as e:
         logger.error(f"❌ Background services error: {e}")
     
