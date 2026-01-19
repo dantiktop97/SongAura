@@ -14,13 +14,11 @@ from datetime import datetime, timedelta
 from io import BytesIO
 from contextlib import contextmanager
 import sqlite3
-import requests
 
 from flask import Flask, request, jsonify
 from telebot import TeleBot, types
 from telebot.apihelper import ApiException, ApiTelegramException
 from PIL import Image, ImageDraw, ImageFont
-import html
 
 # ==================== КОНФИГУРАЦИЯ ====================
 TOKEN = os.getenv("PLAY", "")
@@ -428,7 +426,7 @@ TEXTS = {
 <b>👥 УПРАВЛЕНИЕ ПОЛЬЗОВАТЕЛЯМИ:</b>
 • Поиск пользователей
 • Блокировка/разблокировка
-• Просмотр логов сообщений
+• Написать пользователю
 • Управление тикетами поддержки
 
 <b>🔞 СИСТЕМА МОДЕРАЦИИ:</b>
@@ -453,7 +451,7 @@ TEXTS = {
 
 <i>Актуальные данные о работе системы на текущий момент.</i>
 
-<b>👥 ПОЛЬЗОВАТЕЛИ:</b>
+<b>👥 ПОЛЬЗОВАТЕЛЯ:</b>
 ├ Всего пользователей: <b>{total_users}</b>
 ├ Активных сегодня: <b>{today_active}</b>
 ├ Новых за 24 часа: <b>{new_users_24h}</b>
@@ -485,6 +483,37 @@ TEXTS = {
 └ Использование памяти: <b>{memory_usage}%</b>
 
 <i>Последнее обновление: {last_update}</i>""",
+        
+        'admin_message_user': """📝 <b>НАПИСАТЬ ПОЛЬЗОВАТЕЛЮ</b>
+
+<i>Отправьте сообщение конкретному пользователю от имени администратора.</i>
+
+<b>📋 ВАРИАНТЫ ОТПРАВКИ:</b>
+• По ID пользователя
+• По username (@username)
+• Поиск пользователя
+
+<b>💬 ФОРМАТ СООБЩЕНИЯ:</b>
+• Текст сообщения
+• Можно добавить файлы
+• Поддерживается HTML-разметка
+
+<b>👤 ИНФОРМАЦИЯ:</b>
+• Пользователь увидит, что сообщение от администратора
+• Можно отправить как анонимно, так и с указанием администратора
+
+<i>Введите ID пользователя или username для отправки сообщения 👇</i>""",
+        
+        'admin_message_sent': """✅ <b>СООБЩЕНИЕ ОТПРАВЛЕНО ПОЛЬЗОВАТЕЛЮ!</b>
+
+<i>Ваше сообщение успешно доставлено пользователю.</i>
+
+<b>👤 ПОЛУЧАТЕЛЬ:</b> {user_info}
+<b>📝 СООБЩЕНИЕ:</b> {message_preview}
+<b>🎯 СТАТУС:</b> Доставлено
+<b>⏰ ВРЕМЯ:</b> {time}
+
+<i>Сообщение отправлено от имени администратора.</i>""",
         
         'broadcast_start': """📢 <b>СОЗДАНИЕ РАССЫЛКИ</b>
 
@@ -782,8 +811,6 @@ TEXTS = {
         # Кнопки
         'btn_my_link': "🔗 Моя ссылка",
         'btn_profile': "👤 Профиль",
-        'btn_stats': "📊 Статистика",
-        'btn_settings': "⚙️ Настройки",
         'btn_qr': "📱 QR-код",
         'btn_help': "❓ Помощь",
         'btn_support': "🆘 Поддержка",
@@ -798,6 +825,7 @@ TEXTS = {
         'btn_admin_broadcast': "📢 Рассылка",
         'btn_admin_broadcast_button': "🔘 Рассылка с кнопкой",
         'btn_admin_users': "👥 Пользователи",
+        'btn_admin_message_user': "📝 Написать пользователю",
         'btn_admin_logs': "📋 Логи",
         'btn_admin_tickets': "🆘 Тикеты",
         'btn_admin_footer': "📝 Подпись",
@@ -1022,8 +1050,6 @@ Having problems? Write to us via the "Support" button!""",
         # Кнопки
         'btn_my_link': "🔗 My link",
         'btn_profile': "👤 Profile",
-        'btn_stats': "📊 Statistics",
-        'btn_settings': "⚙️ Settings",
         'btn_qr': "📱 QR code",
         'btn_help': "❓ Help",
         'btn_support': "🆘 Support",
@@ -2206,8 +2232,6 @@ def main_keyboard(is_admin=False, lang='ru'):
     buttons = [
         types.KeyboardButton(get_text(lang, 'btn_my_link')),
         types.KeyboardButton(get_text(lang, 'btn_profile')),
-        types.KeyboardButton(get_text(lang, 'btn_stats')),
-        types.KeyboardButton(get_text(lang, 'btn_settings')),
         types.KeyboardButton(get_text(lang, 'btn_qr')),
         types.KeyboardButton(get_text(lang, 'btn_help')),
         types.KeyboardButton(get_text(lang, 'btn_support')),
@@ -2256,6 +2280,7 @@ def admin_keyboard(lang='ru'):
         types.KeyboardButton(get_text(lang, 'btn_admin_broadcast')),
         types.KeyboardButton(get_text(lang, 'btn_admin_broadcast_button')),
         types.KeyboardButton(get_text(lang, 'btn_admin_users')),
+        types.KeyboardButton(get_text(lang, 'btn_admin_message_user')),
         types.KeyboardButton(get_text(lang, 'btn_admin_logs')),
         types.KeyboardButton(get_text(lang, 'btn_admin_tickets')),
         types.KeyboardButton(get_text(lang, 'btn_admin_footer')),
@@ -2663,6 +2688,15 @@ def moderation_command(message):
     
     bot.send_message(user_id, text, reply_markup=moderation_keyboard(0))
 
+@bot.message_handler(func=lambda message: message.text == get_text('ru', 'btn_admin_message_user') and message.from_user.id == ADMIN_ID)
+def message_user_command(message):
+    """Обработчик кнопки Написать пользователю"""
+    user_id = message.from_user.id
+    lang = db.get_user(user_id)['language'] if db.get_user(user_id) else admin_settings['language']
+    
+    admin_modes[user_id] = 'message_user'
+    bot.send_message(user_id, get_text(lang, 'admin_message_user'), reply_markup=cancel_keyboard(lang))
+
 @bot.message_handler(func=lambda message: message.text == get_text('ru', 'btn_admin_footer') and message.from_user.id == ADMIN_ID)
 def footer_command(message):
     """Обработчик кнопки Подпись"""
@@ -2801,14 +2835,14 @@ def handle_message(message):
     if not allowed:
         user = db.get_user(user_id)
         lang = user['language'] if user else admin_settings['language']
-        bot.send_message(user_id, get_text(lang, 'rate_limit_exceeded', seconds=wait_time))
+        bot.send_message(user_id, f"⏳ Слишком много запросов. Подождите {wait_time} секунд.")
         return
     
     if not check_session_timeout(user_id):
         user = db.get_user(user_id)
         lang = user['language'] if user else admin_settings['language']
-        bot.send_message(user_id, get_text(lang, 'session_expired'))
-        bot.send_message(user_id, get_text(lang, 'main_menu'), 
+        bot.send_message(user_id, "⏳ Сессия истекла. Возвращаемся в главное меню.")
+        bot.send_message(user_id, get_text(lang, 'start', link=generate_link(user_id)), 
                         reply_markup=main_keyboard(user_id == ADMIN_ID, lang))
         return
     
@@ -2822,6 +2856,7 @@ def handle_message(message):
                         reply_markup=main_keyboard(user_id == ADMIN_ID, lang))
         return
     
+    # Обработка режимов администратора
     if user_id == ADMIN_ID and user_id in admin_modes:
         mode = admin_modes[user_id]
         
@@ -2925,7 +2960,79 @@ def handle_message(message):
             if user_id in admin_modes:
                 del admin_modes[user_id]
             return
+        
+        elif mode == 'message_user':
+            # Определяем пользователя для отправки сообщения
+            if message_type == 'text':
+                # Проверяем, является ли ввод ID пользователя
+                if text.isdigit():
+                    target_user_id = int(text)
+                    target_user = db.get_user(target_user_id)
+                    
+                    if target_user:
+                        admin_modes[user_id] = {'mode': 'message_user_text', 'target_user_id': target_user_id}
+                        bot.send_message(user_id, f"✅ Пользователь найден!\n👤 Имя: {target_user['first_name']}\n✍️ Теперь введите текст сообщения для отправки:")
+                    else:
+                        bot.send_message(user_id, "❌ Пользователь с таким ID не найден.")
+                else:
+                    # Проверяем username
+                    if text.startswith('@'):
+                        username = text[1:]
+                    else:
+                        username = text
+                    
+                    target_user = db.get_user_by_username(username)
+                    if target_user:
+                        admin_modes[user_id] = {'mode': 'message_user_text', 'target_user_id': target_user['user_id']}
+                        bot.send_message(user_id, f"✅ Пользователь найден!\n👤 Имя: {target_user['first_name']}\n✍️ Теперь введите текст сообщения для отправки:")
+                    else:
+                        bot.send_message(user_id, "❌ Пользователь с таким username не найден.")
+            return
+        
+        elif isinstance(mode, dict) and mode.get('mode') == 'message_user_text':
+            # Отправка сообщения пользователю от имени администратора
+            target_user_id = mode['target_user_id']
+            message_text = text
+            
+            try:
+                target_user = db.get_user(target_user_id)
+                if not target_user:
+                    bot.send_message(user_id, "❌ Пользователь не найден")
+                    if user_id in admin_modes:
+                        del admin_modes[user_id]
+                    return
+                
+                # Отправляем сообщение от имени администратора
+                admin_message = f"""📩 <b>СООБЩЕНИЕ ОТ АДМИНИСТРАТОРА</b>
+
+{message_text}
+
+<i>Это сообщение отправлено администратором бота.</i>"""
+                
+                bot.send_message(target_user_id, admin_message, parse_mode="HTML")
+                
+                bot.send_message(
+                    user_id,
+                    get_text(lang, 'admin_message_sent',
+                           user_info=f"{target_user['first_name']} (ID: {target_user_id})",
+                           message_preview=message_text[:100] + ('...' if len(message_text) > 100 else ''),
+                           time=datetime.now().strftime('%d.%m.%Y %H:%M')),
+                    reply_markup=admin_keyboard(lang)
+                )
+                
+            except ApiTelegramException as e:
+                if e.error_code == 403:
+                    bot.send_message(user_id, "❌ Пользователь заблокировал бота")
+                else:
+                    bot.send_message(user_id, f"❌ Ошибка отправки: {e}")
+            except Exception as e:
+                bot.send_message(user_id, f"❌ Ошибка: {e}")
+            
+            if user_id in admin_modes:
+                del admin_modes[user_id]
+            return
     
+    # Обработка обычных кнопок
     if text == get_text(lang, 'btn_admin') and user_id == ADMIN_ID:
         bot.send_message(user_id, get_text(lang, 'admin_panel'), 
                         reply_markup=admin_keyboard(lang))
@@ -2935,17 +3042,20 @@ def handle_message(message):
         handle_support_request(message, lang)
         return
     
+    # Обработка анонимных сообщений
     if user_id in user_sessions and user_sessions[user_id]['mode'] == 'anonymous':
         target_id = user_sessions[user_id]['target_id']
         send_anonymous_message(user_id, target_id, message, lang)
         return
     
+    # Обработка поддержки
     if user_id in admin_modes and admin_modes[user_id] == 'support':
         create_support_ticket(message, lang)
         if user_id in admin_modes:
             del admin_modes[user_id]
         return
     
+    # Обработка текстовых кнопок
     if message_type == 'text':
         handle_text_button(user_id, text, lang)
 
@@ -2983,13 +3093,6 @@ def handle_text_button(user_id, text, lang):
     elif text == get_text(lang, 'btn_profile'):
         show_profile(user_id, lang)
     
-    elif text == get_text(lang, 'btn_stats'):
-        show_user_stats(user_id, lang)
-    
-    elif text == get_text(lang, 'btn_settings'):
-        bot.send_message(user_id, get_text(lang, 'settings'),
-                        reply_markup=settings_keyboard(lang))
-    
     elif text == get_text(lang, 'btn_qr'):
         generate_qr_code(user_id, lang)
     
@@ -3011,7 +3114,7 @@ def handle_text_button(user_id, text, lang):
                         reply_markup=settings_keyboard(lang))
     
     elif text == get_text(lang, 'btn_back'):
-        bot.send_message(user_id, get_text(lang, 'main_menu'),
+        bot.send_message(user_id, get_text(lang, 'start', link=generate_link(user_id)),
                         reply_markup=main_keyboard(is_admin, lang))
     
     elif is_admin:
@@ -3052,34 +3155,6 @@ def show_profile(user_id, lang):
                                       link=generate_link(user_id)) + footer,
                     reply_markup=main_keyboard(user_id == ADMIN_ID, lang))
 
-def show_user_stats(user_id, lang):
-    """Показать статистику пользователя"""
-    user = db.get_user(user_id)
-    if not user:
-        return
-    
-    stats = db.get_user_messages_stats(user_id)
-    
-    text = f"""📊 <b>ВАША СТАТИСТИКА</b>
-
-<b>📨 СООБЩЕНИЯ:</b>
-├ Получено: <b>{stats['messages_received']}</b>
-├ Отправлено: <b>{stats['messages_sent']}</b>
-└ Баланс: <b>{stats['messages_received'] - stats['messages_sent']}</b>
-
-<b>🔗 ПЕРЕХОДЫ:</b>
-├ По вашей ссылке: <b>{stats['link_clicks']}</b>
-└ Конверсия: <b>{round(stats['messages_received'] / max(stats['link_clicks'], 1) * 100, 1)}%</b>
-
-<b>📈 АКТИВНОСТЬ:</b>
-├ Зарегистрирован: <b>{format_time(user['created_at'], lang)}</b>
-├ Последняя активность: <b>{format_time(user['last_active'], lang)}</b>
-└ Получение сообщений: {'✅ Включено' if user['receive_messages'] else '❌ Выключено'}
-
-<i>Приглашайте друзей, чтобы получать больше сообщений! ✨</i>"""
-    
-    bot.send_message(user_id, text, reply_markup=main_keyboard(user_id == ADMIN_ID, lang))
-
 def send_anonymous_message(sender_id, receiver_id, message, lang):
     """Отправить анонимное сообщение"""
     try:
@@ -3092,7 +3167,7 @@ def send_anonymous_message(sender_id, receiver_id, message, lang):
         text = message.text or message.caption or ""
         
         if len(text) > MAX_MESSAGE_LENGTH:
-            bot.send_message(sender_id, get_text(lang, 'message_too_long', max_length=MAX_MESSAGE_LENGTH))
+            bot.send_message(sender_id, f"❌ Сообщение слишком длинное. Максимум {MAX_MESSAGE_LENGTH} символов.")
             return
         
         moderation_result = ModerationSystem.check_message(text, sender_id)
@@ -3130,7 +3205,7 @@ def send_anonymous_message(sender_id, receiver_id, message, lang):
         
         if file_size > MAX_FILE_SIZE:
             max_size_mb = MAX_FILE_SIZE // (1024 * 1024)
-            bot.send_message(sender_id, get_text(lang, 'file_too_large', max_size=max_size_mb))
+            bot.send_message(sender_id, f"❌ Файл слишком большой. Максимум {max_size_mb} MB.")
             return
         
         replied_to = 0
@@ -3558,8 +3633,8 @@ if __name__ == '__main__':
             try:
                 bot.remove_webhook()
                 time.sleep(1)
-            except:
-                pass
+            except Exception as e:
+                logger.warning(f"Ошибка удаления вебхука: {e}")
             
             bot.set_webhook(
                 url=f"{WEBHOOK_HOST}/webhook",
