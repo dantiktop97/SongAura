@@ -3603,72 +3603,72 @@ if __name__ == '__main__':
     logger.info("=" * 60)
     
     if not TOKEN:
-    logger.error("❌ Токен бота не найден! Установите переменную окружения PLAY.")
-    sys.exit(1)
-
-try:
-    bot_info = bot.get_me()
-    logger.info(f"🤖 Бот: @{bot_info.username} ({bot_info.first_name})")
-    logger.info(f"👑 Admin ID: {ADMIN_ID}")
-    logger.info(f"📢 Канал: {CHANNEL if CHANNEL else 'Не настроен'}")
-    logger.info(f"🌐 Webhook: {WEBHOOK_HOST if WEBHOOK_HOST else 'Polling mode'}")
-    logger.info(f"💾 База данных: {DB_PATH}")
-except Exception as e:
-    logger.error(f"❌ Ошибка инициализации бота: {e}")
-    sys.exit(1)
-
-# Запуск мониторинга в фоне
-try:
-    monitor_thread = threading.Thread(target=monitor_bot, daemon=True)
-    monitor_thread.start()
-    logger.info("✅ Мониторинг запущен")
-except Exception as e:
-    logger.error(f"❌ Ошибка фоновых служб: {e}")
-
-# Запуск бота
-try:
-    if WEBHOOK_HOST:
-        logger.info(f"🌐 Настройка webhook для {WEBHOOK_HOST}")
-        
-        try:
+        logger.error("❌ Токен бота не найден! Установите переменную окружения PLAY.")
+        sys.exit(1)
+    
+    try:
+        bot_info = bot.get_me()
+        logger.info(f"🤖 Бот: @{bot_info.username} ({bot_info.first_name})")
+        logger.info(f"👑 Admin ID: {ADMIN_ID}")
+        logger.info(f"📢 Канал: {CHANNEL if CHANNEL else 'Не настроен'}")
+        logger.info(f"🌐 Webhook: {WEBHOOK_HOST if WEBHOOK_HOST else 'Polling mode'}")
+        logger.info(f"💾 База данных: {DB_PATH}")
+    except Exception as e:
+        logger.error(f"❌ Ошибка инициализации бота: {e}")
+        sys.exit(1)
+    
+    # Запуск мониторинга в фоне
+    try:
+        monitor_thread = threading.Thread(target=monitor_bot, daemon=True)
+        monitor_thread.start()
+        logger.info("✅ Мониторинг запущен")
+    except Exception as e:
+        logger.error(f"❌ Ошибка фоновых служб: {e}")
+    
+    # Запуск бота
+    try:
+        if WEBHOOK_HOST:
+            logger.info(f"🌐 Настройка webhook для {WEBHOOK_HOST}")
+            
+            try:
+                bot.remove_webhook()
+                time.sleep(1)
+            except Exception as e:
+                logger.warning(f"Ошибка удаления вебхука: {e}")
+            
+            bot.set_webhook(
+                url=f"{WEBHOOK_HOST}/webhook",
+                max_connections=100,
+                timeout=60,
+                drop_pending_updates=True,
+                allowed_updates=None
+            )
+            logger.info("✅ Webhook настроен успешно")
+            
+            app.run(
+                host='0.0.0.0',
+                port=PORT,
+                debug=False,
+                threaded=True,
+                use_reloader=False
+            )
+            
+        else:
+            logger.info("🔄 Запуск в режиме polling")
             bot.remove_webhook()
-            time.sleep(1)
-        except Exception as e:
-            logger.warning(f"Ошибка удаления вебхука: {e}")
-        
-        bot.set_webhook(
-            url=f"{WEBHOOK_HOST}/webhook",
-            max_connections=100,
-            timeout=60,
-            drop_pending_updates=True,
-            allowed_updates=None
-        )
-        logger.info("✅ Webhook настроен успешно")
-        
-        app.run(
-            host='0.0.0.0',
-            port=PORT,
-            debug=False,
-            threaded=True,
-            use_reloader=False
-        )
-        
-    else:
-        logger.info("🔄 Запуск в режиме polling")
-        bot.remove_webhook()
-        bot.polling(
-            none_stop=True,
-            interval=0,
-            timeout=20,
-            long_polling_timeout=20,
-            logger_level=logging.INFO
-        )
-        
-except KeyboardInterrupt:
-    logger.info("👋 Бот остановлен пользователем")
-    sys.exit(0)
-except Exception as e:
-    logger.error(f"❌ Критическая ошибка: {e}")
-    import traceback
-    logger.error(traceback.format_exc())
-    sys.exit(1)
+            bot.polling(
+                none_stop=True,
+                interval=0,
+                timeout=20,
+                long_polling_timeout=20,
+                logger_level=logging.INFO
+            )
+            
+    except KeyboardInterrupt:
+        logger.info("👋 Бот остановлен пользователем")
+        sys.exit(0)
+    except Exception as e:
+        logger.error(f"❌ Критическая ошибка: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        sys.exit(1)
