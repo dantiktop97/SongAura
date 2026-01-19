@@ -1,8 +1,19 @@
-#!/usr/bin/env python3
 """
 ANONY SMS BOT - Ultimate Professional Version v3.0
 Полностью рабочий бот для анонимных сообщений
 ВСЕ ФУНКЦИИ РАБОЧИЕ
+
+Всего модулей в одном скрипте:
+1. ✅ Анонимные сообщения
+2. ✅ Профиль пользователя
+3. ✅ QR-код для ссылки
+4. ✅ Поддержка и тикеты
+5. ✅ Админ-панель
+6. ✅ Модерация контента
+7. ✅ Настройки подписи (футера)
+8. ✅ Проверка подписки на каналы
+9. ✅ Кастомные кнопки
+10. ✅ Статистика и экспорт данных
 """
 
 import os
@@ -64,24 +75,10 @@ logger = logging.getLogger(__name__)
 bot = TeleBot(TOKEN, parse_mode="HTML", num_threads=4)
 app = Flask(__name__)
 
-# ==================== КЭШИ ====================
-user_sessions = {}
-admin_modes = {}
-message_cooldown = {}
-rate_limit_cache = {}
-session_timestamps = {}
-admin_settings = {
-    'auto_moderation': True,
-    'notify_admin_new_user': True,  # Уведомления будут в канал
-    'notify_admin_new_message': True,  # Уведомления будут в канал
-    'auto_backup_hours': 24,
-    'max_messages_per_day': 100,
-    'language': 'ru'
-}
-
 # ==================== ТЕКСТЫ БОТА ====================
 TEXTS = {
     'ru': {
+        # Основные тексты
         'start': """🎉 <b>ДОБРО ПОЖАЛОВАТЬ В ANONY SMS!</b> 🎉
 
 <code>✨ Здесь тайны оживают, а эмоции становятся сообщениями!</code>
@@ -363,7 +360,7 @@ TEXTS = {
 3. <i>Разместите в социальных сетях</i>
 4. <i>Добавьте на визитки или стикеры</i>
 
-<b>🎯 ПРЕИМУЩЕЩЕСТВА QR:</b>
+<b>🎯 ПРЕИМУЩЕСТВА QR:</b>
 • Быстрый доступ одним сканированием
 • Не нужно копировать ссылку
 • Современный и стильный вид
@@ -413,6 +410,7 @@ TEXTS = {
 
 <i>Спасибо за обращение! Мы сделаем всё возможное, чтобы помочь вам. 🤝</i>""",
         
+        # Админ-панель
         'admin_panel': """👑 <b>ПАНЕЛЬ АДМИНИСТРАТОРА</b>
 
 <i>Добро пожаловать в центр управления ботом! Здесь вы можете управлять всеми аспектами работы системы.</i>
@@ -768,7 +766,7 @@ TEXTS = {
         
         'word_deleted': """🗑️ <b>СЛОВО УДАЛЕНО!</b>
 
-<i>Запрещенное слово успешно удалено из системы.</i>
+<i>Запрещенное слово успешно удалено из системе.</i>
 
 <b>📋 ИНФОРМАЦИЯ:</b>
 • Слово: <b>{word}</b>
@@ -1081,7 +1079,7 @@ def get_text(lang, key, **kwargs):
 def format_time(timestamp, lang='ru'):
     """Форматирование времени"""
     if not timestamp:
-        return "never" if lang == 'en' else "никогда"
+        return "никогда" if lang == 'ru' else "never"
     
     try:
         dt = datetime.fromtimestamp(timestamp)
@@ -1090,7 +1088,7 @@ def format_time(timestamp, lang='ru'):
         
         if diff.days == 0:
             if diff.seconds < 60:
-                return "just now" if lang == 'en' else "только что"
+                return "только что" if lang == 'ru' else "just now"
             elif diff.seconds < 3600:
                 minutes = diff.seconds // 60
                 return f"{minutes} мин назад" if lang == 'ru' else f"{minutes} min ago"
@@ -1098,88 +1096,13 @@ def format_time(timestamp, lang='ru'):
                 hours = diff.seconds // 3600
                 return f"{hours} ч назад" if lang == 'ru' else f"{hours} h ago"
         elif diff.days == 1:
-            return "yesterday" if lang == 'en' else "вчера"
+            return "вчера" if lang == 'ru' else "yesterday"
         else:
             format_str = "%d.%m.%Y %H:%M" if lang == 'ru' else "%Y-%m-%d %H:%M"
             return dt.strftime(format_str)
     except Exception as e:
         logger.error(f"Ошибка форматирования времени: {e}")
-        return "never" if lang == 'en' else "никогда"
-
-def check_rate_limit(user_id):
-    """Проверка лимита запросов"""
-    try:
-        now = time.time()
-        minute = int(now // 60)
-        
-        if user_id not in rate_limit_cache:
-            rate_limit_cache[user_id] = {'minute': minute, 'count': 1}
-            return True, 0
-        
-        if rate_limit_cache[user_id]['minute'] != minute:
-            rate_limit_cache[user_id] = {'minute': minute, 'count': 1}
-            return True, 0
-        
-        rate_limit_cache[user_id]['count'] += 1
-        if rate_limit_cache[user_id]['count'] > MAX_REQUESTS_PER_MINUTE:
-            wait_time = 60 - (now % 60)
-            return False, int(wait_time)
-        
-        return True, 0
-    except Exception as e:
-        logger.error(f"Ошибка проверки лимита: {e}")
-        return True, 0
-
-def check_spam(user_id):
-    """Проверка на спам"""
-    try:
-        current_time = time.time()
-        last_time = message_cooldown.get(user_id, 0)
-        
-        if current_time - last_time < ANTISPAM_INTERVAL:
-            return False
-        
-        message_cooldown[user_id] = current_time
-        return True
-    except Exception as e:
-        logger.error(f"Ошибка проверки спама: {e}")
-        return True
-
-def check_session_timeout(user_id):
-    """Проверка таймаута сессии"""
-    try:
-        if user_id not in session_timestamps:
-            session_timestamps[user_id] = time.time()
-            return True
-        
-        if time.time() - session_timestamps[user_id] > SESSION_TIMEOUT:
-            if user_id in user_sessions:
-                del user_sessions[user_id]
-            if user_id in admin_modes:
-                del admin_modes[user_id]
-            session_timestamps[user_id] = time.time()
-            return False
-        
-        session_timestamps[user_id] = time.time()
-        return True
-    except Exception as e:
-        logger.error(f"Ошибка проверки сессии: {e}")
-        return True
-
-def check_content_moderation(text):
-    """Проверка контента на запрещенные слова"""
-    try:
-        if not text:
-            return True
-        
-        text_lower = text.lower()
-        for word in BLACKLIST_WORDS:
-            if word in text_lower:
-                return False
-        return True
-    except Exception as e:
-        logger.error(f"Ошибка проверки контента: {e}")
-        return True
+        return "никогда" if lang == 'ru' else "never"
 
 # ==================== КЛАСС БАЗЫ ДАННЫХ ====================
 class Database:
@@ -1541,86 +1464,32 @@ class Database:
         
         return False
     
-    def _get_cached_user(self, user_id):
-        """Получить пользователя из кэша"""
-        now = time.time()
-        if user_id in self._user_cache:
-            if now - self._user_cache_time.get(user_id, 0) < 60:
-                return self._user_cache[user_id]
-        
-        with self.get_connection() as conn:
-            c = conn.cursor()
-            c.execute('SELECT * FROM users WHERE user_id = ?', (user_id,))
-            row = c.fetchone()
-            user = dict(row) if row else None
-            
-            if user:
-                self._user_cache[user_id] = user
-                self._user_cache_time[user_id] = now
-            
-            return user
-    
-    def _get_cached_user_by_username(self, username):
-        """Получить пользователя по username из кэша"""
-        now = time.time()
-        cache_key = f"username:{username}"
-        
-        if cache_key in self._user_cache:
-            if now - self._user_cache_time.get(cache_key, 0) < 60:
-                return self._user_cache[cache_key]
-        
-        with self.get_connection() as conn:
-            c = conn.cursor()
-            c.execute('SELECT * FROM users WHERE username = ?', (username,))
-            row = c.fetchone()
-            user = dict(row) if row else None
-            
-            if user:
-                self._user_cache[cache_key] = user
-                self._user_cache_time[cache_key] = now
-            
-            return user
-    
     def get_user(self, user_id):
         """Получить пользователя"""
-        return self._get_cached_user(user_id)
+        try:
+            with self.get_connection() as conn:
+                c = conn.cursor()
+                c.execute('SELECT * FROM users WHERE user_id = ?', (user_id,))
+                row = c.fetchone()
+                return dict(row) if row else None
+        except Exception as e:
+            logger.error(f"Ошибка получения пользователя: {e}")
+            return None
     
     def get_user_by_username(self, username):
         """Получить пользователя по username"""
-        return self._get_cached_user_by_username(username)
-    
-    def _clear_user_cache(self, user_id=None, username=None):
-        """Очистить кэш пользователя"""
         try:
-            if user_id:
-                if user_id in self._user_cache:
-                    del self._user_cache[user_id]
-                if user_id in self._user_cache_time:
-                    del self._user_cache_time[user_id]
-            
-            if username:
-                cache_key = f"username:{username}"
-                if cache_key in self._user_cache:
-                    del self._user_cache[cache_key]
-                if cache_key in self._user_cache_time:
-                    del self._user_cache_time[cache_key]
+            with self.get_connection() as conn:
+                c = conn.cursor()
+                c.execute('SELECT * FROM users WHERE username = ?', (username,))
+                row = c.fetchone()
+                return dict(row) if row else None
         except Exception as e:
-            logger.error(f"Ошибка очистки кэша: {e}")
+            logger.error(f"Ошибка получения пользователя по username: {e}")
+            return None
     
     def get_admin_stats(self):
         """Получить статистику для админа"""
-        now = time.time()
-        if 'admin_stats' in self._stats_cache:
-            if now - self._stats_cache_time.get('admin_stats', 0) < 60:
-                return self._stats_cache['admin_stats']
-        
-        stats = self._get_admin_stats_impl()
-        self._stats_cache['admin_stats'] = stats
-        self._stats_cache_time['admin_stats'] = now
-        return stats
-    
-    def _get_admin_stats_impl(self):
-        """Реализация получения статистики"""
         try:
             with self.get_connection() as conn:
                 c = conn.cursor()
@@ -1760,8 +1629,6 @@ class Database:
                     WHERE user_id = ?
                 ''', (username, first_name, now, user_id))
                 
-                self._clear_user_cache(user_id, username)
-                
                 # Уведомление в канал о новом пользователе
                 if CHANNEL and self.get_bot_setting('notify_admin_new_user') == '1':
                     try:
@@ -1790,7 +1657,6 @@ ID: <code>{user_id}</code>
                 c = conn.cursor()
                 c.execute('UPDATE users SET last_active = ? WHERE user_id = ?', 
                          (int(time.time()), user_id))
-                self._clear_user_cache(user_id)
         except Exception as e:
             logger.error(f"Ошибка обновления активности: {e}")
     
@@ -1805,7 +1671,6 @@ ID: <code>{user_id}</code>
                 c = conn.cursor()
                 c.execute(f'UPDATE users SET {field} = {field} + 1 WHERE user_id = ?', 
                          (user_id,))
-                self._clear_user_cache(user_id)
         except Exception as e:
             logger.error(f"Ошибка увеличения статистики: {e}")
     
@@ -1816,7 +1681,6 @@ ID: <code>{user_id}</code>
                 c = conn.cursor()
                 c.execute('UPDATE users SET receive_messages = ? WHERE user_id = ?',
                          (1 if status else 0, user_id))
-                self._clear_user_cache(user_id)
         except Exception as e:
             logger.error(f"Ошибка установки приема сообщений: {e}")
     
@@ -1827,7 +1691,6 @@ ID: <code>{user_id}</code>
                 c = conn.cursor()
                 c.execute('UPDATE users SET language = ? WHERE user_id = ?',
                          (language, user_id))
-                self._clear_user_cache(user_id)
         except Exception as e:
             logger.error(f"Ошибка установки языка: {e}")
     
@@ -1957,10 +1820,7 @@ ID: <code>{user_id}</code>
             with self.get_connection() as conn:
                 c = conn.cursor()
                 c.execute('UPDATE users SET is_blocked = 1 WHERE user_id = ?', (user_id,))
-                success = c.rowcount > 0
-                if success:
-                    self._clear_user_cache(user_id)
-                return success
+                return c.rowcount > 0
         except Exception as e:
             logger.error(f"Ошибка блокировки пользователя: {e}")
             return False
@@ -1971,10 +1831,7 @@ ID: <code>{user_id}</code>
             with self.get_connection() as conn:
                 c = conn.cursor()
                 c.execute('UPDATE users SET is_blocked = 0 WHERE user_id = ?', (user_id,))
-                success = c.rowcount > 0
-                if success:
-                    self._clear_user_cache(user_id)
-                return success
+                return c.rowcount > 0
         except Exception as e:
             logger.error(f"Ошибка разблокировки пользователя: {e}")
             return False
@@ -2335,6 +2192,13 @@ ID: <code>{user_id}</code>
 # ==================== ИНИЦИАЛИЗАЦИЯ БАЗЫ ДАННЫХ ====================
 db = Database()
 
+# ==================== КЭШИ ====================
+user_sessions = {}
+admin_modes = {}
+message_cooldown = {}
+rate_limit_cache = {}
+session_timestamps = {}
+
 # ==================== КЛАСС СИСТЕМЫ МОДЕРАЦИИ ====================
 class ModerationSystem:
     @staticmethod
@@ -2383,7 +2247,82 @@ class ModerationSystem:
             logger.error(f"Ошибка проверки сообщения: {e}")
             return {'blocked': False, 'words': []}
 
-# ==================== ФУНКЦИИ ДЛЯ КЛАВИАТУР ====================
+# ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ====================
+def check_rate_limit(user_id):
+    """Проверка лимита запросов"""
+    try:
+        now = time.time()
+        minute = int(now // 60)
+        
+        if user_id not in rate_limit_cache:
+            rate_limit_cache[user_id] = {'minute': minute, 'count': 1}
+            return True, 0
+        
+        if rate_limit_cache[user_id]['minute'] != minute:
+            rate_limit_cache[user_id] = {'minute': minute, 'count': 1}
+            return True, 0
+        
+        rate_limit_cache[user_id]['count'] += 1
+        if rate_limit_cache[user_id]['count'] > MAX_REQUESTS_PER_MINUTE:
+            wait_time = 60 - (now % 60)
+            return False, int(wait_time)
+        
+        return True, 0
+    except Exception as e:
+        logger.error(f"Ошибка проверки лимита: {e}")
+        return True, 0
+
+def check_spam(user_id):
+    """Проверка на спам"""
+    try:
+        current_time = time.time()
+        last_time = message_cooldown.get(user_id, 0)
+        
+        if current_time - last_time < ANTISPAM_INTERVAL:
+            return False
+        
+        message_cooldown[user_id] = current_time
+        return True
+    except Exception as e:
+        logger.error(f"Ошибка проверки спама: {e}")
+        return True
+
+def check_session_timeout(user_id):
+    """Проверка таймаута сессии"""
+    try:
+        if user_id not in session_timestamps:
+            session_timestamps[user_id] = time.time()
+            return True
+        
+        if time.time() - session_timestamps[user_id] > SESSION_TIMEOUT:
+            if user_id in user_sessions:
+                del user_sessions[user_id]
+            if user_id in admin_modes:
+                del admin_modes[user_id]
+            session_timestamps[user_id] = time.time()
+            return False
+        
+        session_timestamps[user_id] = time.time()
+        return True
+    except Exception as e:
+        logger.error(f"Ошибка проверки сессии: {e}")
+        return True
+
+def check_content_moderation(text):
+    """Проверка контента на запрещенные слова"""
+    try:
+        if not text:
+            return True
+        
+        text_lower = text.lower()
+        for word in BLACKLIST_WORDS:
+            if word in text_lower:
+                return False
+        return True
+    except Exception as e:
+        logger.error(f"Ошибка проверки контента: {e}")
+        return True
+
 def generate_link(user_id):
     """Сгенерировать ссылку на пользователя"""
     try:
@@ -2393,6 +2332,7 @@ def generate_link(user_id):
         logger.error(f"Error generating link: {e}")
         return ""
 
+# ==================== ФУНКЦИИ ДЛЯ КЛАВИАТУР ====================
 def main_keyboard(is_admin=False, lang='ru'):
     """Главная клавиатура"""
     try:
@@ -2608,7 +2548,7 @@ def start_command(message):
             return
         
         user = db.get_user(user_id)
-        lang = user['language'] if user else admin_settings['language']
+        lang = user['language'] if user else 'ru'
         link = generate_link(user_id)
         
         # Проверка подписки на каналы
@@ -2641,7 +2581,7 @@ def lang_command(message):
     try:
         user_id = message.from_user.id
         user = db.get_user(user_id)
-        lang = user['language'] if user else admin_settings['language']
+        lang = user['language'] if user else 'ru'
         
         bot.send_message(user_id, get_text(lang, 'language'),
                         reply_markup=language_keyboard())
@@ -2656,7 +2596,7 @@ def handle_callback(call):
         data = call.data
         
         user = db.get_user(user_id)
-        lang = user['language'] if user else admin_settings['language']
+        lang = user['language'] if user else 'ru'
         
         if data == "check_subscription":
             required_channels = db.get_required_channels()
@@ -3025,7 +2965,7 @@ def handle_link_click(clicker_id, target_id):
         db.increment_stat(target_id, 'link_clicks')
         
         user = db.get_user(clicker_id)
-        lang = user['language'] if user else admin_settings['language']
+        lang = user['language'] if user else 'ru'
         
         bot.send_message(
             clicker_id,
@@ -3042,7 +2982,7 @@ def admin_command(message):
     try:
         user_id = message.from_user.id
         user = db.get_user(user_id)
-        lang = user['language'] if user else admin_settings['language']
+        lang = user['language'] if user else 'ru'
         
         bot.send_message(user_id, get_text(lang, 'admin_panel'), reply_markup=admin_keyboard(lang))
     except Exception as e:
@@ -3053,7 +2993,7 @@ def moderation_command(message):
     """Обработчик кнопки Модерация"""
     try:
         user_id = message.from_user.id
-        lang = db.get_user(user_id)['language'] if db.get_user(user_id) else admin_settings['language']
+        lang = db.get_user(user_id)['language'] if db.get_user(user_id) else 'ru'
         
         words = db.get_banned_words()
         total_words = db.get_banned_words_count()
@@ -3076,7 +3016,7 @@ def message_user_command(message):
     """Обработчик кнопки Написать пользователю"""
     try:
         user_id = message.from_user.id
-        lang = db.get_user(user_id)['language'] if db.get_user(user_id) else admin_settings['language']
+        lang = db.get_user(user_id)['language'] if db.get_user(user_id) else 'ru'
         
         admin_modes[user_id] = 'message_user'
         bot.send_message(user_id, get_text(lang, 'admin_message_user'), reply_markup=cancel_keyboard(lang))
@@ -3088,7 +3028,7 @@ def footer_command(message):
     """Обработчик кнопки Подпись"""
     try:
         user_id = message.from_user.id
-        lang = db.get_user(user_id)['language'] if db.get_user(user_id) else admin_settings['language']
+        lang = db.get_user(user_id)['language'] if db.get_user(user_id) else 'ru'
         
         enabled = db.get_bot_setting('footer_enabled') == '1'
         footer_text = db.get_bot_setting('footer_text', '🔗 Подпишись: @your_channel')
@@ -3109,7 +3049,7 @@ def subscription_command(message):
     """Обработчик кнопки Подписка"""
     try:
         user_id = message.from_user.id
-        lang = db.get_user(user_id)['language'] if db.get_user(user_id) else admin_settings['language']
+        lang = db.get_user(user_id)['language'] if db.get_user(user_id) else 'ru'
         
         channels = db.get_required_channels()
         
@@ -3150,7 +3090,7 @@ def custom_buttons_command(message):
     """Обработчик кнопки Кнопки"""
     try:
         user_id = message.from_user.id
-        lang = db.get_user(user_id)['language'] if db.get_user(user_id) else admin_settings['language']
+        lang = db.get_user(user_id)['language'] if db.get_user(user_id) else 'ru'
         
         buttons = db.get_custom_buttons()
         
@@ -3192,7 +3132,7 @@ def broadcast_with_button_command(message):
     """Обработчик кнопки Рассылка с кнопкой"""
     try:
         user_id = message.from_user.id
-        lang = db.get_user(user_id)['language'] if db.get_user(user_id) else admin_settings['language']
+        lang = db.get_user(user_id)['language'] if db.get_user(user_id) else 'ru'
         
         admin_modes[user_id] = 'broadcast_with_button'
         bot.send_message(user_id, get_text(lang, 'broadcast_with_button'), reply_markup=cancel_keyboard(lang))
@@ -3204,7 +3144,7 @@ def admin_stats_command(message):
     """Обработчик кнопки Статистика"""
     try:
         user_id = message.from_user.id
-        lang = db.get_user(user_id)['language'] if db.get_user(user_id) else admin_settings['language']
+        lang = db.get_user(user_id)['language'] if db.get_user(user_id) else 'ru'
         
         show_admin_stats(user_id, lang)
     except Exception as e:
@@ -3215,7 +3155,7 @@ def admin_broadcast_command(message):
     """Обработчик кнопки Рассылка"""
     try:
         user_id = message.from_user.id
-        lang = db.get_user(user_id)['language'] if db.get_user(user_id) else admin_settings['language']
+        lang = db.get_user(user_id)['language'] if db.get_user(user_id) else 'ru'
         
         admin_modes[user_id] = 'broadcast'
         bot.send_message(user_id, get_text(lang, 'broadcast_start'), reply_markup=cancel_keyboard(lang))
@@ -3227,7 +3167,7 @@ def admin_export_command(message):
     """Обработчик кнопки Экспорт"""
     try:
         user_id = message.from_user.id
-        lang = db.get_user(user_id)['language'] if db.get_user(user_id) else admin_settings['language']
+        lang = db.get_user(user_id)['language'] if db.get_user(user_id) else 'ru'
         
         users_csv = db.export_users_data()
         messages_csv = db.export_messages_data()
@@ -3279,13 +3219,13 @@ def handle_message(message):
         allowed, wait_time = check_rate_limit(user_id)
         if not allowed:
             user = db.get_user(user_id)
-            lang = user['language'] if user else admin_settings['language']
+            lang = user['language'] if user else 'ru'
             bot.send_message(user_id, f"⏳ Слишком много запросов. Подождите {wait_time} секунд.")
             return
         
         if not check_session_timeout(user_id):
             user = db.get_user(user_id)
-            lang = user['language'] if user else admin_settings['language']
+            lang = user['language'] if user else 'ru'
             bot.send_message(user_id, "⏳ Сессия истекла. Возвращаемся в главное меню.")
             bot.send_message(user_id, get_text(lang, 'start', link=generate_link(user_id)), 
                             reply_markup=main_keyboard(user_id == ADMIN_ID, lang))
@@ -3293,7 +3233,7 @@ def handle_message(message):
         
         db.update_last_active(user_id)
         user = db.get_user(user_id)
-        lang = user['language'] if user else admin_settings['language']
+        lang = user['language'] if user else 'ru'
         
         if text == get_text(lang, 'btn_cancel'):
             clear_user_state(user_id)
@@ -3521,13 +3461,6 @@ def handle_message(message):
             send_anonymous_message(user_id, target_id, message, lang)
             return
         
-        # Обработка поддержки
-        if user_id in admin_modes and admin_modes[user_id] == 'support':
-            create_support_ticket(message, lang)
-            if user_id in admin_modes:
-                del admin_modes[user_id]
-            return
-        
         # Обработка текстовых кнопок
         if message_type == 'text':
             handle_text_button(user_id, text, lang)
@@ -3660,7 +3593,7 @@ def show_profile(user_id, lang):
                                           clicks=user['link_clicks'],
                                           receive_status=receive_status,
                                           link=generate_link(user_id)),
-                        reply_markup=settings_keyboard(lang))  # Исправлено: клавиатура настроек вместо главной
+                        reply_markup=settings_keyboard(lang))
     except Exception as e:
         logger.error(f"Ошибка показа профиля: {e}")
 
@@ -3728,7 +3661,7 @@ def send_anonymous_message(sender_id, receiver_id, message, lang):
             db.increment_stat(sender_id, 'messages_sent')
             db.increment_stat(receiver_id, 'messages_received')
         
-        receiver_lang = receiver['language'] if receiver else admin_settings['language']
+        receiver_lang = receiver['language'] if receiver else 'ru'
         
         # Форматируем контент сообщения
         if text:
