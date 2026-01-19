@@ -1,3 +1,9 @@
+#!/usr/bin/env python3
+"""
+ANONY SMS BOT - Ultimate Professional Version
+Анонимный бот для отправки сообщений с полной конфиденциальностью
+"""
+
 import os
 import sys
 import time
@@ -451,7 +457,7 @@ TEXTS = {
 
 <i>Актуальные данные о работе системы на текущий момент.</i>
 
-<b>👥 ПОЛЬЗОВАТЕЛЯ:</b>
+<b>👥 ПОЛЬЗОВАТЕЛЬ:</b>
 ├ Всего пользователей: <b>{total_users}</b>
 ├ Активных сегодня: <b>{today_active}</b>
 ├ Новых за 24 часа: <b>{new_users_24h}</b>
@@ -493,7 +499,7 @@ TEXTS = {
 • По username (@username)
 • Поиск пользователя
 
-<b>💬 ФОРМАТ СООБЩЕНИЯ:</b>
+<b>💬 ФОРМАТ СООБЩЕНИЕ:</b>
 • Текст сообщения
 • Можно добавить файлы
 • Поддерживается HTML-разметка
@@ -1100,70 +1106,87 @@ def format_time(timestamp, lang='ru'):
             return "вчера"
         else:
             return dt.strftime("%d.%m.%Y %H:%M")
-    except:
+    except Exception as e:
+        logger.error(f"Ошибка форматирования времени: {e}")
         return "никогда"
 
 def check_rate_limit(user_id):
     """Проверка лимита запросов"""
-    now = time.time()
-    minute = int(now // 60)
-    
-    if user_id not in rate_limit_cache:
-        rate_limit_cache[user_id] = {'minute': minute, 'count': 1}
+    try:
+        now = time.time()
+        minute = int(now // 60)
+        
+        if user_id not in rate_limit_cache:
+            rate_limit_cache[user_id] = {'minute': minute, 'count': 1}
+            return True, 0
+        
+        if rate_limit_cache[user_id]['minute'] != minute:
+            rate_limit_cache[user_id] = {'minute': minute, 'count': 1}
+            return True, 0
+        
+        rate_limit_cache[user_id]['count'] += 1
+        if rate_limit_cache[user_id]['count'] > MAX_REQUESTS_PER_MINUTE:
+            wait_time = 60 - (now % 60)
+            return False, int(wait_time)
+        
         return True, 0
-    
-    if rate_limit_cache[user_id]['minute'] != minute:
-        rate_limit_cache[user_id] = {'minute': minute, 'count': 1}
+    except Exception as e:
+        logger.error(f"Ошибка проверки лимита: {e}")
         return True, 0
-    
-    rate_limit_cache[user_id]['count'] += 1
-    if rate_limit_cache[user_id]['count'] > MAX_REQUESTS_PER_MINUTE:
-        wait_time = 60 - (now % 60)
-        return False, int(wait_time)
-    
-    return True, 0
 
 def check_spam(user_id):
     """Проверка на спам"""
-    current_time = time.time()
-    last_time = message_cooldown.get(user_id, 0)
-    
-    if current_time - last_time < ANTISPAM_INTERVAL:
-        return False
-    
-    message_cooldown[user_id] = current_time
-    return True
+    try:
+        current_time = time.time()
+        last_time = message_cooldown.get(user_id, 0)
+        
+        if current_time - last_time < ANTISPAM_INTERVAL:
+            return False
+        
+        message_cooldown[user_id] = current_time
+        return True
+    except Exception as e:
+        logger.error(f"Ошибка проверки спама: {e}")
+        return True
 
 def check_session_timeout(user_id):
     """Проверка таймаута сессии"""
-    if user_id not in session_timestamps:
+    try:
+        if user_id not in session_timestamps:
+            session_timestamps[user_id] = time.time()
+            return True
+        
+        if time.time() - session_timestamps[user_id] > SESSION_TIMEOUT:
+            if user_id in user_sessions:
+                del user_sessions[user_id]
+            if user_id in admin_modes:
+                del admin_modes[user_id]
+            session_timestamps[user_id] = time.time()
+            return False
+        
         session_timestamps[user_id] = time.time()
         return True
-    
-    if time.time() - session_timestamps[user_id] > SESSION_TIMEOUT:
-        if user_id in user_sessions:
-            del user_sessions[user_id]
-        if user_id in admin_modes:
-            del admin_modes[user_id]
-        session_timestamps[user_id] = time.time()
-        return False
-    
-    session_timestamps[user_id] = time.time()
-    return True
+    except Exception as e:
+        logger.error(f"Ошибка проверки сессии: {e}")
+        return True
 
 def check_content_moderation(text):
     """Проверка контента на запрещенные слова"""
-    if not text:
+    try:
+        if not text:
+            return True
+        
+        if not admin_settings['auto_moderation']:
+            return True
+        
+        text_lower = text.lower()
+        for word in BLACKLIST_WORDS:
+            if word in text_lower:
+                return False
         return True
-    
-    if not admin_settings['auto_moderation']:
+    except Exception as e:
+        logger.error(f"Ошибка проверки контента: {e}")
         return True
-    
-    text_lower = text.lower()
-    for word in BLACKLIST_WORDS:
-        if word in text_lower:
-            return False
-    return True
 
 # ==================== КЛАСС БАЗЫ ДАННЫХ ====================
 class Database:
@@ -1325,43 +1348,49 @@ class Database:
             ''')
             
             # Индексы для производительности
-            c.execute('CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_id)')
-            c.execute('CREATE INDEX IF NOT EXISTS idx_messages_receiver ON messages(receiver_id)')
-            c.execute('CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp)')
-            c.execute('CREATE INDEX IF NOT EXISTS idx_users_last_active ON users(last_active)')
-            c.execute('CREATE INDEX IF NOT EXISTS idx_tickets_status ON support_tickets(status)')
-            c.execute('CREATE INDEX IF NOT EXISTS idx_channels_active ON required_channels(is_active)')
-            c.execute('CREATE INDEX IF NOT EXISTS idx_subscriptions_user ON user_subscriptions(user_id)')
-            c.execute('CREATE INDEX IF NOT EXISTS idx_buttons_position ON custom_buttons(position)')
-            c.execute('CREATE INDEX IF NOT EXISTS idx_buttons_active ON custom_buttons(is_active)')
-            c.execute('CREATE INDEX IF NOT EXISTS idx_buttons_menu ON custom_buttons(show_in_menu)')
-            c.execute('CREATE INDEX IF NOT EXISTS idx_banned_words_word ON banned_words(word)')
+            try:
+                c.execute('CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_id)')
+                c.execute('CREATE INDEX IF NOT EXISTS idx_messages_receiver ON messages(receiver_id)')
+                c.execute('CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp)')
+                c.execute('CREATE INDEX IF NOT EXISTS idx_users_last_active ON users(last_active)')
+                c.execute('CREATE INDEX IF NOT EXISTS idx_tickets_status ON support_tickets(status)')
+                c.execute('CREATE INDEX IF NOT EXISTS idx_channels_active ON required_channels(is_active)')
+                c.execute('CREATE INDEX IF NOT EXISTS idx_subscriptions_user ON user_subscriptions(user_id)')
+                c.execute('CREATE INDEX IF NOT EXISTS idx_buttons_position ON custom_buttons(position)')
+                c.execute('CREATE INDEX IF NOT EXISTS idx_buttons_active ON custom_buttons(is_active)')
+                c.execute('CREATE INDEX IF NOT EXISTS idx_buttons_menu ON custom_buttons(show_in_menu)')
+                c.execute('CREATE INDEX IF NOT EXISTS idx_banned_words_word ON banned_words(word)')
+            except Exception as e:
+                logger.error(f"Ошибка создания индексов: {e}")
             
             # Начальные настройки
-            c.execute('''
-                INSERT OR IGNORE INTO bot_settings (key, value) 
-                VALUES 
-                ('footer_enabled', '0'),
-                ('footer_text', '🔗 Подпишись: @your_channel'),
-                ('footer_type', 'text'),
-                ('moderation_enabled', '1'),
-                ('moderation_notify_channel', '')
-            ''')
-            
-            # Начальные запрещенные слова
-            c.execute('''
-                INSERT OR IGNORE INTO banned_words (word, category, created_at, created_by) 
-                VALUES 
-                ('скам', 'мошенничество', ?, ?),
-                ('развод', 'мошенничество', ?, ?),
-                ('обман', 'мошенничество', ?, ?),
-                ('карта', 'финансы', ?, ?),
-                ('сбербанк', 'финансы', ?, ?),
-                ('перевод', 'финансы', ?, ?),
-                ('взлом', 'безопасность', ?, ?),
-                ('хакер', 'безопасность', ?, ?),
-                ('пароль', 'безопасность', ?, ?)
-            ''', (int(time.time()), ADMIN_ID) * 9)
+            try:
+                c.execute('''
+                    INSERT OR IGNORE INTO bot_settings (key, value) 
+                    VALUES 
+                    ('footer_enabled', '0'),
+                    ('footer_text', '🔗 Подпишись: @your_channel'),
+                    ('footer_type', 'text'),
+                    ('moderation_enabled', '1'),
+                    ('moderation_notify_channel', '')
+                ''')
+                
+                # Начальные запрещенные слова
+                c.execute('''
+                    INSERT OR IGNORE INTO banned_words (word, category, created_at, created_by) 
+                    VALUES 
+                    ('скам', 'мошенничество', ?, ?),
+                    ('развод', 'мошенничество', ?, ?),
+                    ('обман', 'мошенничество', ?, ?),
+                    ('карта', 'финансы', ?, ?),
+                    ('сбербанк', 'финансы', ?, ?),
+                    ('перевод', 'финансы', ?, ?),
+                    ('взлом', 'безопасность', ?, ?),
+                    ('хакер', 'безопасность', ?, ?),
+                    ('пароль', 'безопасность', ?, ?)
+                ''', (int(time.time()), ADMIN_ID) * 9)
+            except Exception as e:
+                logger.error(f"Ошибка инициализации настроек: {e}")
             
             logger.info("База данных инициализирована")
     
@@ -1373,7 +1402,8 @@ class Database:
                 c.execute('SELECT value FROM bot_settings WHERE key = ?', (key,))
                 row = c.fetchone()
                 return row['value'] if row else default
-        except:
+        except Exception as e:
+            logger.error(f"Ошибка получения настройки {key}: {e}")
             return default
     
     def set_bot_setting(self, key, value):
@@ -1382,8 +1412,10 @@ class Database:
             with self.get_connection() as conn:
                 c = conn.cursor()
                 c.execute('INSERT OR REPLACE INTO bot_settings (key, value) VALUES (?, ?)', (key, value))
+                return True
         except Exception as e:
             logger.error(f"Ошибка сохранения настройки {key}: {e}")
+            return False
     
     def get_banned_words(self, page=0, per_page=10):
         """Получить список запрещенных слов"""
@@ -1393,7 +1425,8 @@ class Database:
                 c.execute('SELECT * FROM banned_words ORDER BY word LIMIT ? OFFSET ?', (per_page, page * per_page))
                 rows = c.fetchall()
                 return [dict(row) for row in rows]
-        except:
+        except Exception as e:
+            logger.error(f"Ошибка получения запрещенных слов: {e}")
             return []
     
     def get_banned_words_count(self):
@@ -1403,7 +1436,8 @@ class Database:
                 c = conn.cursor()
                 c.execute('SELECT COUNT(*) FROM banned_words')
                 return c.fetchone()[0]
-        except:
+        except Exception as e:
+            logger.error(f"Ошибка подсчета запрещенных слов: {e}")
             return 0
     
     def get_banned_words_categories(self):
@@ -1414,7 +1448,8 @@ class Database:
                 c.execute('SELECT DISTINCT category FROM banned_words ORDER BY category')
                 rows = c.fetchall()
                 return [row['category'] for row in rows]
-        except:
+        except Exception as e:
+            logger.error(f"Ошибка получения категорий: {e}")
             return []
     
     def add_banned_word(self, word, category, created_by):
@@ -1448,7 +1483,8 @@ class Database:
                 c.execute('SELECT * FROM banned_words WHERE id = ?', (word_id,))
                 row = c.fetchone()
                 return dict(row) if row else None
-        except:
+        except Exception as e:
+            logger.error(f"Ошибка поиска слова: {e}")
             return None
     
     def check_banned_words(self, text):
@@ -1561,18 +1597,21 @@ class Database:
     
     def _clear_user_cache(self, user_id=None, username=None):
         """Очистить кэш пользователя"""
-        if user_id:
-            if user_id in self._user_cache:
-                del self._user_cache[user_id]
-            if user_id in self._user_cache_time:
-                del self._user_cache_time[user_id]
-        
-        if username:
-            cache_key = f"username:{username}"
-            if cache_key in self._user_cache:
-                del self._user_cache[cache_key]
-            if cache_key in self._user_cache_time:
-                del self._user_cache_time[cache_key]
+        try:
+            if user_id:
+                if user_id in self._user_cache:
+                    del self._user_cache[user_id]
+                if user_id in self._user_cache_time:
+                    del self._user_cache_time[user_id]
+            
+            if username:
+                cache_key = f"username:{username}"
+                if cache_key in self._user_cache:
+                    del self._user_cache[cache_key]
+                if cache_key in self._user_cache_time:
+                    del self._user_cache_time[cache_key]
+        except Exception as e:
+            logger.error(f"Ошибка очистки кэша: {e}")
     
     def get_admin_stats(self):
         """Получить статистику для админа"""
@@ -1685,30 +1724,31 @@ class Database:
     
     def register_user(self, user_id, username, first_name):
         """Зарегистрировать пользователя"""
-        with self.get_connection() as conn:
-            c = conn.cursor()
-            now = int(time.time())
-            
-            c.execute('''
-                INSERT OR IGNORE INTO users 
-                (user_id, username, first_name, created_at, last_active) 
-                VALUES (?, ?, ?, ?, ?)
-            ''', (user_id, username, first_name, now, now))
-            
-            c.execute('''
-                UPDATE users SET 
-                username = ?, 
-                first_name = ?,
-                last_active = ?
-                WHERE user_id = ?
-            ''', (username, first_name, now, user_id))
-            
-            self._clear_user_cache(user_id, username)
-            
-            if admin_settings['notify_admin_new_user']:
-                try:
-                    stats = self.get_admin_stats()
-                    notification = f"""👤 Новый пользователь
+        try:
+            with self.get_connection() as conn:
+                c = conn.cursor()
+                now = int(time.time())
+                
+                c.execute('''
+                    INSERT OR IGNORE INTO users 
+                    (user_id, username, first_name, created_at, last_active) 
+                    VALUES (?, ?, ?, ?, ?)
+                ''', (user_id, username, first_name, now, now))
+                
+                c.execute('''
+                    UPDATE users SET 
+                    username = ?, 
+                    first_name = ?,
+                    last_active = ?
+                    WHERE user_id = ?
+                ''', (username, first_name, now, user_id))
+                
+                self._clear_user_cache(user_id, username)
+                
+                if admin_settings['notify_admin_new_user']:
+                    try:
+                        stats = self.get_admin_stats()
+                        notification = f"""👤 Новый пользователь
 
 ID: <code>{user_id}</code>
 Имя: {first_name}
@@ -1716,129 +1756,159 @@ ID: <code>{user_id}</code>
 Время: {format_time(now, 'ru')}
 
 Всего пользователей: {stats['total_users']}"""
-                    
-                    bot.send_message(ADMIN_ID, notification, parse_mode="HTML")
-                except Exception as e:
-                    logger.error(f"Error sending new user notification: {e}")
+                        
+                        bot.send_message(ADMIN_ID, notification, parse_mode="HTML")
+                    except Exception as e:
+                        logger.error(f"Error sending new user notification: {e}")
+        except Exception as e:
+            logger.error(f"Ошибка регистрации пользователя: {e}")
     
     def update_last_active(self, user_id):
         """Обновить время последней активности"""
-        with self.get_connection() as conn:
-            c = conn.cursor()
-            c.execute('UPDATE users SET last_active = ? WHERE user_id = ?', 
-                     (int(time.time()), user_id))
-            self._clear_user_cache(user_id)
+        try:
+            with self.get_connection() as conn:
+                c = conn.cursor()
+                c.execute('UPDATE users SET last_active = ? WHERE user_id = ?', 
+                         (int(time.time()), user_id))
+                self._clear_user_cache(user_id)
+        except Exception as e:
+            logger.error(f"Ошибка обновления активности: {e}")
     
     def increment_stat(self, user_id, field):
         """Увеличить статистику пользователя"""
-        valid_fields = {'messages_received', 'messages_sent', 'link_clicks'}
-        if field not in valid_fields:
-            return
-        
-        with self.get_connection() as conn:
-            c = conn.cursor()
-            c.execute(f'UPDATE users SET {field} = {field} + 1 WHERE user_id = ?', 
-                     (user_id,))
-            self._clear_user_cache(user_id)
+        try:
+            valid_fields = {'messages_received', 'messages_sent', 'link_clicks'}
+            if field not in valid_fields:
+                return
+            
+            with self.get_connection() as conn:
+                c = conn.cursor()
+                c.execute(f'UPDATE users SET {field} = {field} + 1 WHERE user_id = ?', 
+                         (user_id,))
+                self._clear_user_cache(user_id)
+        except Exception as e:
+            logger.error(f"Ошибка увеличения статистики: {e}")
     
     def set_receive_messages(self, user_id, status):
         """Включить/выключить прием сообщений"""
-        with self.get_connection() as conn:
-            c = conn.cursor()
-            c.execute('UPDATE users SET receive_messages = ? WHERE user_id = ?',
-                     (1 if status else 0, user_id))
-            self._clear_user_cache(user_id)
+        try:
+            with self.get_connection() as conn:
+                c = conn.cursor()
+                c.execute('UPDATE users SET receive_messages = ? WHERE user_id = ?',
+                         (1 if status else 0, user_id))
+                self._clear_user_cache(user_id)
+        except Exception as e:
+            logger.error(f"Ошибка установки приема сообщений: {e}")
     
     def set_language(self, user_id, language):
         """Установить язык пользователя"""
-        with self.get_connection() as conn:
-            c = conn.cursor()
-            c.execute('UPDATE users SET language = ? WHERE user_id = ?',
-                     (language, user_id))
-            self._clear_user_cache(user_id)
+        try:
+            with self.get_connection() as conn:
+                c = conn.cursor()
+                c.execute('UPDATE users SET language = ? WHERE user_id = ?',
+                         (language, user_id))
+                self._clear_user_cache(user_id)
+        except Exception as e:
+            logger.error(f"Ошибка установки языка: {e}")
     
     def get_all_users_list(self):
         """Получить список всех пользователей"""
-        with self.get_connection() as conn:
-            c = conn.cursor()
-            c.execute('SELECT user_id FROM users WHERE is_blocked = 0')
-            rows = c.fetchall()
-            return [row[0] for row in rows]
+        try:
+            with self.get_connection() as conn:
+                c = conn.cursor()
+                c.execute('SELECT user_id FROM users WHERE is_blocked = 0')
+                rows = c.fetchall()
+                return [row[0] for row in rows]
+        except Exception as e:
+            logger.error(f"Ошибка получения списка пользователей: {e}")
+            return []
     
     def get_all_users_count(self):
         """Получить количество всех пользователей"""
-        with self.get_connection() as conn:
-            c = conn.cursor()
-            c.execute('SELECT COUNT(*) FROM users')
-            return c.fetchone()[0]
+        try:
+            with self.get_connection() as conn:
+                c = conn.cursor()
+                c.execute('SELECT COUNT(*) FROM users')
+                return c.fetchone()[0]
+        except Exception as e:
+            logger.error(f"Ошибка подсчета пользователей: {e}")
+            return 0
     
     def save_message(self, sender_id, receiver_id, message_type, 
                     text="", file_id=None, file_unique_id=None, file_size=0,
                     replied_to=0, moderated=True):
         """Сохранить сообщение"""
-        with self.get_connection() as conn:
-            c = conn.cursor()
-            c.execute('''
-                INSERT INTO messages 
-                (sender_id, receiver_id, message_type, text, file_id, file_unique_id, 
-                 file_size, timestamp, replied_to, moderated) 
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (sender_id, receiver_id, message_type, text, file_id, file_unique_id,
-                  file_size, int(time.time()), replied_to, 1 if moderated else 0))
-            message_id = c.lastrowid
-            
-            preview = text[:50] if text else f"[{message_type}]"
-            
-            c.execute('''
-                INSERT OR REPLACE INTO user_history 
-                (user_id, partner_id, message_id, direction, timestamp, preview) 
-                VALUES (?, ?, ?, 'outgoing', ?, ?)
-            ''', (sender_id, receiver_id, message_id, int(time.time()), preview))
-            
-            c.execute('''
-                INSERT OR REPLACE INTO user_history 
-                (user_id, partner_id, message_id, direction, timestamp, preview) 
-                VALUES (?, ?, ?, 'incoming', ?, ?)
-            ''', (receiver_id, sender_id, message_id, int(time.time()), preview))
-            
-            if admin_settings['notify_admin_new_message'] and message_type == 'text' and text:
-                try:
-                    sender = self.get_user(sender_id)
-                    receiver = self.get_user(receiver_id)
-                    
-                    notification = f"""📨 Новое сообщение
+        try:
+            with self.get_connection() as conn:
+                c = conn.cursor()
+                c.execute('''
+                    INSERT INTO messages 
+                    (sender_id, receiver_id, message_type, text, file_id, file_unique_id, 
+                     file_size, timestamp, replied_to, moderated) 
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (sender_id, receiver_id, message_type, text, file_id, file_unique_id,
+                      file_size, int(time.time()), replied_to, 1 if moderated else 0))
+                message_id = c.lastrowid
+                
+                preview = text[:50] if text else f"[{message_type}]"
+                
+                c.execute('''
+                    INSERT OR REPLACE INTO user_history 
+                    (user_id, partner_id, message_id, direction, timestamp, preview) 
+                    VALUES (?, ?, ?, 'outgoing', ?, ?)
+                ''', (sender_id, receiver_id, message_id, int(time.time()), preview))
+                
+                c.execute('''
+                    INSERT OR REPLACE INTO user_history 
+                    (user_id, partner_id, message_id, direction, timestamp, preview) 
+                    VALUES (?, ?, ?, 'incoming', ?, ?)
+                ''', (receiver_id, sender_id, message_id, int(time.time()), preview))
+                
+                if admin_settings['notify_admin_new_message'] and message_type == 'text' and text:
+                    try:
+                        sender = self.get_user(sender_id)
+                        receiver = self.get_user(receiver_id)
+                        
+                        notification = f"""📨 Новое сообщение
 
 👤 Отправитель: {sender_id}
 ├ Имя: {sender['first_name'] if sender else '?'}
-└ Юзернейм: {f'@{sender['username']}' if sender and sender['username'] else 'отсутствует'}
+└ Юзернейм: {f"@{sender['username']}" if sender and sender['username'] else 'отсутствует'}
 
 🎯 Получатель: {receiver_id}
 ├ Имя: {receiver['first_name'] if receiver else '?'}
-└ Юзернейм: {f'@{receiver['username']}' if receiver and receiver['username'] else 'отсутствует'}
+└ Юзернейм: {f"@{receiver['username']}" if receiver and receiver['username'] else 'отсутствует'}
 
 💬 Сообщение: {text[:200]}{'...' if len(text) > 200 else ''}
 
 ⏰ Время: {format_time(int(time.time()), 'ru')}"""
-                    
-                    bot.send_message(ADMIN_ID, notification)
-                except Exception as e:
-                    logger.error(f"Error sending new message notification: {e}")
-            
-            return message_id
+                        
+                        bot.send_message(ADMIN_ID, notification)
+                    except Exception as e:
+                        logger.error(f"Error sending new message notification: {e}")
+                
+                return message_id
+        except Exception as e:
+            logger.error(f"Ошибка сохранения сообщения: {e}")
+            return None
     
     def get_user_messages_stats(self, user_id):
         """Получить статистику сообщений пользователя"""
-        with self.get_connection() as conn:
-            c = conn.cursor()
-            c.execute('SELECT messages_received, messages_sent, link_clicks FROM users WHERE user_id = ?', (user_id,))
-            row = c.fetchone()
-            
-            if row:
-                return {
-                    'messages_received': row[0],
-                    'messages_sent': row[1],
-                    'link_clicks': row[2]
-                }
+        try:
+            with self.get_connection() as conn:
+                c = conn.cursor()
+                c.execute('SELECT messages_received, messages_sent, link_clicks FROM users WHERE user_id = ?', (user_id,))
+                row = c.fetchone()
+                
+                if row:
+                    return {
+                        'messages_received': row[0],
+                        'messages_sent': row[1],
+                        'link_clicks': row[2]
+                    }
+                return {'messages_received': 0, 'messages_sent': 0, 'link_clicks': 0}
+        except Exception as e:
+            logger.error(f"Ошибка получения статистики сообщений: {e}")
             return {'messages_received': 0, 'messages_sent': 0, 'link_clicks': 0}
     
     def is_user_blocked(self, user_id):
@@ -1846,326 +1916,399 @@ ID: <code>{user_id}</code>
         if user_id == ADMIN_ID:
             return False
         
-        with self.get_connection() as conn:
-            c = conn.cursor()
-            c.execute('SELECT is_blocked FROM users WHERE user_id = ?', (user_id,))
-            row = c.fetchone()
-            return bool(row and row[0] == 1)
+        try:
+            with self.get_connection() as conn:
+                c = conn.cursor()
+                c.execute('SELECT is_blocked FROM users WHERE user_id = ?', (user_id,))
+                row = c.fetchone()
+                return bool(row and row[0] == 1)
+        except Exception as e:
+            logger.error(f"Ошибка проверки блокировки: {e}")
+            return False
     
     def block_user(self, user_id, admin_id, reason=""):
         """Заблокировать пользователя"""
         if user_id == ADMIN_ID:
             return False
         
-        with self.get_connection() as conn:
-            c = conn.cursor()
-            c.execute('UPDATE users SET is_blocked = 1 WHERE user_id = ?', (user_id,))
-            success = c.rowcount > 0
-            if success:
-                self._clear_user_cache(user_id)
-            return success
+        try:
+            with self.get_connection() as conn:
+                c = conn.cursor()
+                c.execute('UPDATE users SET is_blocked = 1 WHERE user_id = ?', (user_id,))
+                success = c.rowcount > 0
+                if success:
+                    self._clear_user_cache(user_id)
+                return success
+        except Exception as e:
+            logger.error(f"Ошибка блокировки пользователя: {e}")
+            return False
     
     def unblock_user(self, user_id):
         """Разблокировать пользователя"""
-        with self.get_connection() as conn:
-            c = conn.cursor()
-            c.execute('UPDATE users SET is_blocked = 0 WHERE user_id = ?', (user_id,))
-            success = c.rowcount > 0
-            if success:
-                self._clear_user_cache(user_id)
-            return success
+        try:
+            with self.get_connection() as conn:
+                c = conn.cursor()
+                c.execute('UPDATE users SET is_blocked = 0 WHERE user_id = ?', (user_id,))
+                success = c.rowcount > 0
+                if success:
+                    self._clear_user_cache(user_id)
+                return success
+        except Exception as e:
+            logger.error(f"Ошибка разблокировки пользователя: {e}")
+            return False
     
     def create_support_ticket(self, user_id, message, file_id=None,
                             file_unique_id=None, message_type="text"):
         """Создать тикет поддержки"""
-        with self.get_connection() as conn:
-            c = conn.cursor()
-            now = int(time.time())
-            c.execute('''
-                INSERT INTO support_tickets 
-                (user_id, message, file_id, file_unique_id, message_type, created_at) 
-                VALUES (?, ?, ?, ?, ?, ?)
-            ''', (user_id, message, file_id, file_unique_id, message_type, now))
-            return c.lastrowid
+        try:
+            with self.get_connection() as conn:
+                c = conn.cursor()
+                now = int(time.time())
+                c.execute('''
+                    INSERT INTO support_tickets 
+                    (user_id, message, file_id, file_unique_id, message_type, created_at) 
+                    VALUES (?, ?, ?, ?, ?, ?)
+                ''', (user_id, message, file_id, file_unique_id, message_type, now))
+                return c.lastrowid
+        except Exception as e:
+            logger.error(f"Ошибка создания тикета: {e}")
+            return None
     
     def get_open_support_tickets(self):
         """Получить открытые тикеты поддержки"""
-        with self.get_connection() as conn:
-            c = conn.cursor()
-            c.execute('''
-                SELECT s.*, u.first_name, u.username 
-                FROM support_tickets s
-                LEFT JOIN users u ON s.user_id = u.user_id
-                WHERE s.status = 'open'
-                ORDER BY s.created_at DESC
-            ''')
-            rows = c.fetchall()
-            tickets = []
-            for row in rows:
-                tickets.append({
-                    'id': row[0],
-                    'user_id': row[1],
-                    'message': row[2],
-                    'file_id': row[3],
-                    'file_unique_id': row[4],
-                    'message_type': row[5],
-                    'status': row[6],
-                    'created_at': row[7],
-                    'first_name': row[9],
-                    'username': row[10]
-                })
-            return tickets
+        try:
+            with self.get_connection() as conn:
+                c = conn.cursor()
+                c.execute('''
+                    SELECT s.*, u.first_name, u.username 
+                    FROM support_tickets s
+                    LEFT JOIN users u ON s.user_id = u.user_id
+                    WHERE s.status = 'open'
+                    ORDER BY s.created_at DESC
+                ''')
+                rows = c.fetchall()
+                tickets = []
+                for row in rows:
+                    tickets.append({
+                        'id': row[0],
+                        'user_id': row[1],
+                        'message': row[2],
+                        'file_id': row[3],
+                        'file_unique_id': row[4],
+                        'message_type': row[5],
+                        'status': row[6],
+                        'created_at': row[7],
+                        'first_name': row[9],
+                        'username': row[10]
+                    })
+                return tickets
+        except Exception as e:
+            logger.error(f"Ошибка получения тикетов: {e}")
+            return []
     
     def update_support_ticket(self, ticket_id, admin_id, 
                             reply_text, status='answered'):
         """Обновить тикет поддержки"""
-        with self.get_connection() as conn:
-            c = conn.cursor()
-            now = int(time.time())
-            c.execute('''
-                UPDATE support_tickets 
-                SET admin_id = ?, admin_reply = ?, replied_at = ?, status = ?
-                WHERE id = ?
-            ''', (admin_id, reply_text, now, status, ticket_id))
+        try:
+            with self.get_connection() as conn:
+                c = conn.cursor()
+                now = int(time.time())
+                c.execute('''
+                    UPDATE support_tickets 
+                    SET admin_id = ?, admin_reply = ?, replied_at = ?, status = ?
+                    WHERE id = ?
+                ''', (admin_id, reply_text, now, status, ticket_id))
+                return True
+        except Exception as e:
+            logger.error(f"Ошибка обновления тикета: {e}")
+            return False
     
     def get_recent_messages(self, limit=10, include_text=True):
         """Получить последние сообщения"""
-        with self.get_connection() as conn:
-            c = conn.cursor()
-            query = '''
-                SELECT m.*, u1.first_name as sender_name, u1.username as sender_username,
-                       u2.first_name as receiver_name, u2.username as receiver_username
-                FROM messages m
-                LEFT JOIN users u1 ON m.sender_id = u1.user_id
-                LEFT JOIN users u2 ON m.receiver_id = u2.user_id
-                ORDER BY m.timestamp DESC LIMIT ?
-            '''
-            c.execute(query, (limit,))
-            rows = c.fetchall()
-            messages = []
-            for row in rows:
-                msg = {
-                    'id': row[0],
-                    'sender_id': row[1],
-                    'receiver_id': row[2],
-                    'message_type': row[3],
-                    'text': '[HIDDEN]' if not include_text and row[4] else row[4],
-                    'file_id': row[5],
-                    'file_unique_id': row[6],
-                    'file_size': row[7],
-                    'timestamp': row[8],
-                    'replied_to': row[9],
-                    'is_read': row[10],
-                    'moderated': row[11],
-                    'sender_name': row[12],
-                    'sender_username': row[13],
-                    'receiver_name': row[14],
-                    'receiver_username': row[15]
-                }
-                messages.append(msg)
-            return messages
+        try:
+            with self.get_connection() as conn:
+                c = conn.cursor()
+                query = '''
+                    SELECT m.*, u1.first_name as sender_name, u1.username as sender_username,
+                           u2.first_name as receiver_name, u2.username as receiver_username
+                    FROM messages m
+                    LEFT JOIN users u1 ON m.sender_id = u1.user_id
+                    LEFT JOIN users u2 ON m.receiver_id = u2.user_id
+                    ORDER BY m.timestamp DESC LIMIT ?
+                '''
+                c.execute(query, (limit,))
+                rows = c.fetchall()
+                messages = []
+                for row in rows:
+                    msg = {
+                        'id': row[0],
+                        'sender_id': row[1],
+                        'receiver_id': row[2],
+                        'message_type': row[3],
+                        'text': '[HIDDEN]' if not include_text and row[4] else row[4],
+                        'file_id': row[5],
+                        'file_unique_id': row[6],
+                        'file_size': row[7],
+                        'timestamp': row[8],
+                        'replied_to': row[9],
+                        'is_read': row[10],
+                        'moderated': row[11],
+                        'sender_name': row[12],
+                        'sender_username': row[13],
+                        'receiver_name': row[14],
+                        'receiver_username': row[15]
+                    }
+                    messages.append(msg)
+                return messages
+        except Exception as e:
+            logger.error(f"Ошибка получения сообщений: {e}")
+            return []
 
     def export_users_data(self):
         """Экспортировать данные пользователей"""
-        with self.get_connection() as conn:
-            c = conn.cursor()
-            c.execute('''
-                SELECT user_id, username, first_name, language, 
-                       created_at, last_active, messages_received, 
-                       messages_sent, link_clicks, receive_messages, is_blocked
-                FROM users ORDER BY user_id
-            ''')
-            rows = c.fetchall()
-            
-            csv_content = "ID;Username;First Name;Language;Created At;Last Active;Messages Received;Messages Sent;Link Clicks;Receive Messages;Is Blocked\n"
-            for row in rows:
-                created = datetime.fromtimestamp(row[4]).strftime('%Y-%m-%d %H:%M') if row[4] else ""
-                last_active = datetime.fromtimestamp(row[5]).strftime('%Y-%m-%d %H:%M') if row[5] else "Never"
-                csv_content += f"{row[0]};{row[1] or ''};{row[2] or ''};{row[3]};"
-                csv_content += f"{created};{last_active};{row[6]};{row[7]};"
-                csv_content += f"{row[8]};{row[9]};{row[10]}\n"
-            
-            return csv_content
+        try:
+            with self.get_connection() as conn:
+                c = conn.cursor()
+                c.execute('''
+                    SELECT user_id, username, first_name, language, 
+                           created_at, last_active, messages_received, 
+                           messages_sent, link_clicks, receive_messages, is_blocked
+                    FROM users ORDER BY user_id
+                ''')
+                rows = c.fetchall()
+                
+                csv_content = "ID;Username;First Name;Language;Created At;Last Active;Messages Received;Messages Sent;Link Clicks;Receive Messages;Is Blocked\n"
+                for row in rows:
+                    created = datetime.fromtimestamp(row[4]).strftime('%Y-%m-%d %H:%M') if row[4] else ""
+                    last_active = datetime.fromtimestamp(row[5]).strftime('%Y-%m-%d %H:%M') if row[5] else "Never"
+                    csv_content += f"{row[0]};{row[1] or ''};{row[2] or ''};{row[3]};"
+                    csv_content += f"{created};{last_active};{row[6]};{row[7]};"
+                    csv_content += f"{row[8]};{row[9]};{row[10]}\n"
+                
+                return csv_content
+        except Exception as e:
+            logger.error(f"Ошибка экспорта пользователей: {e}")
+            return ""
 
     def export_messages_data(self):
         """Экспортировать данные сообщений"""
-        with self.get_connection() as conn:
-            c = conn.cursor()
-            c.execute('''
-                SELECT id, sender_id, receiver_id, message_type, text, timestamp
-                FROM messages ORDER BY timestamp DESC LIMIT 1000
-            ''')
-            rows = c.fetchall()
-            
-            csv_content = "ID;Sender ID;Receiver ID;Type;Text;Timestamp\n"
-            for row in rows:
-                timestamp = datetime.fromtimestamp(row[5]).strftime('%Y-%m-%d %H:%M') if row[5] else ""
-                text = (row[4] or '').replace(';', ',').replace('\n', ' ').replace('\r', '')
-                csv_content += f"{row[0]};{row[1]};{row[2]};{row[3]};{text};{timestamp}\n"
-            
-            return csv_content
+        try:
+            with self.get_connection() as conn:
+                c = conn.cursor()
+                c.execute('''
+                    SELECT id, sender_id, receiver_id, message_type, text, timestamp
+                    FROM messages ORDER BY timestamp DESC LIMIT 1000
+                ''')
+                rows = c.fetchall()
+                
+                csv_content = "ID;Sender ID;Receiver ID;Type;Text;Timestamp\n"
+                for row in rows:
+                    timestamp = datetime.fromtimestamp(row[5]).strftime('%Y-%m-%d %H:%M') if row[5] else ""
+                    text = (row[4] or '').replace(';', ',').replace('\n', ' ').replace('\r', '')
+                    csv_content += f"{row[0]};{row[1]};{row[2]};{row[3]};{text};{timestamp}\n"
+                
+                return csv_content
+        except Exception as e:
+            logger.error(f"Ошибка экспорта сообщений: {e}")
+            return ""
     
     def get_required_channels(self):
         """Получить обязательные каналы"""
-        with self.get_connection() as conn:
-            c = conn.cursor()
-            c.execute('SELECT * FROM required_channels WHERE is_active = 1 ORDER BY order_num')
-            rows = c.fetchall()
-            channels = []
-            for row in rows:
-                channels.append({
-                    'id': row[0],
-                    'channel_id': row[1],
-                    'channel_title': row[2],
-                    'channel_link': row[3],
-                    'invite_link': row[4],
-                    'order_num': row[6]
-                })
-            return channels
+        try:
+            with self.get_connection() as conn:
+                c = conn.cursor()
+                c.execute('SELECT * FROM required_channels WHERE is_active = 1 ORDER BY order_num')
+                rows = c.fetchall()
+                channels = []
+                for row in rows:
+                    channels.append({
+                        'id': row[0],
+                        'channel_id': row[1],
+                        'channel_title': row[2],
+                        'channel_link': row[3],
+                        'invite_link': row[4],
+                        'order_num': row[6]
+                    })
+                return channels
+        except Exception as e:
+            logger.error(f"Ошибка получения каналов: {e}")
+            return []
     
     def add_required_channel(self, channel_id, channel_title, channel_link, invite_link):
         """Добавить обязательный канал"""
-        with self.get_connection() as conn:
-            c = conn.cursor()
-            c.execute('''
-                INSERT OR REPLACE INTO required_channels 
-                (channel_id, channel_title, channel_link, invite_link, created_at, order_num)
-                VALUES (?, ?, ?, ?, ?, 
-                    COALESCE((SELECT MAX(order_num) FROM required_channels), 0) + 1)
-            ''', (channel_id, channel_title, channel_link, invite_link, int(time.time())))
-            return True
+        try:
+            with self.get_connection() as conn:
+                c = conn.cursor()
+                c.execute('''
+                    INSERT OR REPLACE INTO required_channels 
+                    (channel_id, channel_title, channel_link, invite_link, created_at, order_num)
+                    VALUES (?, ?, ?, ?, ?, 
+                        COALESCE((SELECT MAX(order_num) FROM required_channels), 0) + 1)
+                ''', (channel_id, channel_title, channel_link, invite_link, int(time.time())))
+                return True
+        except Exception as e:
+            logger.error(f"Ошибка добавления канала: {e}")
+            return False
     
     def remove_required_channel(self, channel_id):
         """Удалить обязательный канал"""
-        with self.get_connection() as conn:
-            c = conn.cursor()
-            c.execute('DELETE FROM required_channels WHERE channel_id = ?', (channel_id,))
-            return c.rowcount > 0
+        try:
+            with self.get_connection() as conn:
+                c = conn.cursor()
+                c.execute('DELETE FROM required_channels WHERE channel_id = ?', (channel_id,))
+                return c.rowcount > 0
+        except Exception as e:
+            logger.error(f"Ошибка удаления канала: {e}")
+            return False
     
     def check_user_subscription(self, user_id, channel_id):
         """Проверить подписку пользователя на канал"""
-        with self.get_connection() as conn:
-            c = conn.cursor()
-            c.execute('SELECT subscribed FROM user_subscriptions WHERE user_id = ? AND channel_id = ?',
-                     (user_id, channel_id))
-            row = c.fetchone()
-            if row:
-                return bool(row[0])
+        try:
+            with self.get_connection() as conn:
+                c = conn.cursor()
+                c.execute('SELECT subscribed FROM user_subscriptions WHERE user_id = ? AND channel_id = ?',
+                         (user_id, channel_id))
+                row = c.fetchone()
+                if row:
+                    return bool(row[0])
+                return False
+        except Exception as e:
+            logger.error(f"Ошибка проверки подписки: {e}")
             return False
     
     def update_user_subscription(self, user_id, channel_id, subscribed):
         """Обновить статус подписки пользователя"""
-        with self.get_connection() as conn:
-            c = conn.cursor()
-            now = int(time.time())
-            c.execute('''
-                INSERT OR REPLACE INTO user_subscriptions 
-                (user_id, channel_id, subscribed, checked_at)
-                VALUES (?, ?, ?, ?)
-            ''', (user_id, channel_id, 1 if subscribed else 0, now))
-            return True
+        try:
+            with self.get_connection() as conn:
+                c = conn.cursor()
+                now = int(time.time())
+                c.execute('''
+                    INSERT OR REPLACE INTO user_subscriptions 
+                    (user_id, channel_id, subscribed, checked_at)
+                    VALUES (?, ?, ?, ?)
+                ''', (user_id, channel_id, 1 if subscribed else 0, now))
+                return True
+        except Exception as e:
+            logger.error(f"Ошибка обновления подписки: {e}")
+            return False
     
     def get_custom_buttons(self, position_filter=None):
         """Получить кастомные кнопки"""
-        with self.get_connection() as conn:
-            c = conn.cursor()
-            query = '''
-                SELECT * FROM custom_buttons 
-                WHERE is_active = 1 AND show_in_menu = 1
-            '''
-            if position_filter:
-                query += f' AND position = {position_filter}'
-            query += ' ORDER BY position'
-            
-            c.execute(query)
-            rows = c.fetchall()
-            buttons = []
-            for row in rows:
-                buttons.append({
-                    'id': row[0],
-                    'button_text': row[1],
-                    'button_icon': row[2],
-                    'button_type': row[3],
-                    'button_action': row[4],
-                    'position': row[5],
-                    'is_active': row[6],
-                    'show_in_menu': row[7]
-                })
-            return buttons
+        try:
+            with self.get_connection() as conn:
+                c = conn.cursor()
+                query = '''
+                    SELECT * FROM custom_buttons 
+                    WHERE is_active = 1 AND show_in_menu = 1
+                '''
+                if position_filter:
+                    query += f' AND position = {position_filter}'
+                query += ' ORDER BY position'
+                
+                c.execute(query)
+                rows = c.fetchall()
+                buttons = []
+                for row in rows:
+                    buttons.append({
+                        'id': row[0],
+                        'button_text': row[1],
+                        'button_icon': row[2],
+                        'button_type': row[3],
+                        'button_action': row[4],
+                        'position': row[5],
+                        'is_active': row[6],
+                        'show_in_menu': row[7]
+                    })
+                return buttons
+        except Exception as e:
+            logger.error(f"Ошибка получения кнопок: {e}")
+            return []
     
     def add_custom_button(self, button_text, button_icon, button_type, button_action, position=0):
         """Добавить кастомную кнопку"""
-        with self.get_connection() as conn:
-            c = conn.cursor()
-            now = int(time.time())
-            
-            if position == 0:
-                c.execute('SELECT COALESCE(MAX(position), 0) FROM custom_buttons')
-                position = c.fetchone()[0] + 1
-            
-            c.execute('''
-                INSERT INTO custom_buttons 
-                (button_text, button_icon, button_type, button_action, position, 
-                 created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            ''', (button_text, button_icon, button_type, button_action, position, now, now))
-            return c.lastrowid
+        try:
+            with self.get_connection() as conn:
+                c = conn.cursor()
+                now = int(time.time())
+                
+                if position == 0:
+                    c.execute('SELECT COALESCE(MAX(position), 0) FROM custom_buttons')
+                    position = c.fetchone()[0] + 1
+                
+                c.execute('''
+                    INSERT INTO custom_buttons 
+                    (button_text, button_icon, button_type, button_action, position, 
+                     created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                ''', (button_text, button_icon, button_type, button_action, position, now, now))
+                return c.lastrowid
+        except Exception as e:
+            logger.error(f"Ошибка добавления кнопки: {e}")
+            return None
     
     def update_custom_button(self, button_id, button_text=None, button_icon=None, 
                            button_type=None, button_action=None, position=None, 
                            is_active=None, show_in_menu=None):
         """Обновить кастомную кнопку"""
-        with self.get_connection() as conn:
-            c = conn.cursor()
-            updates = []
-            params = []
-            
-            if button_text is not None:
-                updates.append('button_text = ?')
-                params.append(button_text)
-            
-            if button_icon is not None:
-                updates.append('button_icon = ?')
-                params.append(button_icon)
-            
-            if button_type is not None:
-                updates.append('button_type = ?')
-                params.append(button_type)
-            
-            if button_action is not None:
-                updates.append('button_action = ?')
-                params.append(button_action)
-            
-            if position is not None:
-                updates.append('position = ?')
-                params.append(position)
-            
-            if is_active is not None:
-                updates.append('is_active = ?')
-                params.append(is_active)
-            
-            if show_in_menu is not None:
-                updates.append('show_in_menu = ?')
-                params.append(show_in_menu)
-            
-            if not updates:
-                return False
-            
-            updates.append('updated_at = ?')
-            params.append(int(time.time()))
-            
-            params.append(button_id)
-            
-            query = f'UPDATE custom_buttons SET {", ".join(updates)} WHERE id = ?'
-            c.execute(query, params)
-            return c.rowcount > 0
+        try:
+            with self.get_connection() as conn:
+                c = conn.cursor()
+                updates = []
+                params = []
+                
+                if button_text is not None:
+                    updates.append('button_text = ?')
+                    params.append(button_text)
+                
+                if button_icon is not None:
+                    updates.append('button_icon = ?')
+                    params.append(button_icon)
+                
+                if button_type is not None:
+                    updates.append('button_type = ?')
+                    params.append(button_type)
+                
+                if button_action is not None:
+                    updates.append('button_action = ?')
+                    params.append(button_action)
+                
+                if position is not None:
+                    updates.append('position = ?')
+                    params.append(position)
+                
+                if is_active is not None:
+                    updates.append('is_active = ?')
+                    params.append(is_active)
+                
+                if show_in_menu is not None:
+                    updates.append('show_in_menu = ?')
+                    params.append(show_in_menu)
+                
+                if not updates:
+                    return False
+                
+                updates.append('updated_at = ?')
+                params.append(int(time.time()))
+                
+                params.append(button_id)
+                
+                query = f'UPDATE custom_buttons SET {", ".join(updates)} WHERE id = ?'
+                c.execute(query, params)
+                return c.rowcount > 0
+        except Exception as e:
+            logger.error(f"Ошибка обновления кнопки: {e}")
+            return False
     
     def delete_custom_button(self, button_id):
         """Удалить кастомную кнопку"""
-        with self.get_connection() as conn:
-            c = conn.cursor()
-            c.execute('DELETE FROM custom_buttons WHERE id = ?', (button_id,))
-            return c.rowcount > 0
+        try:
+            with self.get_connection() as conn:
+                c = conn.cursor()
+                c.execute('DELETE FROM custom_buttons WHERE id = ?', (button_id,))
+                return c.rowcount > 0
+        except Exception as e:
+            logger.error(f"Ошибка удаления кнопки: {e}")
+            return False
 
 # ==================== ИНИЦИАЛИЗАЦИЯ БАЗЫ ДАННЫХ ====================
 db = Database()
@@ -2175,30 +2318,31 @@ class ModerationSystem:
     @staticmethod
     def check_message(text, user_id):
         """Проверить сообщение на запрещенный контент"""
-        if not text or db.get_bot_setting('moderation_enabled') != '1':
-            return {'blocked': False, 'words': []}
-        
-        banned_words = db.check_banned_words(text)
-        
-        if banned_words:
-            result = {
-                'blocked': True,
-                'words': banned_words,
-                'message': get_text('ru', 'message_blocked',
-                                  blocked_words=', '.join([w['word'] for w in banned_words]),
-                                  categories=', '.join(set([w['category'] for w in banned_words])))
-            }
+        try:
+            if not text or db.get_bot_setting('moderation_enabled') != '1':
+                return {'blocked': False, 'words': []}
             
-            moderation_channel = db.get_bot_setting('moderation_notify_channel')
-            if moderation_channel:
-                try:
-                    user = db.get_user(user_id)
-                    alert = f"""
+            banned_words = db.check_banned_words(text)
+            
+            if banned_words:
+                result = {
+                    'blocked': True,
+                    'words': banned_words,
+                    'message': get_text('ru', 'message_blocked',
+                                      blocked_words=', '.join([w['word'] for w in banned_words]),
+                                      categories=', '.join(set([w['category'] for w in banned_words])))
+                }
+                
+                moderation_channel = db.get_bot_setting('moderation_notify_channel')
+                if moderation_channel:
+                    try:
+                        user = db.get_user(user_id)
+                        alert = f"""
 🚨 <b>ОБНАРУЖЕНО ЗАПРЕЩЕННОЕ СОДЕРЖИМОЕ</b>
 
 👤 Пользователь: {user_id}
 ├ Имя: {user['first_name'] if user else '?'}
-└ Юзернейм: {f'@{user['username']}' if user and user['username'] else '—'}
+└ Юзернейм: {f"@{user['username']}" if user and user['username'] else '—'}
 
 📝 Сообщение: {text[:500]}{'...' if len(text) > 500 else ''}
 
@@ -2207,13 +2351,16 @@ class ModerationSystem:
 
 ⏰ Время: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}
 """
-                    bot.send_message(moderation_channel, alert, parse_mode="HTML")
-                except:
-                    pass
+                        bot.send_message(moderation_channel, alert, parse_mode="HTML")
+                    except Exception as e:
+                        logger.error(f"Ошибка отправки в канал модерации: {e}")
+                
+                return result
             
-            return result
-        
-        return {'blocked': False, 'words': []}
+            return {'blocked': False, 'words': []}
+        except Exception as e:
+            logger.error(f"Ошибка проверки сообщения: {e}")
+            return {'blocked': False, 'words': []}
 
 # ==================== ФУНКЦИИ ДЛЯ КЛАВИАТУР ====================
 def generate_link(user_id):
@@ -2227,206 +2374,241 @@ def generate_link(user_id):
 
 def main_keyboard(is_admin=False, lang='ru'):
     """Главная клавиатура"""
-    keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    
-    buttons = [
-        types.KeyboardButton(get_text(lang, 'btn_my_link')),
-        types.KeyboardButton(get_text(lang, 'btn_profile')),
-        types.KeyboardButton(get_text(lang, 'btn_qr')),
-        types.KeyboardButton(get_text(lang, 'btn_help')),
-        types.KeyboardButton(get_text(lang, 'btn_support')),
-        types.KeyboardButton(get_text(lang, 'btn_language'))
-    ]
-    
-    custom_buttons = db.get_custom_buttons()
-    if custom_buttons:
-        keyboard.add(*buttons)
+    try:
+        keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
         
-        custom_keyboard_buttons = []
-        for button in custom_buttons:
-            button_text = f"{button['button_icon']} {button['button_text']}" if button['button_icon'] else button['button_text']
-            custom_keyboard_buttons.append(types.KeyboardButton(button_text))
+        buttons = [
+            types.KeyboardButton(get_text(lang, 'btn_my_link')),
+            types.KeyboardButton(get_text(lang, 'btn_profile')),
+            types.KeyboardButton(get_text(lang, 'btn_qr')),
+            types.KeyboardButton(get_text(lang, 'btn_help')),
+            types.KeyboardButton(get_text(lang, 'btn_support')),
+            types.KeyboardButton(get_text(lang, 'btn_language'))
+        ]
         
-        row = []
-        for i, btn in enumerate(custom_keyboard_buttons, 1):
-            row.append(btn)
-            if i % 2 == 0 or i == len(custom_keyboard_buttons):
-                keyboard.add(*row)
-                row = []
-    else:
-        keyboard.add(*buttons)
-    
-    if is_admin:
-        keyboard.add(types.KeyboardButton(get_text(lang, 'btn_admin')))
-    
-    return keyboard
+        custom_buttons = db.get_custom_buttons()
+        if custom_buttons:
+            keyboard.add(*buttons)
+            
+            custom_keyboard_buttons = []
+            for button in custom_buttons:
+                button_text = f"{button['button_icon']} {button['button_text']}" if button['button_icon'] else button['button_text']
+                custom_keyboard_buttons.append(types.KeyboardButton(button_text))
+            
+            row = []
+            for i, btn in enumerate(custom_keyboard_buttons, 1):
+                row.append(btn)
+                if i % 2 == 0 or i == len(custom_keyboard_buttons):
+                    keyboard.add(*row)
+                    row = []
+        else:
+            keyboard.add(*buttons)
+        
+        if is_admin:
+            keyboard.add(types.KeyboardButton(get_text(lang, 'btn_admin')))
+        
+        return keyboard
+    except Exception as e:
+        logger.error(f"Ошибка создания клавиатуры: {e}")
+        return types.ReplyKeyboardMarkup(resize_keyboard=True)
 
 def settings_keyboard(lang='ru'):
     """Клавиатура настроек"""
-    keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    buttons = [
-        types.KeyboardButton(get_text(lang, 'btn_turn_on')),
-        types.KeyboardButton(get_text(lang, 'btn_turn_off')),
-        types.KeyboardButton(get_text(lang, 'btn_back'))
-    ]
-    keyboard.add(*buttons)
-    return keyboard
+    try:
+        keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+        buttons = [
+            types.KeyboardButton(get_text(lang, 'btn_turn_on')),
+            types.KeyboardButton(get_text(lang, 'btn_turn_off')),
+            types.KeyboardButton(get_text(lang, 'btn_back'))
+        ]
+        keyboard.add(*buttons)
+        return keyboard
+    except Exception as e:
+        logger.error(f"Ошибка создания клавиатуры настроек: {e}")
+        return types.ReplyKeyboardMarkup(resize_keyboard=True)
 
 def admin_keyboard(lang='ru'):
     """Клавиатура админа"""
-    keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    buttons = [
-        types.KeyboardButton(get_text(lang, 'btn_admin_stats')),
-        types.KeyboardButton(get_text(lang, 'btn_admin_broadcast')),
-        types.KeyboardButton(get_text(lang, 'btn_admin_broadcast_button')),
-        types.KeyboardButton(get_text(lang, 'btn_admin_users')),
-        types.KeyboardButton(get_text(lang, 'btn_admin_message_user')),
-        types.KeyboardButton(get_text(lang, 'btn_admin_logs')),
-        types.KeyboardButton(get_text(lang, 'btn_admin_tickets')),
-        types.KeyboardButton(get_text(lang, 'btn_admin_footer')),
-        types.KeyboardButton(get_text(lang, 'btn_admin_subscription')),
-        types.KeyboardButton(get_text(lang, 'btn_admin_moderation')),
-        types.KeyboardButton(get_text(lang, 'btn_admin_buttons')),
-        types.KeyboardButton(get_text(lang, 'btn_admin_settings')),
-        types.KeyboardButton(get_text(lang, 'btn_admin_backup')),
-        types.KeyboardButton(get_text(lang, 'btn_admin_export')),
-        types.KeyboardButton(get_text(lang, 'btn_back'))
-    ]
-    keyboard.add(*buttons)
-    return keyboard
+    try:
+        keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+        buttons = [
+            types.KeyboardButton(get_text(lang, 'btn_admin_stats')),
+            types.KeyboardButton(get_text(lang, 'btn_admin_broadcast')),
+            types.KeyboardButton(get_text(lang, 'btn_admin_broadcast_button')),
+            types.KeyboardButton(get_text(lang, 'btn_admin_users')),
+            types.KeyboardButton(get_text(lang, 'btn_admin_message_user')),
+            types.KeyboardButton(get_text(lang, 'btn_admin_logs')),
+            types.KeyboardButton(get_text(lang, 'btn_admin_tickets')),
+            types.KeyboardButton(get_text(lang, 'btn_admin_footer')),
+            types.KeyboardButton(get_text(lang, 'btn_admin_subscription')),
+            types.KeyboardButton(get_text(lang, 'btn_admin_moderation')),
+            types.KeyboardButton(get_text(lang, 'btn_admin_buttons')),
+            types.KeyboardButton(get_text(lang, 'btn_admin_settings')),
+            types.KeyboardButton(get_text(lang, 'btn_admin_backup')),
+            types.KeyboardButton(get_text(lang, 'btn_admin_export')),
+            types.KeyboardButton(get_text(lang, 'btn_back'))
+        ]
+        keyboard.add(*buttons)
+        return keyboard
+    except Exception as e:
+        logger.error(f"Ошибка создания админ клавиатуры: {e}")
+        return types.ReplyKeyboardMarkup(resize_keyboard=True)
 
 def moderation_keyboard(page=0):
     """Клавиатура модерации"""
-    keyboard = types.InlineKeyboardMarkup(row_width=2)
-    
-    words = db.get_banned_words(page, 10)
-    total_words = db.get_banned_words_count()
-    total_pages = (total_words + 9) // 10
-    
-    for word in words:
-        keyboard.add(types.InlineKeyboardButton(
-            f"🗑️ {word['word']} ({word['category']})",
-            callback_data=f"delete_word_{word['id']}"
-        ))
-    
-    nav_buttons = []
-    if page > 0:
-        nav_buttons.append(types.InlineKeyboardButton("◀️ Назад", callback_data=f"words_page_{page-1}"))
-    
-    if page < total_pages - 1:
-        nav_buttons.append(types.InlineKeyboardButton("Вперед ▶️", callback_data=f"words_page_{page+1}"))
-    
-    if nav_buttons:
-        keyboard.add(*nav_buttons)
-    
-    keyboard.add(
-        types.InlineKeyboardButton("➕ Добавить слово", callback_data="moderation_add_word"),
-        types.InlineKeyboardButton("📊 Статистика", callback_data="moderation_stats")
-    )
-    
-    keyboard.add(types.InlineKeyboardButton("⬅️ Назад", callback_data="admin_back"))
-    
-    return keyboard
+    try:
+        keyboard = types.InlineKeyboardMarkup(row_width=2)
+        
+        words = db.get_banned_words(page, 10)
+        total_words = db.get_banned_words_count()
+        total_pages = (total_words + 9) // 10
+        
+        for word in words:
+            keyboard.add(types.InlineKeyboardButton(
+                f"🗑️ {word['word']} ({word['category']})",
+                callback_data=f"delete_word_{word['id']}"
+            ))
+        
+        nav_buttons = []
+        if page > 0:
+            nav_buttons.append(types.InlineKeyboardButton("◀️ Назад", callback_data=f"words_page_{page-1}"))
+        
+        if page < total_pages - 1:
+            nav_buttons.append(types.InlineKeyboardButton("Вперед ▶️", callback_data=f"words_page_{page+1}"))
+        
+        if nav_buttons:
+            keyboard.add(*nav_buttons)
+        
+        keyboard.add(
+            types.InlineKeyboardButton("➕ Добавить слово", callback_data="moderation_add_word"),
+            types.InlineKeyboardButton("📊 Статистика", callback_data="moderation_stats")
+        )
+        
+        keyboard.add(types.InlineKeyboardButton("⬅️ Назад", callback_data="admin_back"))
+        
+        return keyboard
+    except Exception as e:
+        logger.error(f"Ошибка создания клавиатуры модерации: {e}")
+        return types.InlineKeyboardMarkup()
 
 def language_keyboard():
     """Клавиатура выбора языка"""
-    keyboard = types.InlineKeyboardMarkup(row_width=2)
-    keyboard.add(
-        types.InlineKeyboardButton("🇷🇺 Русский", callback_data="lang_ru"),
-        types.InlineKeyboardButton("🇺🇸 English", callback_data="lang_en")
-    )
-    return keyboard
+    try:
+        keyboard = types.InlineKeyboardMarkup(row_width=2)
+        keyboard.add(
+            types.InlineKeyboardButton("🇷🇺 Русский", callback_data="lang_ru"),
+            types.InlineKeyboardButton("🇺🇸 English", callback_data="lang_en")
+        )
+        return keyboard
+    except Exception as e:
+        logger.error(f"Ошибка создания языковой клавиатуры: {e}")
+        return types.InlineKeyboardMarkup()
 
 def cancel_keyboard(lang='ru'):
     """Клавиатура отмены"""
-    return types.ReplyKeyboardMarkup(resize_keyboard=True).add(get_text(lang, 'btn_cancel'))
+    try:
+        return types.ReplyKeyboardMarkup(resize_keyboard=True).add(get_text(lang, 'btn_cancel'))
+    except Exception as e:
+        logger.error(f"Ошибка создания клавиатуры отмены: {e}")
+        return types.ReplyKeyboardMarkup(resize_keyboard=True)
 
 def subscription_check_keyboard(user_id, lang='ru'):
     """Клавиатура проверки подписки"""
-    keyboard = types.InlineKeyboardMarkup()
-    channels = db.get_required_channels()
-    
-    for channel in channels:
+    try:
+        keyboard = types.InlineKeyboardMarkup()
+        channels = db.get_required_channels()
+        
+        for channel in channels:
+            keyboard.add(types.InlineKeyboardButton(
+                f"📢 {channel['channel_title']}",
+                url=channel['invite_link']
+            ))
+        
         keyboard.add(types.InlineKeyboardButton(
-            f"📢 {channel['channel_title']}",
-            url=channel['invite_link']
+            "✅ Проверить подписку",
+            callback_data="check_subscription"
         ))
-    
-    keyboard.add(types.InlineKeyboardButton(
-        "✅ Проверить подписку",
-        callback_data="check_subscription"
-    ))
-    
-    return keyboard
+        
+        return keyboard
+    except Exception as e:
+        logger.error(f"Ошибка создания клавиатуры подписки: {e}")
+        return types.InlineKeyboardMarkup()
 
 def get_message_reply_keyboard(message_id, lang='ru'):
     """Клавиатура ответа на сообщение"""
-    keyboard = types.InlineKeyboardMarkup(row_width=2)
-    keyboard.add(
-        types.InlineKeyboardButton("💌 Ответить", callback_data=f"reply_{message_id}"),
-        types.InlineKeyboardButton("🚫 Игнор", callback_data="ignore")
-    )
-    return keyboard
+    try:
+        keyboard = types.InlineKeyboardMarkup(row_width=2)
+        keyboard.add(
+            types.InlineKeyboardButton("💌 Ответить", callback_data=f"reply_{message_id}"),
+            types.InlineKeyboardButton("🚫 Игнор", callback_data="ignore")
+        )
+        return keyboard
+    except Exception as e:
+        logger.error(f"Ошибка создания клавиатуры ответа: {e}")
+        return types.InlineKeyboardMarkup()
 
 # ==================== ОСНОВНЫЕ ОБРАБОТЧИКИ ====================
 @bot.message_handler(commands=['start'])
 def start_command(message):
     """Обработчик команды /start"""
-    user_id = message.from_user.id
-    username = message.from_user.username or ""
-    first_name = message.from_user.first_name or ""
-    
-    logger.info(f"Start from user_id={user_id}")
-    
-    if db.is_user_blocked(user_id):
-        bot.send_message(user_id, get_text('ru', 'blocked'))
-        return
-    
-    db.register_user(user_id, username, first_name)
-    db.update_last_active(user_id)
-    
-    session_timestamps[user_id] = time.time()
-    
-    args = message.text.split()
-    
-    if len(args) > 1 and args[1].isdigit():
-        target_id = int(args[1])
-        handle_link_click(user_id, target_id)
-        return
-    
-    user = db.get_user(user_id)
-    lang = user['language'] if user else admin_settings['language']
-    link = generate_link(user_id)
-    
-    # Проверка подписки на каналы
-    required_channels = db.get_required_channels()
-    if required_channels:
-        all_subscribed = True
-        for channel in required_channels:
-            subscribed = db.check_user_subscription(user_id, channel['channel_id'])
-            if not subscribed:
-                all_subscribed = False
-                break
+    try:
+        user_id = message.from_user.id
+        username = message.from_user.username or ""
+        first_name = message.from_user.first_name or ""
         
-        if not all_subscribed:
-            channels_list = "\n".join([f"• {ch['channel_title']} - {ch['channel_link']}" for ch in required_channels])
-            bot.send_message(
-                user_id,
-                get_text(lang, 'subscription_required', channels_list=channels_list),
-                reply_markup=subscription_check_keyboard(user_id, lang)
-            )
+        logger.info(f"Start from user_id={user_id}")
+        
+        if db.is_user_blocked(user_id):
+            bot.send_message(user_id, get_text('ru', 'blocked'))
             return
-    
-    bot.send_message(user_id, get_text(lang, 'start', link=link), 
-                    reply_markup=main_keyboard(user_id == ADMIN_ID, lang))
+        
+        db.register_user(user_id, username, first_name)
+        db.update_last_active(user_id)
+        
+        session_timestamps[user_id] = time.time()
+        
+        args = message.text.split()
+        
+        if len(args) > 1 and args[1].isdigit():
+            target_id = int(args[1])
+            handle_link_click(user_id, target_id)
+            return
+        
+        user = db.get_user(user_id)
+        lang = user['language'] if user else admin_settings['language']
+        link = generate_link(user_id)
+        
+        # Проверка подписки на каналы
+        required_channels = db.get_required_channels()
+        if required_channels:
+            all_subscribed = True
+            for channel in required_channels:
+                subscribed = db.check_user_subscription(user_id, channel['channel_id'])
+                if not subscribed:
+                    all_subscribed = False
+                    break
+            
+            if not all_subscribed:
+                channels_list = "\n".join([f"• {ch['channel_title']} - {ch['channel_link']}" for ch in required_channels])
+                bot.send_message(
+                    user_id,
+                    get_text(lang, 'subscription_required', channels_list=channels_list),
+                    reply_markup=subscription_check_keyboard(user_id, lang)
+                )
+                return
+        
+        bot.send_message(user_id, get_text(lang, 'start', link=link), 
+                        reply_markup=main_keyboard(user_id == ADMIN_ID, lang))
+    except Exception as e:
+        logger.error(f"Ошибка в start_command: {e}")
 
 @bot.callback_query_handler(func=lambda call: True)
 def handle_callback(call):
     """Обработчик callback запросов"""
-    user_id = call.from_user.id
-    data = call.data
-    
     try:
+        user_id = call.from_user.id
+        data = call.data
+        
         user = db.get_user(user_id)
         lang = user['language'] if user else admin_settings['language']
         
@@ -2558,7 +2740,7 @@ def handle_callback(call):
                                        total_words=total_words,
                                        categories_count=len(categories),
                                        blocks_today=0,
-                                       categories_list=", ".join(categories),
+                                       categories_list=', '.join(categories),
                                        current_page=1,
                                        total_pages=(total_words + 9) // 10)}"
                 
@@ -2586,7 +2768,7 @@ def handle_callback(call):
                            total_words=total_words,
                            categories_count=len(categories),
                            blocks_today=0,
-                           categories_list=", ".join(categories),
+                           categories_list=', '.join(categories),
                            current_page=page + 1,
                            total_pages=(total_words + 9) // 10)
             
@@ -2612,7 +2794,7 @@ def handle_callback(call):
                            total_words=total_words,
                            categories_count=len(categories),
                            blocks_today=0,
-                           categories_list=", ".join(categories),
+                           categories_list=', '.join(categories),
                            current_page=1,
                            total_pages=(total_words + 9) // 10)
             
@@ -2627,261 +2809,294 @@ def handle_callback(call):
         
         else:
             bot.answer_callback_query(call.id, "⚠️ Unknown command")
-        
+    
     except Exception as e:
         logger.error(f"Callback error: {e}")
         bot.answer_callback_query(call.id, "❌ Error")
 
 def handle_link_click(clicker_id, target_id):
     """Обработчик перехода по ссылке"""
-    target_user = db.get_user(target_id)
-    if not target_user:
-        bot.send_message(clicker_id, get_text('ru', 'user_not_found'))
-        return
-    
-    if target_user['receive_messages'] == 0:
-        bot.send_message(clicker_id, get_text('ru', 'messages_disabled'))
-        return
-    
-    user_sessions[clicker_id] = {
-        'target_id': target_id,
-        'mode': 'anonymous'
-    }
-    db.increment_stat(target_id, 'link_clicks')
-    
-    user = db.get_user(clicker_id)
-    lang = user['language'] if user else admin_settings['language']
-    
-    bot.send_message(
-        clicker_id,
-        get_text(lang, 'start_ref'),
-        reply_markup=cancel_keyboard(lang)
-    )
+    try:
+        target_user = db.get_user(target_id)
+        if not target_user:
+            bot.send_message(clicker_id, get_text('ru', 'user_not_found'))
+            return
+        
+        if target_user['receive_messages'] == 0:
+            bot.send_message(clicker_id, get_text('ru', 'messages_disabled'))
+            return
+        
+        user_sessions[clicker_id] = {
+            'target_id': target_id,
+            'mode': 'anonymous'
+        }
+        db.increment_stat(target_id, 'link_clicks')
+        
+        user = db.get_user(clicker_id)
+        lang = user['language'] if user else admin_settings['language']
+        
+        bot.send_message(
+            clicker_id,
+            get_text(lang, 'start_ref'),
+            reply_markup=cancel_keyboard(lang)
+        )
+    except Exception as e:
+        logger.error(f"Ошибка обработки перехода по ссылке: {e}")
 
 # ==================== ОБРАБОТЧИКИ АДМИН-КОМАНД ====================
 @bot.message_handler(func=lambda message: message.text == get_text('ru', 'btn_admin') and message.from_user.id == ADMIN_ID)
 def admin_command(message):
     """Обработчик кнопки Админ"""
-    user_id = message.from_user.id
-    user = db.get_user(user_id)
-    lang = user['language'] if user else admin_settings['language']
-    
-    bot.send_message(user_id, get_text(lang, 'admin_panel'), reply_markup=admin_keyboard(lang))
+    try:
+        user_id = message.from_user.id
+        user = db.get_user(user_id)
+        lang = user['language'] if user else admin_settings['language']
+        
+        bot.send_message(user_id, get_text(lang, 'admin_panel'), reply_markup=admin_keyboard(lang))
+    except Exception as e:
+        logger.error(f"Ошибка команды админа: {e}")
 
 @bot.message_handler(func=lambda message: message.text == get_text('ru', 'btn_admin_moderation') and message.from_user.id == ADMIN_ID)
 def moderation_command(message):
     """Обработчик кнопки Модерация"""
-    user_id = message.from_user.id
-    lang = db.get_user(user_id)['language'] if db.get_user(user_id) else admin_settings['language']
-    
-    words = db.get_banned_words()
-    total_words = db.get_banned_words_count()
-    categories = db.get_banned_words_categories()
-    
-    text = get_text(lang, 'banned_words_list',
-                   total_words=total_words,
-                   categories_count=len(categories),
-                   blocks_today=0,
-                   categories_list=", ".join(categories),
-                   current_page=1,
-                   total_pages=(total_words + 9) // 10)
-    
-    bot.send_message(user_id, text, reply_markup=moderation_keyboard(0))
+    try:
+        user_id = message.from_user.id
+        lang = db.get_user(user_id)['language'] if db.get_user(user_id) else admin_settings['language']
+        
+        words = db.get_banned_words()
+        total_words = db.get_banned_words_count()
+        categories = db.get_banned_words_categories()
+        
+        text = get_text(lang, 'banned_words_list',
+                       total_words=total_words,
+                       categories_count=len(categories),
+                       blocks_today=0,
+                       categories_list=', '.join(categories),
+                       current_page=1,
+                       total_pages=(total_words + 9) // 10)
+        
+        bot.send_message(user_id, text, reply_markup=moderation_keyboard(0))
+    except Exception as e:
+        logger.error(f"Ошибка команды модерации: {e}")
 
 @bot.message_handler(func=lambda message: message.text == get_text('ru', 'btn_admin_message_user') and message.from_user.id == ADMIN_ID)
 def message_user_command(message):
     """Обработчик кнопки Написать пользователю"""
-    user_id = message.from_user.id
-    lang = db.get_user(user_id)['language'] if db.get_user(user_id) else admin_settings['language']
-    
-    admin_modes[user_id] = 'message_user'
-    bot.send_message(user_id, get_text(lang, 'admin_message_user'), reply_markup=cancel_keyboard(lang))
+    try:
+        user_id = message.from_user.id
+        lang = db.get_user(user_id)['language'] if db.get_user(user_id) else admin_settings['language']
+        
+        admin_modes[user_id] = 'message_user'
+        bot.send_message(user_id, get_text(lang, 'admin_message_user'), reply_markup=cancel_keyboard(lang))
+    except Exception as e:
+        logger.error(f"Ошибка команды написать пользователю: {e}")
 
 @bot.message_handler(func=lambda message: message.text == get_text('ru', 'btn_admin_footer') and message.from_user.id == ADMIN_ID)
 def footer_command(message):
     """Обработчик кнопки Подпись"""
-    user_id = message.from_user.id
-    lang = db.get_user(user_id)['language'] if db.get_user(user_id) else admin_settings['language']
-    
-    enabled = db.get_bot_setting('footer_enabled') == '1'
-    footer_text = db.get_bot_setting('footer_text', '🔗 Подпишись: @your_channel')
-    footer_type = db.get_bot_setting('footer_type', 'text')
-    
-    text = get_text(lang, 'footer_settings')
-    text += f"\n\n<b>📊 ТЕКУЩИЕ НАСТРОЙКИ:</b>"
-    text += f"\n├ Статус: {'✅ ВКЛЮЧЕН' if enabled else '❌ ВЫКЛЮЧЕН'}"
-    text += f"\n├ Текст: {footer_text}"
-    text += f"\n└ Тип: {footer_type}"
-    
-    keyboard = types.InlineKeyboardMarkup()
-    
-    if enabled:
-        keyboard.add(types.InlineKeyboardButton("❌ Выключить подпись", callback_data="footer_disable"))
-    else:
-        keyboard.add(types.InlineKeyboardButton("✅ Включить подпись", callback_data="footer_enable"))
-    
-    keyboard.add(
-        types.InlineKeyboardButton("✏️ Изменить текст", callback_data="footer_edit_text"),
-        types.InlineKeyboardButton("🔧 Изменить тип", callback_data="footer_edit_type")
-    )
-    
-    keyboard.add(types.InlineKeyboardButton("👁️ Предпросмотр", callback_data="footer_preview"))
-    keyboard.add(types.InlineKeyboardButton("⬅️ Назад", callback_data="admin_back"))
-    
-    bot.send_message(user_id, text, reply_markup=keyboard)
+    try:
+        user_id = message.from_user.id
+        lang = db.get_user(user_id)['language'] if db.get_user(user_id) else admin_settings['language']
+        
+        enabled = db.get_bot_setting('footer_enabled') == '1'
+        footer_text = db.get_bot_setting('footer_text', '🔗 Подпишись: @your_channel')
+        footer_type = db.get_bot_setting('footer_type', 'text')
+        
+        text = get_text(lang, 'footer_settings')
+        text += f"\n\n<b>📊 ТЕКУЩИЕ НАСТРОЙКИ:</b>"
+        text += f"\n├ Статус: {'✅ ВКЛЮЧЕН' if enabled else '❌ ВЫКЛЮЧЕН'}"
+        text += f"\n├ Текст: {footer_text}"
+        text += f"\n└ Тип: {footer_type}"
+        
+        keyboard = types.InlineKeyboardMarkup()
+        
+        if enabled:
+            keyboard.add(types.InlineKeyboardButton("❌ Выключить подпись", callback_data="footer_disable"))
+        else:
+            keyboard.add(types.InlineKeyboardButton("✅ Включить подпись", callback_data="footer_enable"))
+        
+        keyboard.add(
+            types.InlineKeyboardButton("✏️ Изменить текст", callback_data="footer_edit_text"),
+            types.InlineKeyboardButton("🔧 Изменить тип", callback_data="footer_edit_type")
+        )
+        
+        keyboard.add(types.InlineKeyboardButton("👁️ Предпросмотр", callback_data="footer_preview"))
+        keyboard.add(types.InlineKeyboardButton("⬅️ Назад", callback_data="admin_back"))
+        
+        bot.send_message(user_id, text, reply_markup=keyboard)
+    except Exception as e:
+        logger.error(f"Ошибка команды футера: {e}")
 
 @bot.message_handler(func=lambda message: message.text == get_text('ru', 'btn_admin_subscription') and message.from_user.id == ADMIN_ID)
 def subscription_command(message):
     """Обработчик кнопки Подписка"""
-    user_id = message.from_user.id
-    lang = db.get_user(user_id)['language'] if db.get_user(user_id) else admin_settings['language']
-    
-    channels = db.get_required_channels()
-    
-    text = f"""🔒 <b>УПРАВЛЕНИЕ ПОДПИСКОЙ НА КАНАЛЫ</b>
+    try:
+        user_id = message.from_user.id
+        lang = db.get_user(user_id)['language'] if db.get_user(user_id) else admin_settings['language']
+        
+        channels = db.get_required_channels()
+        
+        text = f"""🔒 <b>УПРАВЛЕНИЕ ПОДПИСКОЙ НА КАНАЛЫ</b>
 
 <i>Настройте каналы, на которые пользователи должны подписаться.</i>
 
 <b>📋 ТЕКУЩИЕ КАНАЛЫ:</b>"""
-    
-    if channels:
-        for i, channel in enumerate(channels, 1):
-            text += f"\n{i}. {channel['channel_title']} ({channel['channel_id']})"
-    else:
-        text += "\n└ ❌ Каналы не настроены"
-    
-    text += f"\n\n<b>👥 ВСЕГО КАНАЛОВ:</b> {len(channels)}"
-    
-    keyboard = types.InlineKeyboardMarkup()
-    keyboard.add(
-        types.InlineKeyboardButton("➕ Добавить канал", callback_data="subscription_add"),
-        types.InlineKeyboardButton("🗑️ Удалить канал", callback_data="subscription_remove")
-    )
-    
-    if channels:
+        
+        if channels:
+            for i, channel in enumerate(channels, 1):
+                text += f"\n{i}. {channel['channel_title']} ({channel['channel_id']})"
+        else:
+            text += "\n└ ❌ Каналы не настроены"
+        
+        text += f"\n\n<b>👥 ВСЕГО КАНАЛОВ:</b> {len(channels)}"
+        
+        keyboard = types.InlineKeyboardMarkup()
         keyboard.add(
-            types.InlineKeyboardButton("📊 Статистика подписок", callback_data="subscription_stats"),
-            types.InlineKeyboardButton("🔄 Обновить список", callback_data="subscription_refresh")
+            types.InlineKeyboardButton("➕ Добавить канал", callback_data="subscription_add"),
+            types.InlineKeyboardButton("🗑️ Удалить канал", callback_data="subscription_remove")
         )
-    
-    keyboard.add(types.InlineKeyboardButton("⬅️ Назад", callback_data="admin_back"))
-    
-    bot.send_message(user_id, text, reply_markup=keyboard)
+        
+        if channels:
+            keyboard.add(
+                types.InlineKeyboardButton("📊 Статистика подписок", callback_data="subscription_stats"),
+                types.InlineKeyboardButton("🔄 Обновить список", callback_data="subscription_refresh")
+            )
+        
+        keyboard.add(types.InlineKeyboardButton("⬅️ Назад", callback_data="admin_back"))
+        
+        bot.send_message(user_id, text, reply_markup=keyboard)
+    except Exception as e:
+        logger.error(f"Ошибка команды подписки: {e}")
 
 @bot.message_handler(func=lambda message: message.text == get_text('ru', 'btn_admin_buttons') and message.from_user.id == ADMIN_ID)
 def custom_buttons_command(message):
     """Обработчик кнопки Кнопки"""
-    user_id = message.from_user.id
-    lang = db.get_user(user_id)['language'] if db.get_user(user_id) else admin_settings['language']
-    
-    buttons = db.get_custom_buttons()
-    
-    text = f"""🔘 <b>КАСТОМНЫЕ КНОПКИ</b>
+    try:
+        user_id = message.from_user.id
+        lang = db.get_user(user_id)['language'] if db.get_user(user_id) else admin_settings['language']
+        
+        buttons = db.get_custom_buttons()
+        
+        text = f"""🔘 <b>КАСТОМНЫЕ КНОПКИ</b>
 
 <i>Управление дополнительными кнопками в главном меню.</i>
 
 <b>📋 ТЕКУЩИЕ КНОПКИ:</b>"""
-    
-    if buttons:
-        for i, button in enumerate(buttons, 1):
-            text += f"\n{i}. {button['button_icon'] if button['button_icon'] else '📌'} {button['button_text']}"
-            text += f"\n   └ Тип: {button['button_type']}, Действие: {button['button_action'][:30]}..."
-    else:
-        text += "\n└ ❌ Кнопки не настроены"
-    
-    text += f"\n\n<b>🔢 ВСЕГО КНОПОК:</b> {len(buttons)}"
-    
-    keyboard = types.InlineKeyboardMarkup()
-    keyboard.add(
-        types.InlineKeyboardButton("➕ Добавить кнопку", callback_data="button_add"),
-        types.InlineKeyboardButton("✏️ Редактировать", callback_data="button_edit")
-    )
-    
-    if buttons:
+        
+        if buttons:
+            for i, button in enumerate(buttons, 1):
+                text += f"\n{i}. {button['button_icon'] if button['button_icon'] else '📌'} {button['button_text']}"
+                text += f"\n   └ Тип: {button['button_type']}, Действие: {button['button_action'][:30]}..."
+        else:
+            text += "\n└ ❌ Кнопки не настроены"
+        
+        text += f"\n\n<b>🔢 ВСЕГО КНОПОК:</b> {len(buttons)}"
+        
+        keyboard = types.InlineKeyboardMarkup()
         keyboard.add(
-            types.InlineKeyboardButton("🗑️ Удалить кнопку", callback_data="button_delete"),
-            types.InlineKeyboardButton("🔄 Изменить порядок", callback_data="button_reorder")
+            types.InlineKeyboardButton("➕ Добавить кнопку", callback_data="button_add"),
+            types.InlineKeyboardButton("✏️ Редактировать", callback_data="button_edit")
         )
-    
-    keyboard.add(types.InlineKeyboardButton("⬅️ Назад", callback_data="admin_back"))
-    
-    bot.send_message(user_id, text, reply_markup=keyboard)
+        
+        if buttons:
+            keyboard.add(
+                types.InlineKeyboardButton("🗑️ Удалить кнопку", callback_data="button_delete"),
+                types.InlineKeyboardButton("🔄 Изменить порядок", callback_data="button_reorder")
+            )
+        
+        keyboard.add(types.InlineKeyboardButton("⬅️ Назад", callback_data="admin_back"))
+        
+        bot.send_message(user_id, text, reply_markup=keyboard)
+    except Exception as e:
+        logger.error(f"Ошибка команды кнопок: {e}")
 
 @bot.message_handler(func=lambda message: message.text == get_text('ru', 'btn_admin_broadcast_button') and message.from_user.id == ADMIN_ID)
 def broadcast_with_button_command(message):
     """Обработчик кнопки Рассылка с кнопкой"""
-    user_id = message.from_user.id
-    lang = db.get_user(user_id)['language'] if db.get_user(user_id) else admin_settings['language']
-    
-    admin_modes[user_id] = 'broadcast_with_button'
-    bot.send_message(user_id, get_text(lang, 'broadcast_with_button'), reply_markup=cancel_keyboard(lang))
+    try:
+        user_id = message.from_user.id
+        lang = db.get_user(user_id)['language'] if db.get_user(user_id) else admin_settings['language']
+        
+        admin_modes[user_id] = 'broadcast_with_button'
+        bot.send_message(user_id, get_text(lang, 'broadcast_with_button'), reply_markup=cancel_keyboard(lang))
+    except Exception as e:
+        logger.error(f"Ошибка команды рассылки с кнопкой: {e}")
 
 # ==================== ОСНОВНОЙ ОБРАБОТЧИК СООБЩЕНИЙ ====================
 @bot.message_handler(content_types=['text', 'photo', 'video', 'audio', 'voice', 'document', 'sticker'])
 def handle_message(message):
     """Основной обработчик сообщений"""
-    user_id = message.from_user.id
-    message_type = message.content_type
-    text = message.text or message.caption or ""
-    
-    if message.text and message.text.startswith('/'):
-        return
-    
-    if db.is_user_blocked(user_id):
-        bot.send_message(user_id, get_text('ru', 'blocked'))
-        return
-    
-    allowed, wait_time = check_rate_limit(user_id)
-    if not allowed:
-        user = db.get_user(user_id)
-        lang = user['language'] if user else admin_settings['language']
-        bot.send_message(user_id, f"⏳ Слишком много запросов. Подождите {wait_time} секунд.")
-        return
-    
-    if not check_session_timeout(user_id):
-        user = db.get_user(user_id)
-        lang = user['language'] if user else admin_settings['language']
-        bot.send_message(user_id, "⏳ Сессия истекла. Возвращаемся в главное меню.")
-        bot.send_message(user_id, get_text(lang, 'start', link=generate_link(user_id)), 
-                        reply_markup=main_keyboard(user_id == ADMIN_ID, lang))
-        return
-    
-    db.update_last_active(user_id)
-    user = db.get_user(user_id)
-    lang = user['language'] if user else admin_settings['language']
-    
-    if text == get_text(lang, 'btn_cancel'):
-        clear_user_state(user_id)
-        bot.send_message(user_id, get_text(lang, 'canceled'), 
-                        reply_markup=main_keyboard(user_id == ADMIN_ID, lang))
-        return
-    
-    # Обработка режимов администратора
-    if user_id == ADMIN_ID and user_id in admin_modes:
-        mode = admin_modes[user_id]
+    try:
+        user_id = message.from_user.id
+        message_type = message.content_type
+        text = message.text or message.caption or ""
         
-        if mode == 'add_banned_word' and message_type == 'text':
-            if ':' in text:
-                parts = text.split(':', 1)
-                word = parts[0].strip().lower()
-                category = parts[1].strip().lower()
-                
-                if word and category:
-                    if db.add_banned_word(word, category, user_id):
-                        bot.send_message(
-                            user_id,
-                            get_text(lang, 'word_added',
-                                   word=word,
-                                   category=category,
-                                   admin_id=user_id,
-                                   time=datetime.now().strftime('%d.%m.%Y %H:%M')),
-                            reply_markup=moderation_keyboard(0)
-                        )
+        if message.text and message.text.startswith('/'):
+            return
+        
+        if db.is_user_blocked(user_id):
+            bot.send_message(user_id, get_text('ru', 'blocked'))
+            return
+        
+        allowed, wait_time = check_rate_limit(user_id)
+        if not allowed:
+            user = db.get_user(user_id)
+            lang = user['language'] if user else admin_settings['language']
+            bot.send_message(user_id, f"⏳ Слишком много запросов. Подождите {wait_time} секунд.")
+            return
+        
+        if not check_session_timeout(user_id):
+            user = db.get_user(user_id)
+            lang = user['language'] if user else admin_settings['language']
+            bot.send_message(user_id, "⏳ Сессия истекла. Возвращаемся в главное меню.")
+            bot.send_message(user_id, get_text(lang, 'start', link=generate_link(user_id)), 
+                            reply_markup=main_keyboard(user_id == ADMIN_ID, lang))
+            return
+        
+        db.update_last_active(user_id)
+        user = db.get_user(user_id)
+        lang = user['language'] if user else admin_settings['language']
+        
+        if text == get_text(lang, 'btn_cancel'):
+            clear_user_state(user_id)
+            bot.send_message(user_id, get_text(lang, 'canceled'), 
+                            reply_markup=main_keyboard(user_id == ADMIN_ID, lang))
+            return
+        
+        # Обработка режимов администратора
+        if user_id == ADMIN_ID and user_id in admin_modes:
+            mode = admin_modes[user_id]
+            
+            if mode == 'add_banned_word' and message_type == 'text':
+                if ':' in text:
+                    parts = text.split(':', 1)
+                    word = parts[0].strip().lower()
+                    category = parts[1].strip().lower()
+                    
+                    if word and category:
+                        if db.add_banned_word(word, category, user_id):
+                            bot.send_message(
+                                user_id,
+                                get_text(lang, 'word_added',
+                                       word=word,
+                                       category=category,
+                                       admin_id=user_id,
+                                       time=datetime.now().strftime('%d.%m.%Y %H:%M')),
+                                reply_markup=moderation_keyboard(0)
+                            )
+                        else:
+                            bot.send_message(
+                                user_id,
+                                "❌ <b>Ошибка добавления</b>\n\n"
+                                "<i>Слово уже есть в списке или произошла ошибка.</i>",
+                                reply_markup=moderation_keyboard(0)
+                            )
                     else:
                         bot.send_message(
                             user_id,
-                            "❌ <b>Ошибка добавления</b>\n\n"
-                            "<i>Слово уже есть в списке или произошла ошибка.</i>",
+                            "❌ <b>Неверный формат</b>\n\n"
+                            "<i>Используйте формат: слово:категория</i>\n"
+                            "<i>Пример: скам:мошенничество</i>",
                             reply_markup=moderation_keyboard(0)
                         )
                 else:
@@ -2892,268 +3107,273 @@ def handle_message(message):
                         "<i>Пример: скам:мошенничество</i>",
                         reply_markup=moderation_keyboard(0)
                     )
-            else:
-                bot.send_message(
-                    user_id,
-                    "❌ <b>Неверный формат</b>\n\n"
-                    "<i>Используйте формат: слово:категория</i>\n"
-                    "<i>Пример: скам:мошенничество</i>",
-                    reply_markup=moderation_keyboard(0)
-                )
-            if user_id in admin_modes:
-                del admin_modes[user_id]
-            return
-        
-        elif mode == 'broadcast_with_button':
-            admin_modes[user_id] = {'mode': 'broadcast_button_text', 'message': text}
-            bot.send_message(user_id, "📝 Теперь введите текст для кнопки:")
-            return
-        
-        elif isinstance(mode, dict) and mode.get('mode') == 'broadcast_button_text':
-            button_text = text
-            admin_modes[user_id] = {'mode': 'broadcast_button_url', 'message': mode['message'], 'button_text': button_text}
-            bot.send_message(user_id, "🔗 Теперь введите URL для кнопки:")
-            return
-        
-        elif isinstance(mode, dict) and mode.get('mode') == 'broadcast_button_url':
-            button_url = text
-            message_text = mode['message']
-            button_text = mode['button_text']
-            
-            users = db.get_all_users_list()
-            total = len(users)
-            
-            if total == 0:
-                bot.send_message(user_id, "❌ Пользователи не найдены")
                 if user_id in admin_modes:
                     del admin_modes[user_id]
                 return
             
-            keyboard = types.InlineKeyboardMarkup()
-            keyboard.add(types.InlineKeyboardButton(button_text, url=button_url))
+            elif mode == 'broadcast_with_button':
+                admin_modes[user_id] = {'mode': 'broadcast_button_text', 'message': text}
+                bot.send_message(user_id, "📝 Теперь введите текст для кнопки:")
+                return
             
-            sent = 0
-            failed = 0
-            blocked = 0
+            elif isinstance(mode, dict) and mode.get('mode') == 'broadcast_button_text':
+                button_text = text
+                admin_modes[user_id] = {'mode': 'broadcast_button_url', 'message': mode['message'], 'button_text': button_text}
+                bot.send_message(user_id, "🔗 Теперь введите URL для кнопки:")
+                return
             
-            progress_msg = bot.send_message(user_id, f"📢 Рассылка с кнопкой начата\n\nВсего пользователей: {total}\n⏳ Отправка...")
-            
-            for target_user_id in users:
-                try:
-                    if db.is_user_blocked(target_user_id):
-                        blocked += 1
-                        continue
-                    
-                    bot.send_message(target_user_id, message_text, parse_mode="HTML", reply_markup=keyboard)
-                    sent += 1
-                    time.sleep(0.05)
-                except Exception as e:
-                    logger.error(f"Ошибка рассылки с кнопкой: {e}")
-                    failed += 1
-            
-            bot.edit_message_text(
-                chat_id=user_id,
-                message_id=progress_msg.message_id,
-                text=f"✅ <b>Рассылка с кнопкой завершена</b>\n\n📊 <b>Результаты:</b>\n├ Всего пользователей: {total}\n├ Успешно отправлено: {sent}\n├ Не удалось отправить: {failed}\n└ Заблокировано ботом: {blocked}"
-            )
-            
-            if user_id in admin_modes:
-                del admin_modes[user_id]
-            return
-        
-        elif mode == 'message_user':
-            # Определяем пользователя для отправки сообщения
-            if message_type == 'text':
-                # Проверяем, является ли ввод ID пользователя
-                if text.isdigit():
-                    target_user_id = int(text)
-                    target_user = db.get_user(target_user_id)
-                    
-                    if target_user:
-                        admin_modes[user_id] = {'mode': 'message_user_text', 'target_user_id': target_user_id}
-                        bot.send_message(user_id, f"✅ Пользователь найден!\n👤 Имя: {target_user['first_name']}\n✍️ Теперь введите текст сообщения для отправки:")
-                    else:
-                        bot.send_message(user_id, "❌ Пользователь с таким ID не найден.")
-                else:
-                    # Проверяем username
-                    if text.startswith('@'):
-                        username = text[1:]
-                    else:
-                        username = text
-                    
-                    target_user = db.get_user_by_username(username)
-                    if target_user:
-                        admin_modes[user_id] = {'mode': 'message_user_text', 'target_user_id': target_user['user_id']}
-                        bot.send_message(user_id, f"✅ Пользователь найден!\n👤 Имя: {target_user['first_name']}\n✍️ Теперь введите текст сообщения для отправки:")
-                    else:
-                        bot.send_message(user_id, "❌ Пользователь с таким username не найден.")
-            return
-        
-        elif isinstance(mode, dict) and mode.get('mode') == 'message_user_text':
-            # Отправка сообщения пользователю от имени администратора
-            target_user_id = mode['target_user_id']
-            message_text = text
-            
-            try:
-                target_user = db.get_user(target_user_id)
-                if not target_user:
-                    bot.send_message(user_id, "❌ Пользователь не найден")
+            elif isinstance(mode, dict) and mode.get('mode') == 'broadcast_button_url':
+                button_url = text
+                message_text = mode['message']
+                button_text = mode['button_text']
+                
+                users = db.get_all_users_list()
+                total = len(users)
+                
+                if total == 0:
+                    bot.send_message(user_id, "❌ Пользователи не найдены")
                     if user_id in admin_modes:
                         del admin_modes[user_id]
                     return
                 
-                # Отправляем сообщение от имени администратора
-                admin_message = f"""📩 <b>СООБЩЕНИЕ ОТ АДМИНИСТРАТОРА</b>
+                keyboard = types.InlineKeyboardMarkup()
+                keyboard.add(types.InlineKeyboardButton(button_text, url=button_url))
+                
+                sent = 0
+                failed = 0
+                blocked = 0
+                
+                progress_msg = bot.send_message(user_id, f"📢 Рассылка с кнопкой начата\n\nВсего пользователей: {total}\n⏳ Отправка...")
+                
+                for target_user_id in users:
+                    try:
+                        if db.is_user_blocked(target_user_id):
+                            blocked += 1
+                            continue
+                        
+                        bot.send_message(target_user_id, message_text, parse_mode="HTML", reply_markup=keyboard)
+                        sent += 1
+                        time.sleep(0.05)
+                    except Exception as e:
+                        logger.error(f"Ошибка рассылки с кнопкой: {e}")
+                        failed += 1
+                
+                bot.edit_message_text(
+                    chat_id=user_id,
+                    message_id=progress_msg.message_id,
+                    text=f"✅ <b>Рассылка с кнопкой завершена</b>\n\n📊 <b>Результаты:</b>\n├ Всего пользователей: {total}\n├ Успешно отправлено: {sent}\n├ Не удалось отправить: {failed}\n└ Заблокировано ботом: {blocked}"
+                )
+                
+                if user_id in admin_modes:
+                    del admin_modes[user_id]
+                return
+            
+            elif mode == 'message_user':
+                # Определяем пользователя для отправки сообщения
+                if message_type == 'text':
+                    # Проверяем, является ли ввод ID пользователя
+                    if text.isdigit():
+                        target_user_id = int(text)
+                        target_user = db.get_user(target_user_id)
+                        
+                        if target_user:
+                            admin_modes[user_id] = {'mode': 'message_user_text', 'target_user_id': target_user_id}
+                            bot.send_message(user_id, f"✅ Пользователь найден!\n👤 Имя: {target_user['first_name']}\n✍️ Теперь введите текст сообщения для отправки:")
+                        else:
+                            bot.send_message(user_id, "❌ Пользователь с таким ID не найден.")
+                    else:
+                        # Проверяем username
+                        if text.startswith('@'):
+                            username = text[1:]
+                        else:
+                            username = text
+                        
+                        target_user = db.get_user_by_username(username)
+                        if target_user:
+                            admin_modes[user_id] = {'mode': 'message_user_text', 'target_user_id': target_user['user_id']}
+                            bot.send_message(user_id, f"✅ Пользователь найден!\n👤 Имя: {target_user['first_name']}\n✍️ Теперь введите текст сообщения для отправки:")
+                        else:
+                            bot.send_message(user_id, "❌ Пользователь с таким username не найден.")
+                return
+            
+            elif isinstance(mode, dict) and mode.get('mode') == 'message_user_text':
+                # Отправка сообщения пользователю от имени администратора
+                target_user_id = mode['target_user_id']
+                message_text = text
+                
+                try:
+                    target_user = db.get_user(target_user_id)
+                    if not target_user:
+                        bot.send_message(user_id, "❌ Пользователь не найден")
+                        if user_id in admin_modes:
+                            del admin_modes[user_id]
+                        return
+                    
+                    # Отправляем сообщение от имени администратора
+                    admin_message = f"""📩 <b>СООБЩЕНИЕ ОТ АДМИНИСТРАТОРА</b>
 
 {message_text}
 
 <i>Это сообщение отправлено администратором бота.</i>"""
+                    
+                    bot.send_message(target_user_id, admin_message, parse_mode="HTML")
+                    
+                    bot.send_message(
+                        user_id,
+                        get_text(lang, 'admin_message_sent',
+                               user_info=f"{target_user['first_name']} (ID: {target_user_id})",
+                               message_preview=message_text[:100] + ('...' if len(message_text) > 100 else ''),
+                               time=datetime.now().strftime('%d.%m.%Y %H:%M')),
+                        reply_markup=admin_keyboard(lang)
+                    )
+                    
+                except ApiTelegramException as e:
+                    if e.error_code == 403:
+                        bot.send_message(user_id, "❌ Пользователь заблокировал бота")
+                    else:
+                        bot.send_message(user_id, f"❌ Ошибка отправки: {e}")
+                except Exception as e:
+                    bot.send_message(user_id, f"❌ Ошибка: {e}")
                 
-                bot.send_message(target_user_id, admin_message, parse_mode="HTML")
-                
-                bot.send_message(
-                    user_id,
-                    get_text(lang, 'admin_message_sent',
-                           user_info=f"{target_user['first_name']} (ID: {target_user_id})",
-                           message_preview=message_text[:100] + ('...' if len(message_text) > 100 else ''),
-                           time=datetime.now().strftime('%d.%m.%Y %H:%M')),
-                    reply_markup=admin_keyboard(lang)
-                )
-                
-            except ApiTelegramException as e:
-                if e.error_code == 403:
-                    bot.send_message(user_id, "❌ Пользователь заблокировал бота")
-                else:
-                    bot.send_message(user_id, f"❌ Ошибка отправки: {e}")
-            except Exception as e:
-                bot.send_message(user_id, f"❌ Ошибка: {e}")
-            
+                if user_id in admin_modes:
+                    del admin_modes[user_id]
+                return
+        
+        # Обработка обычных кнопок
+        if text == get_text(lang, 'btn_admin') and user_id == ADMIN_ID:
+            bot.send_message(user_id, get_text(lang, 'admin_panel'), 
+                            reply_markup=admin_keyboard(lang))
+            return
+        
+        if text == get_text(lang, 'btn_support'):
+            handle_support_request(message, lang)
+            return
+        
+        # Обработка анонимных сообщений
+        if user_id in user_sessions and user_sessions[user_id]['mode'] == 'anonymous':
+            target_id = user_sessions[user_id]['target_id']
+            send_anonymous_message(user_id, target_id, message, lang)
+            return
+        
+        # Обработка поддержки
+        if user_id in admin_modes and admin_modes[user_id] == 'support':
+            create_support_ticket(message, lang)
             if user_id in admin_modes:
                 del admin_modes[user_id]
             return
+        
+        # Обработка текстовых кнопок
+        if message_type == 'text':
+            handle_text_button(user_id, text, lang)
     
-    # Обработка обычных кнопок
-    if text == get_text(lang, 'btn_admin') and user_id == ADMIN_ID:
-        bot.send_message(user_id, get_text(lang, 'admin_panel'), 
-                        reply_markup=admin_keyboard(lang))
-        return
-    
-    if text == get_text(lang, 'btn_support'):
-        handle_support_request(message, lang)
-        return
-    
-    # Обработка анонимных сообщений
-    if user_id in user_sessions and user_sessions[user_id]['mode'] == 'anonymous':
-        target_id = user_sessions[user_id]['target_id']
-        send_anonymous_message(user_id, target_id, message, lang)
-        return
-    
-    # Обработка поддержки
-    if user_id in admin_modes and admin_modes[user_id] == 'support':
-        create_support_ticket(message, lang)
-        if user_id in admin_modes:
-            del admin_modes[user_id]
-        return
-    
-    # Обработка текстовых кнопок
-    if message_type == 'text':
-        handle_text_button(user_id, text, lang)
+    except Exception as e:
+        logger.error(f"Ошибка обработки сообщения: {e}")
 
 def clear_user_state(user_id):
     """Очистить состояние пользователя"""
-    if user_id in user_sessions:
-        del user_sessions[user_id]
-    if user_id in admin_modes:
-        del admin_modes[user_id]
+    try:
+        if user_id in user_sessions:
+            del user_sessions[user_id]
+        if user_id in admin_modes:
+            del admin_modes[user_id]
+    except Exception as e:
+        logger.error(f"Ошибка очистки состояния пользователя: {e}")
 
 def handle_text_button(user_id, text, lang):
     """Обработчик текстовых кнопок"""
-    is_admin = user_id == ADMIN_ID
+    try:
+        is_admin = user_id == ADMIN_ID
+        
+        if text == get_text(lang, 'btn_my_link'):
+            link = generate_link(user_id)
+            stats = db.get_user_messages_stats(user_id)
+            
+            footer = ""
+            if db.get_bot_setting('footer_enabled') == '1':
+                footer_text = db.get_bot_setting('footer_text', '')
+                footer_type = db.get_bot_setting('footer_type', 'text')
+                
+                if footer_text:
+                    if footer_type == 'hashtag':
+                        footer = f"\n\n{footer_text}"
+                    elif footer_type == 'mention':
+                        footer = f"\n\n{footer_text}"
+                    else:
+                        footer = f"\n\n{footer_text}"
+            
+            bot.send_message(user_id, get_text(lang, 'my_link', link=link, clicks=stats['link_clicks'], received=stats['messages_received']) + footer,
+                            reply_markup=main_keyboard(is_admin, lang))
+        
+        elif text == get_text(lang, 'btn_profile'):
+            show_profile(user_id, lang)
+        
+        elif text == get_text(lang, 'btn_qr'):
+            generate_qr_code(user_id, lang)
+        
+        elif text == get_text(lang, 'btn_help'):
+            show_help(user_id, lang)
+        
+        elif text == get_text(lang, 'btn_language'):
+            bot.send_message(user_id, get_text(lang, 'language'),
+                            reply_markup=language_keyboard())
+        
+        elif text == get_text(lang, 'btn_turn_on'):
+            db.set_receive_messages(user_id, True)
+            bot.send_message(user_id, get_text(lang, 'turn_on'),
+                            reply_markup=settings_keyboard(lang))
+        
+        elif text == get_text(lang, 'btn_turn_off'):
+            db.set_receive_messages(user_id, False)
+            bot.send_message(user_id, get_text(lang, 'turn_off'),
+                            reply_markup=settings_keyboard(lang))
+        
+        elif text == get_text(lang, 'btn_back'):
+            bot.send_message(user_id, get_text(lang, 'start', link=generate_link(user_id)),
+                            reply_markup=main_keyboard(is_admin, lang))
+        
+        elif is_admin:
+            handle_admin_command(user_id, text, lang)
     
-    if text == get_text(lang, 'btn_my_link'):
-        link = generate_link(user_id)
+    except Exception as e:
+        logger.error(f"Ошибка обработки текстовой кнопки: {e}")
+
+def show_profile(user_id, lang):
+    """Показать профиль пользователя"""
+    try:
+        user = db.get_user(user_id)
+        
+        if not user:
+            bot.send_message(user_id, "❌ Профиль не найден", 
+                            reply_markup=main_keyboard(user_id == ADMIN_ID, lang))
+            return
+        
         stats = db.get_user_messages_stats(user_id)
+        
+        receive_status = "✅ Включен" if user['receive_messages'] == 1 else "❌ Выключен"
+        username = f"@{user['username']}" if user['username'] else "❌ отсутствует"
+        language = "🇷🇺 Русский" if user['language'] == 'ru' else "🇺🇸 English"
         
         footer = ""
         if db.get_bot_setting('footer_enabled') == '1':
             footer_text = db.get_bot_setting('footer_text', '')
-            footer_type = db.get_bot_setting('footer_type', 'text')
-            
             if footer_text:
-                if footer_type == 'hashtag':
-                    footer = f"\n\n{footer_text}"
-                elif footer_type == 'mention':
-                    footer = f"\n\n{footer_text}"
-                else:
-                    footer = f"\n\n{footer_text}"
+                footer = f"\n\n{footer_text}"
         
-        bot.send_message(user_id, get_text(lang, 'my_link', link=link, clicks=stats['link_clicks'], received=stats['messages_received']) + footer,
-                        reply_markup=main_keyboard(is_admin, lang))
-    
-    elif text == get_text(lang, 'btn_profile'):
-        show_profile(user_id, lang)
-    
-    elif text == get_text(lang, 'btn_qr'):
-        generate_qr_code(user_id, lang)
-    
-    elif text == get_text(lang, 'btn_help'):
-        show_help(user_id, lang)
-    
-    elif text == get_text(lang, 'btn_language'):
-        bot.send_message(user_id, get_text(lang, 'language'),
-                        reply_markup=language_keyboard())
-    
-    elif text == get_text(lang, 'btn_turn_on'):
-        db.set_receive_messages(user_id, True)
-        bot.send_message(user_id, get_text(lang, 'turn_on'),
-                        reply_markup=settings_keyboard(lang))
-    
-    elif text == get_text(lang, 'btn_turn_off'):
-        db.set_receive_messages(user_id, False)
-        bot.send_message(user_id, get_text(lang, 'turn_off'),
-                        reply_markup=settings_keyboard(lang))
-    
-    elif text == get_text(lang, 'btn_back'):
-        bot.send_message(user_id, get_text(lang, 'start', link=generate_link(user_id)),
-                        reply_markup=main_keyboard(is_admin, lang))
-    
-    elif is_admin:
-        handle_admin_command(user_id, text, lang)
-
-def show_profile(user_id, lang):
-    """Показать профиль пользователя"""
-    user = db.get_user(user_id)
-    
-    if not user:
-        bot.send_message(user_id, "❌ Профиль не найден", 
+        bot.send_message(user_id, get_text(lang, 'profile',
+                                          user_id=user['user_id'],
+                                          first_name=user['first_name'],
+                                          username=username,
+                                          language=language,
+                                          registered=format_time(user['created_at'], lang),
+                                          last_active=format_time(user['last_active'], lang),
+                                          received=stats['messages_received'],
+                                          sent=stats['messages_sent'],
+                                          clicks=user['link_clicks'],
+                                          receive_status=receive_status,
+                                          link=generate_link(user_id)) + footer,
                         reply_markup=main_keyboard(user_id == ADMIN_ID, lang))
-        return
-    
-    stats = db.get_user_messages_stats(user_id)
-    
-    receive_status = "✅ Включен" if user['receive_messages'] == 1 else "❌ Выключен"
-    username = f"@{user['username']}" if user['username'] else "❌ отсутствует"
-    language = "🇷🇺 Русский" if user['language'] == 'ru' else "🇺🇸 English"
-    
-    footer = ""
-    if db.get_bot_setting('footer_enabled') == '1':
-        footer_text = db.get_bot_setting('footer_text', '')
-        if footer_text:
-            footer = f"\n\n{footer_text}"
-    
-    bot.send_message(user_id, get_text(lang, 'profile',
-                                      user_id=user['user_id'],
-                                      first_name=user['first_name'],
-                                      username=username,
-                                      language=language,
-                                      registered=format_time(user['created_at'], lang),
-                                      last_active=format_time(user['last_active'], lang),
-                                      received=stats['messages_received'],
-                                      sent=stats['messages_sent'],
-                                      clicks=user['link_clicks'],
-                                      receive_status=receive_status,
-                                      link=generate_link(user_id)) + footer,
-                    reply_markup=main_keyboard(user_id == ADMIN_ID, lang))
+    except Exception as e:
+        logger.error(f"Ошибка показа профиля: {e}")
 
 def send_anonymous_message(sender_id, receiver_id, message, lang):
     """Отправить анонимное сообщение"""
@@ -3215,8 +3435,9 @@ def send_anonymous_message(sender_id, receiver_id, message, lang):
         message_id = db.save_message(sender_id, receiver_id, message_type, 
                        text, file_id, file_unique_id, file_size, replied_to)
         
-        db.increment_stat(sender_id, 'messages_sent')
-        db.increment_stat(receiver_id, 'messages_received')
+        if message_id:
+            db.increment_stat(sender_id, 'messages_sent')
+            db.increment_stat(receiver_id, 'messages_received')
         
         receiver_lang = receiver['language'] if receiver else admin_settings['language']
         
@@ -3311,13 +3532,13 @@ def send_anonymous_message(sender_id, receiver_id, message, lang):
 
 def generate_qr_code(user_id, lang):
     """Сгенерировать QR-код"""
-    link = generate_link(user_id)
-    
-    if not link:
-        bot.send_message(user_id, "❌ Ошибка генерации ссылки")
-        return
-    
     try:
+        link = generate_link(user_id)
+        
+        if not link:
+            bot.send_message(user_id, "❌ Ошибка генерации ссылки")
+            return
+        
         qr = qrcode.QRCode(
             version=1,
             box_size=6,
@@ -3340,105 +3561,114 @@ def generate_qr_code(user_id, lang):
 
 def show_help(user_id, lang):
     """Показать помощь"""
-    bot.send_message(user_id, get_text(lang, 'help'), 
-                    reply_markup=main_keyboard(user_id == ADMIN_ID, lang))
+    try:
+        bot.send_message(user_id, get_text(lang, 'help'), 
+                        reply_markup=main_keyboard(user_id == ADMIN_ID, lang))
+    except Exception as e:
+        logger.error(f"Ошибка показа помощи: {e}")
 
 def handle_admin_command(admin_id, text, lang):
     """Обработчик команд администратора"""
-    if text == get_text(lang, 'btn_admin_stats'):
-        show_admin_stats(admin_id, lang)
-    
-    elif text == get_text(lang, 'btn_admin_broadcast'):
-        admin_modes[admin_id] = 'broadcast'
-        bot.send_message(admin_id, get_text(lang, 'broadcast_start'), reply_markup=cancel_keyboard(lang))
-    
-    elif text == get_text(lang, 'btn_admin_broadcast_button'):
-        broadcast_with_button_command(types.Message(
-            message_id=0,
-            date=0,
-            chat=types.Chat(id=admin_id, type='private'),
-            content_type='text',
-            options={},
-            json_string=''
-        ))
-    
-    elif text == get_text(lang, 'btn_admin_moderation'):
-        moderation_command(types.Message(
-            message_id=0,
-            date=0,
-            chat=types.Chat(id=admin_id, type='private'),
-            content_type='text',
-            options={},
-            json_string=''
-        ))
-    
-    elif text == get_text(lang, 'btn_admin_footer'):
-        footer_command(types.Message(
-            message_id=0,
-            date=0,
-            chat=types.Chat(id=admin_id, type='private'),
-            content_type='text',
-            options={},
-            json_string=''
-        ))
-    
-    elif text == get_text(lang, 'btn_admin_subscription'):
-        subscription_command(types.Message(
-            message_id=0,
-            date=0,
-            chat=types.Chat(id=admin_id, type='private'),
-            content_type='text',
-            options={},
-            json_string=''
-        ))
-    
-    elif text == get_text(lang, 'btn_admin_buttons'):
-        custom_buttons_command(types.Message(
-            message_id=0,
-            date=0,
-            chat=types.Chat(id=admin_id, type='private'),
-            content_type='text',
-            options={},
-            json_string=''
-        ))
-    
-    elif text == get_text(lang, 'btn_back'):
-        bot.send_message(admin_id, get_text(lang, 'admin_panel'), reply_markup=admin_keyboard(lang))
-    
-    elif admin_id in admin_modes and admin_modes[admin_id] == 'broadcast':
-        start_broadcast(admin_id, text, lang)
-        if admin_id in admin_modes:
-            del admin_modes[admin_id]
+    try:
+        if text == get_text(lang, 'btn_admin_stats'):
+            show_admin_stats(admin_id, lang)
+        
+        elif text == get_text(lang, 'btn_admin_broadcast'):
+            admin_modes[admin_id] = 'broadcast'
+            bot.send_message(admin_id, get_text(lang, 'broadcast_start'), reply_markup=cancel_keyboard(lang))
+        
+        elif text == get_text(lang, 'btn_admin_broadcast_button'):
+            broadcast_with_button_command(types.Message(
+                message_id=0,
+                date=0,
+                chat=types.Chat(id=admin_id, type='private'),
+                content_type='text',
+                options={},
+                json_string=''
+            ))
+        
+        elif text == get_text(lang, 'btn_admin_moderation'):
+            moderation_command(types.Message(
+                message_id=0,
+                date=0,
+                chat=types.Chat(id=admin_id, type='private'),
+                content_type='text',
+                options={},
+                json_string=''
+            ))
+        
+        elif text == get_text(lang, 'btn_admin_footer'):
+            footer_command(types.Message(
+                message_id=0,
+                date=0,
+                chat=types.Chat(id=admin_id, type='private'),
+                content_type='text',
+                options={},
+                json_string=''
+            ))
+        
+        elif text == get_text(lang, 'btn_admin_subscription'):
+            subscription_command(types.Message(
+                message_id=0,
+                date=0,
+                chat=types.Chat(id=admin_id, type='private'),
+                content_type='text',
+                options={},
+                json_string=''
+            ))
+        
+        elif text == get_text(lang, 'btn_admin_buttons'):
+            custom_buttons_command(types.Message(
+                message_id=0,
+                date=0,
+                chat=types.Chat(id=admin_id, type='private'),
+                content_type='text',
+                options={},
+                json_string=''
+            ))
+        
+        elif text == get_text(lang, 'btn_back'):
+            bot.send_message(admin_id, get_text(lang, 'admin_panel'), reply_markup=admin_keyboard(lang))
+        
+        elif admin_id in admin_modes and admin_modes[admin_id] == 'broadcast':
+            start_broadcast(admin_id, text, lang)
+            if admin_id in admin_modes:
+                del admin_modes[admin_id]
+    except Exception as e:
+        logger.error(f"Ошибка обработки админ команды: {e}")
 
 def show_admin_stats(admin_id, lang):
     """Показать статистику для админа"""
-    stats = db.get_admin_stats()
-    
-    stats_text = get_text(lang, 'admin_stats',
-                   total_users=stats['total_users'],
-                   today_active=stats['today_active'],
-                   new_users_24h=stats['new_users_24h'],
-                   blocked_users=stats['blocked_users'],
-                   premium_users=stats['premium_users'],
-                   total_messages=stats['total_messages'],
-                   messages_24h=stats['messages_24h'],
-                   delivered=stats['delivered'],
-                   blocked_messages=stats['blocked_messages'],
-                   avg_daily=stats['avg_daily'],
-                   active_week=stats['active_week'],
-                   messages_week=stats['messages_week'],
-                   conversion=stats['conversion'],
-                   retention=stats['retention'],
-                   open_tickets=stats['open_tickets'],
-                   solved_today=stats['solved_today'],
-                   avg_response_time=stats['avg_response_time'],
-                   db_size=stats['db_size'],
-                   uptime=stats['uptime'],
-                   cpu_load=stats['cpu_load'],
-                   memory_usage=stats['memory_usage'],
-                   last_update=stats['last_update'])
-    
-    bot.send_message(admin_id, stats_text, reply_markup=admin_keyboard(lang))
+    try:
+        stats = db.get_admin_stats()
+        
+        stats_text = get_text(lang, 'admin_stats',
+                       total_users=stats['total_users'],
+                       today_active=stats['today_active'],
+                       new_users_24h=stats['new_users_24h'],
+                       blocked_users=stats['blocked_users'],
+                       premium_users=stats['premium_users'],
+                       total_messages=stats['total_messages'],
+                       messages_24h=stats['messages_24h'],
+                       delivered=stats['delivered'],
+                       blocked_messages=stats['blocked_messages'],
+                       avg_daily=stats['avg_daily'],
+                       active_week=stats['active_week'],
+                       messages_week=stats['messages_week'],
+                       conversion=stats['conversion'],
+                       retention=stats['retention'],
+                       open_tickets=stats['open_tickets'],
+                       solved_today=stats['solved_today'],
+                       avg_response_time=stats['avg_response_time'],
+                       db_size=stats['db_size'],
+                       uptime=stats['uptime'],
+                       cpu_load=stats['cpu_load'],
+                       memory_usage=stats['memory_usage'],
+                       last_update=stats['last_update'])
+        
+        bot.send_message(admin_id, stats_text, reply_markup=admin_keyboard(lang))
+    except Exception as e:
+        logger.error(f"Ошибка показа статистики: {e}")
 
 def start_broadcast(admin_id, message_text, lang):
     """Запустить рассылку"""
@@ -3487,42 +3717,48 @@ def start_broadcast(admin_id, message_text, lang):
 
 def handle_support_request(message, lang):
     """Обработчик запроса в поддержку"""
-    user_id = message.from_user.id
-    admin_modes[user_id] = 'support'
-    bot.send_message(user_id, get_text(lang, 'support'), reply_markup=cancel_keyboard(lang))
+    try:
+        user_id = message.from_user.id
+        admin_modes[user_id] = 'support'
+        bot.send_message(user_id, get_text(lang, 'support'), reply_markup=cancel_keyboard(lang))
+    except Exception as e:
+        logger.error(f"Ошибка запроса поддержки: {e}")
 
 def create_support_ticket(message, lang):
     """Создать тикет поддержки"""
-    user_id = message.from_user.id
-    message_type = message.content_type
-    text = message.text or message.caption or ""
-    
-    if not text and message_type == 'text':
-        bot.send_message(user_id, "❌ Введите описание проблемы")
-        return
-    
-    ticket_id = db.create_support_ticket(user_id, text)
-    
-    bot.send_message(user_id, get_text(lang, 'support_sent', ticket_id=ticket_id),
-                    reply_markup=main_keyboard(user_id == ADMIN_ID, lang))
-    
-    # Уведомление администратора
     try:
-        user = db.get_user(user_id)
-        notification = f"""🆘 НОВЫЙ ТИКЕТ ПОДДЕРЖКИ
+        user_id = message.from_user.id
+        message_type = message.content_type
+        text = message.text or message.caption or ""
+        
+        if not text and message_type == 'text':
+            bot.send_message(user_id, "❌ Введите описание проблемы")
+            return
+        
+        ticket_id = db.create_support_ticket(user_id, text)
+        
+        bot.send_message(user_id, get_text(lang, 'support_sent', ticket_id=ticket_id),
+                        reply_markup=main_keyboard(user_id == ADMIN_ID, lang))
+        
+        # Уведомление администратора
+        try:
+            user = db.get_user(user_id)
+            notification = f"""🆘 НОВЫЙ ТИКЕТ ПОДДЕРЖКИ
 
 🎫 Тикет: #{ticket_id}
 👤 Пользователь: {user_id}
 ├ Имя: {user['first_name'] if user else '?'}
-└ Юзернейм: {f'@{user['username']}' if user and user['username'] else 'отсутствует'}
+└ Юзернейм: {f"@{user['username']}" if user and user['username'] else 'отсутствует'}
 
 💬 Сообщение: {text[:500]}{'...' if len(text) > 500 else ''}
 
 ⏰ Время: {format_time(int(time.time()), 'ru')}"""
-        
-        bot.send_message(ADMIN_ID, notification)
+            
+            bot.send_message(ADMIN_ID, notification)
+        except Exception as e:
+            logger.error(f"Ошибка уведомления админа: {e}")
     except Exception as e:
-        logger.error(f"Ошибка уведомления админа: {e}")
+        logger.error(f"Ошибка создания тикета: {e}")
 
 # ==================== FLASK ЭНДПОИНТЫ ====================
 @app.route('/webhook', methods=['POST'])
@@ -3567,12 +3803,13 @@ def monitor_bot():
     while True:
         try:
             # Проверка целостности базы данных
-            with db.get_connection() as conn:
-                c = conn.cursor()
-                c.execute('PRAGMA integrity_check')
-                result = c.fetchone()
-                if result[0] != 'ok':
-                    logger.warning(f"Проблема целостности БД: {result[0]}")
+            try:
+                with db.get_connection() as conn:
+                    c = conn.cursor()
+                    c.execute('PRAGMA integrity_check')
+                    result = c.fetchone()
+                    if result[0] != 'ok':
+                        logger.warning(f"Проблема целостности БД: {result[0]}")
             except Exception as e:
                 logger.error(f"Ошибка проверки БД: {e}")
             
