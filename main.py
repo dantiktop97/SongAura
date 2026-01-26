@@ -1,116 +1,84 @@
-import logging
-import sys
-import time
 import os
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
+import telebot
 from flask import Flask, request
-
-# Настройка логирования
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
-logger = logging.getLogger(__name__)
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 # Конфигурация
 TOKEN = '8388985383:AAHv9ZFslSAanH_465zonkNPp02SecqI-Ik'
-WEBHOOK_HOST = 'https://songaura.onrender.com'
+WEBHOOK_URL = 'https://songaura.onrender.com'
 PORT = 1000
 
-# Flask приложение
-flask_app = Flask(__name__)
-application = None
+# Создаем бота и Flask приложение
+bot = telebot.TeleBot(TOKEN)
+app = Flask(__name__)
+
+# Создаем инлайн-кнопки
+def create_keyboard():
+    keyboard = InlineKeyboardMarkup(row_width=2)
+    keyboard.add(
+        InlineKeyboardButton("👩 Девушка", callback_data='woman'),
+        InlineKeyboardButton("👨 Мужчина", callback_data='man')
+    )
+    return keyboard
 
 # Обработчик команды /start
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    keyboard = [
-        [
-            InlineKeyboardButton("👩 Девушка", callback_data='woman'),
-            InlineKeyboardButton("👨 Мужчина", callback_data='man')
-        ]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await update.message.reply_text(
+@bot.message_handler(commands=['start'])
+def send_welcome(message):
+    bot.send_message(
+        message.chat.id,
         "Привет! Выберите, кто вы:",
-        reply_markup=reply_markup
+        reply_markup=create_keyboard()
     )
 
 # Обработчик нажатий на кнопки
-async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    query = update.callback_query
-    await query.answer()
-    
-    if query.data == 'woman':
+@bot.callback_query_handler(func=lambda call: True)
+def handle_callback(call):
+    if call.data == 'woman':
         response = "ДЕВУШКИ ТУПЫЕ"
-    elif query.data == 'man':
+    elif call.data == 'man':
         response = "У МУЖЧИН ЕСТЬ ПРАВА. И ОНИ НЕ ТУПЫЕ В ОТЛИЧИИ НЕКОТОРЫХ"
     else:
         response = "Ошибка выбора"
     
-    await query.edit_message_text(text=response)
-
-# Обработчик ошибок
-async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    logger.error(f"Ошибка: {context.error}")
+    bot.edit_message_text(
+        chat_id=call.message.chat.id,
+        message_id=call.message.message_id,
+        text=response
+    )
 
 # Flask маршрут для webhook
-@flask_app.route('/webhook', methods=['POST'])
+@app.route('/webhook', methods=['POST'])
 def webhook():
-    if request.method == "POST":
-        update = Update.de_json(request.get_json(force=True), application.bot)
-        application.update_queue.put(update)
-    return 'ok'
+    if request.headers.get('content-type') == 'application/json':
+        json_string = request.get_data().decode('utf-8')
+        update = telebot.types.Update.de_json(json_string)
+        bot.process_new_updates([update])
+        return ''
+    return 'Bad request', 400
 
-# Flask маршрут для проверки работоспособности
-@flask_app.route('/')
+# Flask маршрут для проверки
+@app.route('/')
 def index():
-    return '🤖 Бот работает! Отправьте /start в Telegram'
+    return '✅ Бот работает! Отправьте /start в Telegram'
 
-def setup_bot():
-    global application
-    
-    application = Application.builder().token(TOKEN).build()
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CallbackQueryHandler(button_callback))
-    application.add_error_handler(error_handler)
-    
-    return application
+# Установка webhook
+@app.before_first_request
+def setup_webhook():
+    bot.remove_webhook()
+    bot.set_webhook(url=f'{WEBHOOK_URL}/webhook')
 
-def main():
-    global application
+# Запуск приложения
+if __name__ == '__main__':
+    print("🤖 Бот запускается...")
+    print(f"🌐 Webhook URL: {WEBHOOK_URL}/webhook")
     
-    # Настройка бота
-    application = setup_bot()
-    
-    # Настройка webhook
-    logger.info(f"🌐 Настройка webhook для {WEBHOOK_HOST}")
-    
-    try:
-        # Удаляем старый webhook
-        application.bot.delete_webhook()
-        time.sleep(1)
-        logger.info("✅ Старый webhook удален")
-    except Exception as e:
-        logger.warning(f"Ошибка удаления вебхука: {e}")
-    
-    # Устанавливаем новый webhook
-    webhook_url = f"{WEBHOOK_HOST}/webhook"
-    application.bot.set_webhook(
-        url=webhook_url,
-        drop_pending_updates=True
-    )
-    logger.info(f"✅ Webhook установлен: {webhook_url}")
+    # Удаляем старый webhook и устанавливаем новый
+    bot.remove_webhook()
+    bot.set_webhook(url=f'{WEBHOOK_URL}/webhook')
     
     # Запускаем Flask сервер
-    logger.info(f"🚀 Запуск сервера на порту {PORT}")
-    flask_app.run(
+    app.run(
         host='0.0.0.0',
         port=PORT,
-        debug=False,
-        use_reloader=False
+        debug=False
     )
-
-if __name__ == '__main__':
-    main()
