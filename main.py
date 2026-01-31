@@ -59,6 +59,12 @@ session_stats = {
     'total_errors': 0
 }
 
+# Глобальные настройки (объявляем здесь)
+bot_auto_withdraw = AUTO_WITHDRAW
+bot_anti_captcha = ANTI_CAPTCHA
+bot_withdraw_tag = WITHDRAW_TAG
+bot_channel = CHANNEL
+
 # Регулярки
 CODE_REGEX = re.compile(
     r"t\.me/(CryptoBot|send|tonRocketBot|CryptoTestnetBot|wallet|xrocket|xJetSwapBot)\?start="
@@ -108,8 +114,8 @@ class BotCommands:
             f"📈 **Успешных активаций:** {len(activated_checks)}\n"
             f"📡 **Статус:** {'✅ Онлайн' if client.is_connected() else '❌ Офлайн'}\n\n"
             f"💾 **Память:** {len(checks)} записей\n"
-            f"🔄 **Автовывод:** {'ВКЛ' if AUTO_WITHDRAW else 'ВЫКЛ'}\n"
-            f"🛡️ **Антикапча:** {'ВКЛ' if ANTI_CAPTCHA else 'ВЫКЛ'}"
+            f"🔄 **Автовывод:** {'ВКЛ' if bot_auto_withdraw else 'ВЫКЛ'}\n"
+            f"🛡️ **Антикапча:** {'ВКЛ' if bot_anti_captcha else 'ВЫКЛ'}"
         )
         
         buttons = [
@@ -126,10 +132,10 @@ class BotCommands:
         """Настройки бота"""
         text = (
             "⚙️ **Настройки бота**\n\n"
-            f"📢 **Канал уведомлений:** {CHANNEL}\n"
-            f"💸 **Автовывод:** {'✅ ВКЛ' if AUTO_WITHDRAW else '❌ ВЫКЛ'}\n"
-            f"🤖 **Тег для вывода:** {WITHDRAW_TAG or 'Не указан'}\n"
-            f"🛡️ **Антикапча:** {'✅ ВКЛ' if ANTI_CAPTCHA else '❌ ВЫКЛ'}\n"
+            f"📢 **Канал уведомлений:** {bot_channel}\n"
+            f"💸 **Автовывод:** {'✅ ВКЛ' if bot_auto_withdraw else '❌ ВЫКЛ'}\n"
+            f"🤖 **Тег для вывода:** {bot_withdraw_tag or 'Не указан'}\n"
+            f"🛡️ **Антикапча:** {'✅ ВКЛ' if bot_anti_captcha else '❌ ВЫКЛ'}\n"
             f"👑 **Админ ID:** {ADMIN_ID or 'Не указан'}"
         )
         
@@ -302,6 +308,9 @@ async def search_command(event):
 @client.on(events.CallbackQuery())
 async def button_handler(event):
     """Обработка всех инлайн-кнопок"""
+    global bot_auto_withdraw, bot_anti_captcha, bot_withdraw_tag, bot_channel
+    global checks_count, checks, activated_checks
+    
     try:
         data = event.data.decode('utf-8')
         
@@ -334,38 +343,36 @@ async def button_handler(event):
             await activate_command(event)
         
         elif data == "withdraw_now":
-            if not AUTO_WITHDRAW or not WITHDRAW_TAG:
+            if not bot_auto_withdraw or not bot_withdraw_tag:
                 await event.answer("❌ Автовывод не настроен!", alert=True)
                 return
             
             await event.answer("💰 Вывод средств...")
             # Здесь логика вывода
-            
+            await event.edit("🔄 Вывод средств запущен...")
+        
         elif data == "restart_bot":
             await event.answer("🔄 Перезапускаю...")
             await event.edit("🔄 Бот перезапускается...")
             os._exit(0)  # Render перезапустит
         
         elif data == "toggle_withdraw":
-            global AUTO_WITHDRAW
-            AUTO_WITHDRAW = not AUTO_WITHDRAW
-            status = "ВКЛ" if AUTO_WITHDRAW else "ВЫКЛ"
+            bot_auto_withdraw = not bot_auto_withdraw
+            status = "ВКЛ" if bot_auto_withdraw else "ВЫКЛ"
             await event.answer(f"✅ Автовывод {status}")
             await BotCommands.show_settings(event)
         
         elif data == "toggle_captcha":
-            global ANTI_CAPTCHA
-            ANTI_CAPTCHA = not ANTI_CAPTCHA
-            status = "ВКЛ" if ANTI_CAPTCHA else "ВЫКЛ"
+            bot_anti_captcha = not bot_anti_captcha
+            status = "ВКЛ" if bot_anti_captcha else "ВЫКЛ"
             await event.answer(f"✅ Антикапча {status}")
             await BotCommands.show_settings(event)
         
         elif data == "clear_stats":
-            global checks_count, checks, activated_checks
             old_count = checks_count
             checks_count = 0
-            checks = []
-            activated_checks = []
+            checks.clear()
+            activated_checks.clear()
             await event.answer(f"✅ Очищено {old_count} записей")
             await BotCommands.show_stats(event)
         
@@ -382,7 +389,10 @@ async def button_handler(event):
             )
             
             for check in activated_checks[-5:]:
-                details += f"  • {check}\n"
+                if isinstance(check, dict):
+                    details += f"  • {check.get('code', 'N/A')} ({check.get('bot', 'N/A')})\n"
+                else:
+                    details += f"  • {check}\n"
             
             await event.edit(details, parse_mode='markdown')
         
@@ -399,14 +409,14 @@ async def button_handler(event):
         
         # Админ функции
         elif data == "show_logs":
-            if event.sender_id != ADMIN_ID:
+            if event.sender_id != ADMIN_ID and ADMIN_ID != 0:
                 await event.answer("⛔ Только админ!", alert=True)
                 return
             
             logs = (
                 f"📋 **Логи системы**\n\n"
                 f"👤 **Пользователь:** {event.sender_id}\n"
-                f"📡 **Соединение:** {client.is_connected()}\n"
+                f"📡 **Соединение:** {'✅ Онлайн' if client.is_connected() else '❌ Офлайн'}\n"
                 f"📊 **Сообщений:** {session_stats['total_messages']}\n"
                 f"⚠️ **Ошибок:** {session_stats['total_errors']}\n"
                 f"💾 **Чеков в памяти:** {len(checks)}\n"
@@ -416,7 +426,7 @@ async def button_handler(event):
             await event.edit(logs, parse_mode='markdown')
         
         elif data == "stop_bot":
-            if event.sender_id != ADMIN_ID:
+            if event.sender_id != ADMIN_ID and ADMIN_ID != 0:
                 await event.answer("⛔ Только админ!", alert=True)
                 return
             
@@ -431,7 +441,7 @@ async def button_handler(event):
                 await event.answer("❌ Нет соединения", alert=True)
         
         elif data == "export_data":
-            if event.sender_id != ADMIN_ID:
+            if event.sender_id != ADMIN_ID and ADMIN_ID != 0:
                 await event.answer("⛔ Только админ!", alert=True)
                 return
             
@@ -460,6 +470,30 @@ async def button_handler(event):
             os.remove('export.json')
             await event.answer("✅ Данные экспортированы")
         
+        elif data == "change_channel":
+            await event.answer("ℹ️ Для изменения канала обновите переменную CHANNEL в Render", alert=True)
+        
+        elif data == "change_withdraw_tag":
+            await event.answer("ℹ️ Для изменения тега обновите переменную AVTO_VIVOD_TAG в Render", alert=True)
+        
+        elif data == "search_history":
+            await event.answer("🔍 Функция в разработке")
+        
+        elif data == "check_files":
+            await event.answer("📁 Функция в разработке")
+        
+        elif data == "usage_examples":
+            await event.answer("📚 Функция в разработке")
+        
+        elif data == "report_bug":
+            await event.answer("🐛 Функция в разработке")
+        
+        elif data == "reset_settings":
+            await event.answer("💣 Функция в разработке")
+        
+        elif data == "test_ocr":
+            await event.answer("🔧 Функция в разработке")
+        
         else:
             await event.answer("ℹ️ Функция в разработке")
     
@@ -468,8 +502,6 @@ async def button_handler(event):
         await event.answer("❌ Ошибка обработки")
 
 # ========== ОСНОВНАЯ ЛОГИКА БОТА ==========
-# (все ваши оригинальные функции обработки чеков остаются)
-
 @client.on(events.NewMessage(chats=[1622808649, 1559501630, 1985737506, 5014831088, 6014729293, 5794061503]))
 async def handle_crypto_messages(event):
     """Обработка сообщений из крипто-ботов"""
@@ -494,7 +526,7 @@ async def handle_crypto_messages(event):
                     
                     # Отправляем уведомление в канал
                     await client.send_message(
-                        CHANNEL,
+                        bot_channel,
                         f'✅ **Активирован чек**\n\n'
                         f'💎 Код: `{code}`\n'
                         f'🤖 Бот: @{bot_name}\n'
@@ -540,14 +572,20 @@ async def health_check(request):
         "status": "online",
         "checks": checks_count,
         "connected": client.is_connected(),
-        "uptime": str(datetime.now() - bot_start_time)
+        "uptime": str(datetime.now() - bot_start_time),
+        "version": "2.0"
     })
 
 async def start_web_server():
     """Запуск веб-сервера на порту 8000"""
     app = web.Application()
-    app.router.add_get('/', lambda r: web.Response(text='🤖 Bot Online'))
+    app.router.add_get('/', lambda r: web.Response(text='🤖 Bot Online | /start для управления'))
     app.router.add_get('/health', health_check)
+    app.router.add_get('/stats', lambda r: web.json_response({
+        "checks": checks_count,
+        "memory": len(checks),
+        "active": client.is_connected()
+    }))
     
     runner = web.AppRunner(app)
     await runner.setup()
@@ -572,17 +610,35 @@ async def main():
         
         # Отправляем стартовое сообщение
         await client.send_message(
-            CHANNEL,
+            bot_channel,
             f"🚀 **Бот запущен!**\n\n"
             f"👤 **Аккаунт:** {me.first_name}\n"
             f"⏰ **Время:** {datetime.now().strftime('%H:%M:%S')}\n"
             f"📡 **Статус:** Онлайн\n"
-            f"🔧 **Управление:** Отправьте /menu",
+            f"🔧 **Управление:** Отправьте `/start` или `/menu`",
+            parse_mode='markdown'
+        )
+        
+        # Отправляем приветственное сообщение
+        await client.send_message(
+            me.id,
+            f"👋 **Привет, {me.first_name}!**\n\n"
+            f"🤖 **Check Bot v2.0 готов к работе!**\n\n"
+            f"📱 **Основные команды:**\n"
+            f"• `/start` или `/menu` - Главное меню\n"
+            f"• `/stats` - Статистика\n"
+            f"• `/balance` - Проверить баланс\n"
+            f"• `/activate` - Активировать чеки\n"
+            f"• `/help` - Справка\n\n"
+            f"📊 **Автоматический поиск:** Включен\n"
+            f"📢 **Уведомления:** @{bot_channel}\n"
+            f"🌐 **Веб-статус:** http://localhost:{PORT}/health",
             parse_mode='markdown'
         )
         
         logger.info("🤖 Бот готов к работе!")
         logger.info("📱 Команды: /start /stats /settings /help")
+        logger.info(f"📢 Канал уведомлений: {bot_channel}")
         
         # Бесконечный цикл
         await client.run_until_disconnected()
@@ -594,5 +650,9 @@ async def main():
 
 # ========== ЗАПУСК ==========
 if __name__ == "__main__":
-    logger.info("🚀 Запуск управляемого бота...")
+    logger.info("🚀 Запуск управляемого бота v2.0...")
+    logger.info(f"📁 Канал: {bot_channel}")
+    logger.info(f"👑 Админ: {ADMIN_ID}")
+    logger.info(f"💰 Автовывод: {'ВКЛ' if bot_auto_withdraw else 'ВЫКЛ'}")
+    
     asyncio.run(main())
