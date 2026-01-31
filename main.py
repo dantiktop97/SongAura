@@ -36,7 +36,7 @@ user_clients = {}
 user_states = {}
 
 # Бот для управления
-bot = TelegramClient('session_bot', api_id, api_hash).start(bot_token=bot_token)
+bot = TelegramClient('session_bot', api_id, api_hash)
 
 # ========== КОМАНДЫ БОТА ==========
 @bot.on(events.NewMessage(pattern='/start'))
@@ -338,3 +338,34 @@ async def main():
             f"🔗 Бот: @{me.username}\n"
             f"🆔 ID: {me.id}\n\n"
             f"📱 Напишите боту в ЛС для создания сессии"
+        )
+        
+        print("=" * 50)
+        print("✅ ВСЁ ЗАПУЩЕНО!")
+        print("=" * 50)
+        print(f"🔗 Ваш бот: @{me.username}")
+        print(f"📢 Канал: {channel}")
+        print("=" * 50)
+        print("📋 Инструкция:")
+        print("1. Напишите боту в ЛС /start")
+        print("2. Используйте /login для входа")
+        print("3. Введите номер телефона и код")
+        print("4. Используйте /start_catch для ловли чеков")
+        print("=" * 50)
+        
+        # Бесконечный цикл
+        await bot.run_until_disconnected()
+        
+    except Exception as e:
+        print(f"❌ Ошибка запуска: {e}")
+        import traceback
+        traceback.print_exc()
+
+# ========== ЗАПУСК ПРОГРАММЫ ==========
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\n👋 Бот остановлен")
+    except Exception as e:
+        print(f"❌ Фатальная ошибка: {e}")
