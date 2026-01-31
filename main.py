@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 # ========== НАСТРОЙКИ ==========
 api_id = int(os.getenv('API_ID', '27258770'))
 api_hash = os.getenv('API_HASH', '')
-bot_token = os.getenv('BOT_TOKEN', '')
+bot_token = os.getenv('LOVEC', '')
 channel = os.getenv('CHANNEL', '@lovec_chekovv')
 
 print("=" * 50)
