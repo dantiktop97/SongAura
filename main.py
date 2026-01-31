@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 # ========== НАСТРОЙКИ ==========
 api_id = int(os.getenv('API_ID', '27258770'))
 api_hash = os.getenv('API_HASH', '')
-bot_token = os.getenv('BOT_TOKEN', '')
+bot_token = os.getenv('LOVEC', '')
 channel = os.getenv('CHANNEL', '-1004902536707')
 ADMIN_ID = int(os.getenv('ADMIN_ID', '0'))
 OCR_API_KEY = os.getenv('OCR_API_KEY', 'K88206317388957')
