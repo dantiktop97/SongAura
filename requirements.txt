@@ -4,3 +4,6 @@ qrcode[pil]
 Pillow
 requests
 gunicorn
+telethon
+regex
+aiohttp
