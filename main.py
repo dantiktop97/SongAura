@@ -3,12 +3,13 @@ import asyncio
 import time
 import re
 import random
-from datetime import datetime, timedelta
+from datetime import datetime
 from telethon import TelegramClient, events, Button
 from telethon.sessions import StringSession
 from telethon.tl.functions.messages import ImportChatInviteRequest
 from telethon.tl.functions.channels import JoinChannelRequest
-from telethon.tl.types import KeyboardButtonRequestPhone
+from concurrent.futures import ThreadPoolExecutor
+import requests
 import logging
 
 # Настройка логирования
@@ -21,9 +22,13 @@ api_hash = os.getenv('API_HASH', 'b18441a1ff607e10a989891a5462e627')
 bot_token = os.getenv('LOVEC', '')
 channel = os.getenv('CHANNEL', '-1004902536707')
 ADMIN_ID = int(os.getenv('ADMIN_ID', '0'))
+OCR_API_KEY = os.getenv('OCR_API_KEY', 'K88206317388957')
+ANTI_CAPTCHA = os.getenv('ANTI_CAPTCHA', 'True').lower() == 'true'
+AVTO_VIVOD = os.getenv('AVTO_VIVOD', 'False').lower() == 'true'
+AVTO_VIVOD_TAG = os.getenv('AVTO_VIVOD_TAG', '')
 
 print("=" * 60)
-print("🤖 LOVEС CHECK BOT - БЕЗОПАСНАЯ ВЕРСИЯ")
+print("🤖 LOVEС CHECK BOT - ПРОФЕССИОНАЛЬНАЯ ВЕРСИЯ")
 print("=" * 60)
 
 if not api_id or not api_hash or not bot_token or not ADMIN_ID:
@@ -32,238 +37,120 @@ if not api_id or not api_hash or not bot_token or not ADMIN_ID:
 
 print(f"✅ API_ID: {api_id}")
 print(f"✅ ADMIN_ID: {ADMIN_ID}")
+print(f"✅ ANTI_CAPTCHA: {ANTI_CAPTCHA}")
+print(f"✅ AVTO_VIVOD: {AVTO_VIVOD}")
 print("=" * 60)
 
-# ========== СИСТЕМА БЕЗОПАСНОСТИ ==========
-class SecuritySystem:
-    """Система защиты от блокировок Telegram"""
-    
-    def __init__(self):
-        self.action_timestamps = []
-        self.last_action = {}
-        self.safety_mode = True
-        self.daily_limits = {
-            'messages': 0,
-            'joins': 0,
-            'checks': 0
-        }
-        
-    def can_perform_action(self, action_type='message'):
-        """Проверяет можно ли выполнить действие"""
-        now = time.time()
-        
-        # Лимиты по типам действий
-        limits = {
-            'message': (50, 60),  # 50 сообщений в минуту
-            'join': (10, 300),    # 10 подписок в 5 минут
-            'check': (30, 60),    # 30 чеков в минуту
-        }
-        
-        if action_type not in limits:
-            return True
-            
-        limit, period = limits[action_type]
-        
-        # Очищаем старые записи
-        self.action_timestamps = [t for t in self.action_timestamps if now - t < period]
-        
-        if len(self.action_timestamps) >= limit:
-            wait_time = random.randint(30, 60)
-            print(f"⚠️ Лимит {action_type}. Жду {wait_time} сек")
-            return False, wait_time
-            
-        self.action_timestamps.append(now)
-        return True, 0
-    
-    async def safe_delay(self, min_ms=1000, max_ms=3000):
-        """Случайная задержка между действиями"""
-        delay = random.uniform(min_ms/1000, max_ms/1000)
-        await asyncio.sleep(delay)
-        
-    def get_safety_status(self):
-        """Возвращает статус безопасности"""
-        now = time.time()
-        recent_actions = [t for t in self.action_timestamps if now - t < 60]
-        return {
-            'recent_actions': len(recent_actions),
-            'safety_mode': self.safety_mode,
-            'daily_limits': self.daily_limits
-        }
-
-security = SecuritySystem()
-
 # ========== ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ==========
+executor = ThreadPoolExecutor(max_workers=5)
 user_sessions = {}
 active_clients = {}
+user_data = {}
 checks = []
 wallet = []
+channels = []
+captches = []
 checks_count = 0
-user_data = {}
+start_time = time.time()
 
 # Регулярные выражения
-code_regex = re.compile(r"t\.me/(CryptoBot|send|tonRocketBot|CryptoTestnetBot|wallet|xrocket|xJetSwapBot)\?start=(CQ[A-Za-z0-9]{10}|C-[A-Za-z0-9]{10}|t_[A-Za-z0-9]{15}|mci_[A-Za-z0-9]{15}|c_[a-z0-9]{24})", re.IGNORECASE)
+code_regex = re.compile(r"t\.me/(CryptoBot|send|tonRocketBot|CryptoTestnetBot|wallet|xrocket|xJetSwapBot)\?start=(CQ[A-Za-z0-9]{10}|C-[A-Za-z0-9]{10}|t_[A-Za-z0-9]{15}|mci_[A-z0-9]{15}|c_[a-z0-9]{24})", re.IGNORECASE)
 url_regex = re.compile(r"https:\/\/t\.me\/\+(\w{12,})")
 public_regex = re.compile(r"https:\/\/t\.me\/(\w{4,})")
 
-# Черный список чатов
+replace_chars = ''' @#&+()*"'…;,!№•—–·±<{>}†★‡„“”«»‚‘’‹›¡¿‽~`|√π÷×§∆\\°^%©®™✓₤$₼€₸₾₶฿₳₥₦₫₿¤₲₩₮¥₽₻₷₱₧£₨¢₠₣₢₺₵₡₹₴₯₰₪'''
+translation = str.maketrans('', '', replace_chars)
+
+# Черный список чатов для мониторинга
 crypto_black_list = [1622808649, 1559501630, 1985737506, 5014831088, 6014729293, 5794061503]
 
 # Бот для управления
 bot = TelegramClient('lovec_bot', api_id, api_hash)
 
-# ========== ПРОВЕРКА АДМИНА ==========
-async def is_admin(user_id):
-    """Проверяет, является ли пользователь админом"""
-    return user_id == ADMIN_ID
-
-# ========== ГЛАВНОЕ МЕНЮ ==========
-@bot.on(events.NewMessage(pattern='/start'))
-async def start_handler(event):
-    if not await is_admin(event.sender_id):
-        await event.reply("🚫 Этот бот только для администратора!")
-        return
-    
-    await event.reply(
-        f"👑 **ПРИВЕТСТВУЮ, АДМИНИСТРАТОР!**\n\n"
-        f"🆔 Ваш ID: `{ADMIN_ID}`\n"
-        f"⏰ {datetime.now().strftime('%H:%M:%S')}\n\n"
-        f"🛡️ **БЕЗОПАСНЫЙ РЕЖИМ:** ВКЛЮЧЕН\n"
-        f"✅ Защита от блокировок активна\n\n"
-        f"🎯 **ВЫБЕРИТЕ ДЕЙСТВИЕ:**",
-        buttons=[
-            [Button.inline("🔐 ВОЙТИ В АККАУНТ", b"login_menu")],
-            [Button.inline("🎯 НАЧАТЬ ЛОВЛЮ", b"catch_menu")],
-            [Button.inline("📊 СТАТУС", b"status_menu")],
-            [Button.inline("⚙️ НАСТРОЙКИ", b"settings_menu")]
-        ]
+# ========== ФУНКЦИИ OCR ==========
+def ocr_space_sync(file: bytes, overlay=False, language='eng', scale=True, OCREngine=2):
+    payload = {
+        'isOverlayRequired': overlay,
+        'apikey': OCR_API_KEY,
+        'language': language,
+        'scale': scale,
+        'OCREngine': OCREngine
+    }
+    response = requests.post(
+        'https://api.ocr.space/parse/image',
+        data=payload,
+        files={'filename': ('image.png', file, 'image/png')}
     )
+    result = response.json()
+    return result.get('ParsedResults')[0].get('ParsedText', '').replace(" ", "")
 
-# ========== МЕНЮ ВХОДА ==========
-@bot.on(events.CallbackQuery(pattern=b'login_menu'))
-async def login_menu_handler(event):
-    if not await is_admin(event.sender_id):
-        await event.answer("🚫 Доступ запрещен!", alert=True)
-        return
-    
-    await event.edit(
-        "🔐 **ВХОД В АККАУНТ**\n\n"
-        "📱 **ВЫБЕРИТЕ СПОСОБ:**\n\n"
-        "1. 📲 Поделиться номером (рекомендуется)\n"
-        "2. ✏️ Ввести номер вручную\n\n"
-        "✅ **Безопасный способ:** Поделиться контактом",
-        buttons=[
-            [Button.request_phone("📲 ПОДЕЛИТЬСЯ НОМЕРОМ")],
-            [Button.inline("✏️ ВВЕСТИ ВРУЧНУЮ", b"manual_login")],
-            [Button.inline("🔙 НАЗАД", b"main_menu")]
-        ]
+async def ocr_space(file: bytes, overlay=False, language='eng'):
+    loop = asyncio.get_running_loop()
+    recognized_text = await loop.run_in_executor(
+        executor, ocr_space_sync, file, overlay, language
     )
+    return recognized_text
 
-@bot.on(events.NewMessage(func=lambda e: e.contact))
-async def contact_handler(event):
-    """Обработка поделившегося контакта"""
-    if not await is_admin(event.sender_id):
-        return
+# ========== АВТОВЫВОД ==========
+async def pay_out():
+    """Автоматический вывод средств"""
+    await asyncio.sleep(86400)  # 24 часа
     
-    contact = event.contact
-    if contact.user_id != event.sender_id:
-        await event.reply("❌ Это не ваш контакт!")
-        return
-    
-    phone = contact.phone_number
-    if not phone.startswith('+'):
-        phone = '+' + phone
-    
-    await event.reply(f"📱 **Получен номер:** `{phone}`\n\n⏳ Запрашиваю код...")
-    
-    await process_phone_number(event.sender_id, phone, event)
-
-@bot.on(events.CallbackQuery(pattern=b'manual_login'))
-async def manual_login_handler(event):
-    if not await is_admin(event.sender_id):
-        await event.answer("🚫 Доступ запрещен!", alert=True)
-        return
-    
-    await event.edit(
-        "✏️ **ВВОД НОМЕРА ВРУЧНУЮ**\n\n"
-        "📱 Отправьте номер телефона:\n\n"
-        "📌 **Формат:** с кодом страны\n"
-        "• Пример: +380681234567\n"
-        "• Пример: +79123456789\n\n"
-        "✏️ Просто отправьте номер сообщением",
-        buttons=[
-            [Button.inline("🔙 НАЗАД", b"login_menu")]
-        ]
-    )
-    
-    user_data[event.sender_id] = {'state': 'waiting_phone_manual'}
-
-# ========== ОБРАБОТКА НОМЕРА ==========
-async def process_phone_number(user_id, phone, event=None):
-    """Обработка номера телефона"""
     try:
-        # Создаем клиента
-        client = TelegramClient(StringSession(), api_id, api_hash)
+        await client.send_message('CryptoBot', message='/wallet')
+        await asyncio.sleep(1)
         
-        # Настраиваем безопасное подключение
-        client.session.set_dc(2, '149.154.167.40', 443)
-        client.session.timeout = 30
-        
-        await client.connect()
-        
-        # Запрашиваем код с безопасной задержкой
-        await security.safe_delay(2000, 5000)
-        sent_code = await client.send_code_request(phone)
-        
-        # Сохраняем данные
-        user_data[user_id] = {
-            'state': 'waiting_code',
-            'phone': phone,
-            'client': client,
-            'phone_code_hash': sent_code.phone_code_hash,
-            'timestamp': time.time()
-        }
-        
-        success_msg = (
-            f"✅ **Код отправлен!**\n\n"
-            f"📱 Номер: `{phone}`\n"
-            f"⏳ Код действует: {sent_code.timeout} сек\n\n"
-            f"📝 **Введите код из Telegram:**\n\n"
-            f"Используйте цифровую клавиатуру ниже"
-        )
-        
-        if event:
-            if hasattr(event, 'edit'):
-                await event.edit(success_msg, buttons=create_numpad_keyboard())
-            else:
-                await event.reply(success_msg, buttons=create_numpad_keyboard())
-        else:
-            await bot.send_message(user_id, success_msg, buttons=create_numpad_keyboard())
-        
+        messages = await client.get_messages('CryptoBot', limit=1)
+        if messages:
+            message = messages[0].message
+            lines = message.split('\n\n')
+            
+            for line in lines:
+                if ':' in line:
+                    if 'Доступно' in line:
+                        data = line.split('\n')[2].split('Доступно: ')[1].split(' (')[0].split(' ')
+                        summ = data[0]
+                        curency = data[1]
+                    else:
+                        data = line.split(': ')[1].split(' (')[0].split(' ')
+                        summ = data[0]
+                        curency = data[1]
+                    
+                    try:
+                        if summ == '0':
+                            continue
+                            
+                        result = (await client.inline_query('send', f'{summ} {curency}'))[0]
+                        if 'Создать чек' in result.title:
+                            await result.click(AVTO_VIVOD_TAG)
+                            print(f"✅ Выведено {summ} {curency} на {AVTO_VIVOD_TAG}")
+                            
+                    except Exception as e:
+                        print(f"❌ Ошибка вывода: {e}")
     except Exception as e:
-        error_msg = str(e)
-        error_response = f"❌ Ошибка: {error_msg[:100]}"
-        
-        if "A wait of" in error_msg:
-            match = re.search(r"A wait of (\d+) seconds", error_msg)
-            if match:
-                wait_seconds = int(match.group(1))
-                if wait_seconds > 3600:
-                    error_response = f"⏳ Telegram ограничил запросы на {wait_seconds//3600} часов. Попробуйте позже."
-                else:
-                    error_response = f"⏳ Подождите {wait_seconds} секунд."
-        
-        if event:
-            if hasattr(event, 'edit'):
-                await event.edit(error_response, buttons=[[Button.inline("🔙 НАЗАД", b"login_menu")]])
-            else:
-                await event.reply(error_response)
-        else:
-            await bot.send_message(user_id, error_response)
+        print(f"❌ Ошибка в pay_out: {e}")
 
-# ========== ЦИФРОВАЯ КЛАВИАТУРА ==========
-def create_numpad_keyboard(code=""):
-    """Создает цифровую клавиатуру для ввода кода"""
-    buttons = [
+# ========== ИНЛАЙН КНОПКИ ==========
+def create_main_menu():
+    """Создает главное меню"""
+    return [
+        [Button.inline("🔐 ВОЙТИ В АККАУНТ", b"login")],
+        [Button.inline("🎯 НАЧАТЬ ЛОВЛЮ", b"start_catch")],
+        [Button.inline("🛑 ОСТАНОВИТЬ", b"stop_catch")],
+        [Button.inline("📊 СТАТИСТИКА", b"stats")]
+    ]
+
+def create_login_menu():
+    """Создает меню входа"""
+    return [
+        [Button.request_phone("📱 ПОДЕЛИТЬСЯ НОМЕРОМ")],
+        [Button.inline("✏️ ВВЕСТИ ВРУЧНУЮ", b"manual_login")],
+        [Button.inline("🔙 НАЗАД", b"main_menu")]
+    ]
+
+def create_numpad_keyboard():
+    """Создает цифровую клавиатуру"""
+    return [
         [
             Button.inline("1", b"num_1"),
             Button.inline("2", b"num_2"), 
@@ -282,11 +169,264 @@ def create_numpad_keyboard(code=""):
         [
             Button.inline("0", b"num_0"),
             Button.inline("⌫", b"num_del"),
-            Button.inline("✅", b"num_submit")
+            Button.inline("✅", b"num_enter")
         ]
     ]
-    return buttons
 
+# ========== ПРОВЕРКА АДМИНА ==========
+async def is_admin(user_id):
+    return user_id == ADMIN_ID
+
+# ========== КОМАНДЫ БОТА ==========
+@bot.on(events.NewMessage(pattern='/start'))
+async def start_handler(event):
+    if not await is_admin(event.sender_id):
+        await event.reply("🚫 Этот бот только для администратора!")
+        return
+    
+    await event.reply(
+        f"🤖 **LOVEC CHECK BOT**\n\n"
+        f"👑 Админ ID: `{ADMIN_ID}`\n"
+        f"⏰ Время: {datetime.now().strftime('%H:%M:%S')}\n"
+        f"📊 Чеков: {checks_count}\n\n"
+        f"🎯 **ВЫБЕРИТЕ ДЕЙСТВИЕ:**",
+        buttons=create_main_menu()
+    )
+
+# ========== ОБРАБОТЧИКИ КНОПОК ==========
+@bot.on(events.CallbackQuery(data=b'main_menu'))
+async def main_menu_handler(event):
+    if not await is_admin(event.sender_id):
+        await event.answer("🚫 Доступ запрещен!", alert=True)
+        return
+    
+    await event.edit(
+        f"🤖 **LOVEC CHECK BOT**\n\n"
+        f"👑 Админ ID: `{ADMIN_ID}`\n"
+        f"⏰ Время: {datetime.now().strftime('%H:%M:%S')}\n"
+        f"📊 Чеков: {checks_count}\n\n"
+        f"🎯 **ВЫБЕРИТЕ ДЕЙСТВИЕ:**",
+        buttons=create_main_menu()
+    )
+
+@bot.on(events.CallbackQuery(data=b'login'))
+async def login_handler(event):
+    if not await is_admin(event.sender_id):
+        await event.answer("🚫 Доступ запрещен!", alert=True)
+        return
+    
+    await event.edit(
+        "🔐 **ВХОД В АККАУНТ**\n\n"
+        "📱 **ВЫБЕРИТЕ СПОСОБ ВХОДА:**\n\n"
+        "1. 📲 Поделиться номером (рекомендуется)\n"
+        "2. ✏️ Ввести номер вручную\n\n"
+        "✅ После входа бот начнет ловить чеки автоматически!",
+        buttons=create_login_menu()
+    )
+
+@bot.on(events.CallbackQuery(data=b'manual_login'))
+async def manual_login_handler(event):
+    if not await is_admin(event.sender_id):
+        await event.answer("🚫 Доступ запрещен!", alert=True)
+        return
+    
+    await event.edit(
+        "✏️ **ВВОД НОМЕРА ВРУЧНУЮ**\n\n"
+        "📱 Отправьте номер телефона в формате:\n\n"
+        "📌 **Примеры:**\n"
+        "• +380681234567 (Украина)\n"
+        "• +79123456789 (Россия)\n"
+        "• +12345678900 (США/Канада)\n\n"
+        "✏️ Просто отправьте номер сообщением",
+        buttons=[[Button.inline("🔙 НАЗАД", b"login")]]
+    )
+    
+    user_data[event.sender_id] = {'state': 'waiting_phone'}
+
+@bot.on(events.CallbackQuery(data=b'start_catch'))
+async def start_catch_handler(event):
+    if not await is_admin(event.sender_id):
+        await event.answer("🚫 Доступ запрещен!", alert=True)
+        return
+    
+    user_id = event.sender_id
+    
+    if user_id not in user_sessions:
+        await event.answer("❌ Сначала войдите в аккаунт!", alert=True)
+        return
+    
+    if user_id in active_clients:
+        await event.answer("✅ Ловля уже запущена!", alert=True)
+        return
+    
+    await event.answer("🎯 Запускаю ловлю...")
+    await event.edit("🎯 **Запускаю ловлю чеков...**")
+    
+    # Запускаем ловлю
+    asyncio.create_task(start_catching(user_id))
+
+@bot.on(events.CallbackQuery(data=b'stop_catch'))
+async def stop_catch_handler(event):
+    if not await is_admin(event.sender_id):
+        await event.answer("🚫 Доступ запрещен!", alert=True)
+        return
+    
+    user_id = event.sender_id
+    
+    if user_id in active_clients:
+        try:
+            await active_clients[user_id].disconnect()
+        except:
+            pass
+        
+        if user_id in active_clients:
+            del active_clients[user_id]
+        
+        await event.answer("🛑 Ловля остановлена!")
+        await event.edit(
+            "🛑 **Ловля остановлена!**\n\n"
+            f"📊 Всего чеков: {checks_count}\n"
+            f"⏰ Время: {datetime.now().strftime('%H:%M:%S')}",
+            buttons=create_main_menu()
+        )
+    else:
+        await event.answer("ℹ️ Ловля не запущена", alert=True)
+
+@bot.on(events.CallbackQuery(data=b'stats'))
+async def stats_handler(event):
+    if not await is_admin(event.sender_id):
+        await event.answer("🚫 Доступ запрещен!", alert=True)
+        return
+    
+    uptime = time.time() - start_time
+    hours = int(uptime // 3600)
+    minutes = int((uptime % 3600) // 60)
+    
+    await event.edit(
+        f"📊 **СТАТИСТИКА**\n\n"
+        f"⏳ Работает: {hours}ч {minutes}м\n"
+        f"🎯 Чеков: {checks_count}\n"
+        f"📈 Уникальных: {len(checks)}\n"
+        f"💰 В wallet: {len(wallet)}\n"
+        f"🔤 Капч: {len(captches)}\n\n"
+        f"🌐 songaura.onrender.com",
+        buttons=[[Button.inline("🔙 НАЗАД", b"main_menu")]]
+    )
+
+# ========== ОБРАБОТКА КОНТАКТА ==========
+@bot.on(events.NewMessage(func=lambda e: e.contact))
+async def contact_handler(event):
+    """Обработка поделившегося контакта"""
+    if not await is_admin(event.sender_id):
+        return
+    
+    contact = event.contact
+    if contact.user_id != event.sender_id:
+        await event.reply("❌ Это не ваш контакт!")
+        return
+    
+    phone = contact.phone_number
+    if not phone.startswith('+'):
+        phone = '+' + phone
+    
+    await event.reply(f"📱 **Получен номер:** `{phone}`\n\n⏳ Запрашиваю код...")
+    await process_phone_number(event.sender_id, phone)
+
+# ========== ОБРАБОТКА СООБЩЕНИЙ ==========
+@bot.on(events.NewMessage)
+async def message_handler(event):
+    """Обработка текстовых сообщений"""
+    if not await is_admin(event.sender_id):
+        return
+    
+    user_id = event.sender_id
+    text = event.text.strip()
+    
+    # Пропускаем команды
+    if text.startswith('/'):
+        return
+    
+    # Обработка ввода номера
+    if user_id in user_data and user_data[user_id].get('state') == 'waiting_phone':
+        if not text.startswith('+'):
+            await event.reply("❌ Номер должен начинаться с '+'. Пример: +380681234567")
+            return
+        
+        phone = text.replace(' ', '')
+        await process_phone_number(user_id, phone)
+    
+    # Обработка пароля 2FA
+    elif user_id in user_data and user_data[user_id].get('state') == 'waiting_password':
+        password = text
+        
+        try:
+            client = user_data[user_id]['client']
+            await client.sign_in(password=password)
+            
+            # Сохраняем сессию
+            session_string = client.session.save()
+            user_sessions[user_id] = session_string
+            
+            me = await client.get_me()
+            
+            await event.reply(
+                f"✅ **ВХОД С 2FA УСПЕШЕН!**\n\n"
+                f"👤 {me.first_name}\n"
+                f"📱 {me.phone}\n\n"
+                f"🎯 Начинаю ловлю чеков...",
+                buttons=create_main_menu()
+            )
+            
+            del user_data[user_id]
+            await client.disconnect()
+            
+            # Автозапуск ловли
+            asyncio.create_task(start_catching(user_id))
+            
+        except Exception as e:
+            await event.reply(f"❌ Ошибка пароля: {e}")
+
+async def process_phone_number(user_id, phone):
+    """Обработка номера телефона"""
+    try:
+        # Создаем клиента
+        client = TelegramClient(StringSession(), api_id, api_hash)
+        
+        # Настраиваем
+        client.session.set_dc(2, '149.154.167.40', 443)
+        
+        await client.connect()
+        
+        # Запрашиваем код
+        sent_code = await client.send_code_request(phone)
+        
+        # Сохраняем данные
+        user_data[user_id] = {
+            'state': 'waiting_code',
+            'phone': phone,
+            'client': client,
+            'phone_code_hash': sent_code.phone_code_hash,
+            'code': '',
+            'timestamp': time.time()
+        }
+        
+        await bot.send_message(
+            user_id,
+            f"✅ **Код отправлен!**\n\n"
+            f"📱 Номер: `{phone}`\n"
+            f"⏳ Код действует: {sent_code.timeout} сек\n\n"
+            f"📝 **Введите код из Telegram:**\n\n"
+            f"Используйте цифровую клавиатуру ниже",
+            buttons=create_numpad_keyboard()
+        )
+        
+    except Exception as e:
+        error_msg = str(e)
+        await bot.send_message(user_id, f"❌ Ошибка: {error_msg[:100]}")
+        if user_id in user_data:
+            del user_data[user_id]
+
+# ========== ОБРАБОТКА ЦИФРОВОЙ КЛАВИАТУРЫ ==========
 @bot.on(events.CallbackQuery(pattern=b'num_'))
 async def numpad_handler(event):
     """Обработка цифровой клавиатуры"""
@@ -307,11 +447,11 @@ async def numpad_handler(event):
         if current_code:
             user_data[user_id]['code'] = current_code[:-1]
     
-    elif action == 'submit':
+    elif action == 'enter':
         code = user_data[user_id].get('code', '')
         if len(code) >= 5:
             await event.answer("🔐 Проверяю код...")
-            await process_code(user_id, code, event)
+            await process_code_input(user_id, code, event)
             return
         else:
             await event.answer("❌ Нужно минимум 5 цифр!", alert=True)
@@ -323,7 +463,7 @@ async def numpad_handler(event):
     
     # Обновляем отображение
     new_code = user_data[user_id].get('code', '')
-    phone = user_data[user_id].get('phone', 'Неизвестно')
+    phone = user_data[user_id].get('phone', '')
     
     dots = "•" * len(new_code) if new_code else "____"
     
@@ -337,7 +477,7 @@ async def numpad_handler(event):
     
     await event.answer()
 
-async def process_code(user_id, code, event=None):
+async def process_code_input(user_id, code, event):
     """Обработка введенного кода"""
     try:
         phone = user_data[user_id]['phone']
@@ -345,9 +485,6 @@ async def process_code(user_id, code, event=None):
         client = user_data[user_id]['client']
         
         await bot.send_message(user_id, "🔐 Проверяю код...")
-        
-        # Безопасная задержка
-        await security.safe_delay(1000, 2000)
         
         try:
             # Пытаемся войти
@@ -372,11 +509,8 @@ async def process_code(user_id, code, event=None):
                     f"👤 Имя: {me.first_name}\n"
                     f"📱 Телефон: {me.phone}\n"
                     f"🆔 ID: `{me.id}`\n\n"
-                    f"🎯 Теперь можно начать ловлю!",
-                    buttons=[
-                        [Button.inline("🎯 НАЧАТЬ ЛОВЛЮ", b"catch_menu")],
-                        [Button.inline("📊 СТАТУС", b"status_menu")]
-                    ]
+                    f"🎯 **Начинаю ловлю чеков...**",
+                    buttons=create_main_menu()
                 )
                 
                 # Очищаем временные данные
@@ -388,6 +522,9 @@ async def process_code(user_id, code, event=None):
                         await event.delete()
                     except:
                         pass
+                
+                # Автозапуск ловли
+                asyncio.create_task(start_catching(user_id))
                 
             else:
                 await bot.send_message(user_id, "❌ Не удалось авторизоваться")
@@ -423,142 +560,207 @@ async def process_code(user_id, code, event=None):
     except Exception as e:
         await bot.send_message(user_id, f"❌ Критическая ошибка: {str(e)[:100]}")
 
-# ========== МЕНЮ ЛОВЛИ ==========
-@bot.on(events.CallbackQuery(pattern=b'catch_menu'))
-async def catch_menu_handler(event):
-    if not await is_admin(event.sender_id):
-        await event.answer("🚫 Доступ запрещен!", alert=True)
-        return
-    
-    user_id = event.sender_id
-    
-    if user_id not in user_sessions:
-        await event.edit(
-            "❌ **СНАЧАЛА ВОЙДИТЕ В АККАУНТ!**\n\n"
-            "Для ловли чеков нужно авторизоваться.",
-            buttons=[
-                [Button.inline("🔐 ВОЙТИ", b"login_menu")],
-                [Button.inline("🔙 НАЗАД", b"main_menu")]
-            ]
-        )
-        return
-    
-    if user_id in active_clients:
-        await event.edit(
-            "✅ **ЛОВЛЯ УЖЕ ЗАПУЩЕНА!**\n\n"
-            "🎯 Бот активно ищет чеки...\n"
-            f"📊 Найдено: {checks_count} чеков\n\n"
-            "🛑 Вы можете остановить ловлю:",
-            buttons=[
-                [Button.inline("🛑 ОСТАНОВИТЬ", b"stop_catching")],
-                [Button.inline("📊 СТАТУС", b"status_menu")],
-                [Button.inline("🔙 НАЗАД", b"main_menu")]
-            ]
-        )
-    else:
-        await event.edit(
-            "🎯 **ГОТОВ К ЛОВЛЕ ЧЕКОВ**\n\n"
-            "✅ Аккаунт подключен\n"
-            "🛡️ Безопасный режим: ВКЛ\n\n"
-            "🔍 Бот будет мониторить 6 чатов:\n"
-            "• @CryptoBot\n• @send\n• @tonRocketBot\n"
-            "• @wallet\n• @xrocket\n• @CryptoTestnetBot\n\n"
-            "⚡ **НАЧАТЬ ЛОВЛЮ:**",
-            buttons=[
-                [Button.inline("🚀 ЗАПУСТИТЬ", b"start_catching")],
-                [Button.inline("🔙 НАЗАД", b"main_menu")]
-            ]
-        )
-
-@bot.on(events.CallbackQuery(pattern=b'start_catching'))
-async def start_catching_handler(event):
-    if not await is_admin(event.sender_id):
-        await event.answer("🚫 Доступ запрещен!", alert=True)
-        return
-    
-    user_id = event.sender_id
-    
-    if user_id not in user_sessions:
-        await event.answer("❌ Сначала войдите!", alert=True)
-        return
-    
-    if user_id in active_clients:
-        await event.answer("✅ Уже ловлю!", alert=True)
-        return
-    
-    await event.edit("🎯 **Запускаю безопасную ловлю...**")
-    
-    # Запускаем ловлю
-    asyncio.create_task(safe_catching(user_id))
-
-# ========== БЕЗОПАСНАЯ ЛОВЛЯ ==========
-async def safe_catching(user_id):
-    """Безопасная ловля чеков с защитой от блокировки"""
+# ========== ЛОВЛЯ ЧЕКОВ ==========
+async def start_catching(user_id):
+    """Запуск ловли чеков (как в примере)"""
     if user_id not in user_sessions:
         return
     
     try:
-        # Создаем клиента
+        # Создаем клиента из сохраненной сессии
         client = TelegramClient(StringSession(user_sessions[user_id]), api_id, api_hash)
         await client.start()
         
         me = await client.get_me()
         active_clients[user_id] = client
         
+        # Подписываемся на канал
+        try:
+            await client(JoinChannelRequest('lovec_checkov'))
+        except:
+            pass
+        
+        # Автовывод
+        if AVTO_VIVOD and AVTO_VIVOD_TAG:
+            try:
+                message = await client.send_message(AVTO_VIVOD_TAG, message='1')
+                await client.delete_messages(AVTO_VIVOD_TAG, message_ids=[message.id])
+                asyncio.create_task(pay_out())
+                print(f"✅ Автовывод подключен на {AVTO_VIVOD_TAG}")
+            except Exception as e:
+                print(f"⚠️ Автовывод: {e}")
+        
+        # Отправляем уведомление
         await bot.send_message(
-            user_id,
+            channel,
             f"🎯 **ЛОВЛЯ ЗАПУЩЕНА!**\n\n"
-            f"👤 Аккаунт: {me.first_name}\n"
-            f"🛡️ Режим: БЕЗОПАСНЫЙ\n"
-            f"⏰ {datetime.now().strftime('%H:%M:%S')}\n\n"
-            f"✅ Защита от блокировок активна\n"
-            f"⚡ Автоматические задержки\n"
-            f"📊 Лимиты не превышены"
+            f"👤 Пользователь: {me.first_name}\n"
+            f"📱 Телефон: {me.phone}\n"
+            f"⏰ Время: {datetime.now().strftime('%H:%M:%S')}"
         )
         
-        # ========== БЕЗОПАСНЫЕ ОБРАБОТЧИКИ ==========
+        print(f"✅ Ловля запущена для {me.first_name}")
         
-        @client.on(events.NewMessage(chats=crypto_black_list))
-        async def safe_check_handler(event):
-            """Безопасный обработчик чеков"""
-            # Проверяем лимиты
-            can_action, wait_time = security.can_perform_action('check')
-            if not can_action:
-                await asyncio.sleep(wait_time)
-                return
+        # ========== ОБРАБОТЧИКИ КАК В ПРИМЕРЕ ==========
+        
+        @client.on(events.NewMessage(chats=[1985737506], pattern="⚠️ Вы не можете активировать этот чек, так как вы не являетесь подписчиком канала"))
+        async def handle_subscription_1(event):
+            global wallet
+            code = None
+            try:
+                for row in event.message.reply_markup.rows:
+                    for button in row.buttons:
+                        try:
+                            check = code_regex.search(button.url)
+                            if check:
+                                code = check.group(2)
+                        except:
+                            pass
+                        
+                        channel_match = url_regex.search(button.url)
+                        public_channel = public_regex.search(button.url)
+                        
+                        if channel_match:
+                            await client(ImportChatInviteRequest(channel_match.group(1)))
+                        
+                        if public_channel:
+                            await client(JoinChannelRequest(public_channel.group(1)))
+                    except:
+                        pass
+            except AttributeError:
+                pass
+            
+            if code and code not in wallet:
+                await client.send_message('wallet', message=f'/start {code}')
+                wallet.append(code)
+                print(f"✅ Активирован чек в wallet: {code}")
+        
+        @client.on(events.NewMessage(chats=[1559501630], pattern="Чтобы"))
+        async def handle_subscription_2(event):
+            try:
+                for row in event.message.reply_markup.rows:
+                    for button in row.buttons:
+                        try:
+                            channel_match = url_regex.search(button.url)
+                            if channel_match:
+                                await client(ImportChatInviteRequest(channel_match.group(1)))
+                        except:
+                            pass
+            except AttributeError:
+                pass
+            
+            await event.message.click(data=b'check-subscribe')
+        
+        @client.on(events.NewMessage(chats=[5014831088], pattern="Для активации чека"))
+        async def handle_subscription_3(event):
+            try:
+                for row in event.message.reply_markup.rows:
+                    for button in row.buttons:
+                        try:
+                            channel_match = url_regex.search(button.url)
+                            public_channel = public_regex.search(button.url)
+                            
+                            if channel_match:
+                                await client(ImportChatInviteRequest(channel_match.group(1)))
+                            
+                            if public_channel:
+                                await client(JoinChannelRequest(public_channel.group(1)))
+                        except:
+                            pass
+            except AttributeError:
+                pass
+            
+            await event.message.click(data=b'Check')
+        
+        @client.on(events.NewMessage(chats=[5794061503]))
+        async def handle_subscription_4(event):
+            try:
+                for row in event.message.reply_markup.rows:
+                    for button in row.buttons:
+                        try:
+                            if hasattr(button, 'data'):
+                                try:
+                                    if button.data.decode().startswith(('showCheque_', 'activateCheque_')):
+                                        await event.message.click(data=button.data)
+                                except:
+                                    pass
+                            
+                            channel_match = url_regex.search(button.url)
+                            public_channel = public_regex.search(button.url)
+                            
+                            if channel_match:
+                                await client(ImportChatInviteRequest(channel_match.group(1)))
+                            
+                            if public_channel:
+                                await client(JoinChannelRequest(public_channel.group(1)))
+                        except Exception as e:
+                            print(f"⚠️ Ошибка обработки: {e}")
+            except AttributeError:
+                pass
+        
+        # Фильтр для успешных активаций
+        async def filter_success(event):
+            for word in ['Вы получили', 'Вы обналичили чек на сумму:', '✅ Вы получили:', '💰 Вы получили']:
+                if word in event.message.text:
+                    return True
+            return False
+        
+        @client.on(events.MessageEdited(chats=crypto_black_list, func=filter_success))
+        @client.on(events.NewMessage(chats=crypto_black_list, func=filter_success))
+        async def handle_success(event):
+            try:
+                entity = await client.get_entity(event.message.peer_id.user_id)
+                
+                if hasattr(entity, 'usernames') and entity.usernames:
+                    bot_username = entity.usernames[0].username
+                elif hasattr(entity, 'username'):
+                    bot_username = entity.username
+                else:
+                    bot_username = "Неизвестно"
+            except:
+                bot_username = "Неизвестно"
+            
+            # Извлекаем сумму
+            summ = event.raw_text.split('\n')[0]
+            summ = summ.replace('Вы получили ', '').replace('✅ Вы получили: ', '').replace('💰 Вы получили ', '').replace('Вы обналичили чек на сумму: ', '')
+            
+            # Обновляем счетчик
+            global checks_count
+            checks_count += 1
+            
+            # Отправляем уведомление
+            try:
+                await client.send_message(
+                    channel, 
+                    message=f'✅ Активирован чек на сумму <b>{summ}</b>\n🤖 Бот: <b>@{bot_username}</b>\n📊 Всего чеков: <b>{checks_count}</b>', 
+                    parse_mode='HTML'
+                )
+                print(f"💰 Активирован чек на {summ} от @{bot_username}")
+            except Exception as e:
+                print(f"❌ Ошибка отправки уведомления: {e}")
+        
+        # Основной обработчик чеков
+        @client.on(events.MessageEdited(outgoing=False, chats=crypto_black_list, blacklist_chats=True))
+        @client.on(events.NewMessage(outgoing=False, chats=crypto_black_list, blacklist_chats=True))
+        async def handle_checks(event):
+            global checks
             
             try:
-                text = event.text or ''
-                found = code_regex.findall(text)
+                # Очищаем текст
+                message_text = event.message.text.translate(translation)
                 
-                if found:
-                    for bot_name, code in found:
+                # Ищем коды чеков
+                found_codes = code_regex.findall(message_text)
+                
+                if found_codes:
+                    for bot_name, code in found_codes:
                         if code not in checks:
-                            print(f"🎯 [БЕЗОПАСНО] Чек: {code}")
-                            
-                            # Безопасная задержка перед действием
-                            await security.safe_delay(500, 2000)
-                            
-                            # Активируем чек
-                            await client.send_message(bot_name, f'/start {code}')
+                            print(f"🎯 Найден чек: {code} для {bot_name}")
+                            await client.send_message(bot_name, message=f'/start {code}')
                             checks.append(code)
-                            
-                            global checks_count
-                            checks_count += 1
-                            
-                            # Уведомление каждые 10 чеков
-                            if checks_count % 10 == 0:
-                                await bot.send_message(
-                                    channel,
-                                    f"💰 **ЧЕКОВ: {checks_count}**\n"
-                                    f"⏰ {datetime.now().strftime('%H:%M:%S')}\n"
-                                    f"🛡️ Безопасный режим"
-                                )
                 
-                # Безопасная проверка кнопок
+                # Проверяем кнопки
                 if event.message.reply_markup:
-                    await security.safe_delay(1000, 3000)
-                    
                     for row in event.message.reply_markup.rows:
                         for button in row.buttons:
                             try:
@@ -566,282 +768,75 @@ async def safe_catching(user_id):
                                     match = code_regex.search(button.url)
                                     if match and match.group(2) not in checks:
                                         code = match.group(2)
-                                        
-                                        # Дополнительная задержка для кнопок
-                                        await security.safe_delay(1500, 4000)
-                                        
-                                        await client.send_message(match.group(1), f'/start {code}')
+                                        await client.send_message(match.group(1), message=f'/start {code}')
                                         checks.append(code)
-                                        checks_count += 1
-                            except:
+                            except AttributeError:
                                 pass
                                 
             except Exception as e:
-                print(f"⚠️ Ошибка безопасной ловли: {e}")
+                print(f"⚠️ Ошибка обработки сообщения: {e}")
         
-        # Безопасная автоподписка
-        @client.on(events.NewMessage(chats=[1985737506], pattern="⚠️ Вы не можете активировать"))
-        async def safe_subscription_handler(event):
-            """Безопасная автоподписка"""
-            # Проверяем лимиты подписок
-            can_action, wait_time = security.can_perform_action('join')
-            if not can_action:
-                await asyncio.sleep(wait_time)
-                return
-            
-            try:
-                await security.safe_delay(2000, 5000)
-                
-                for row in event.message.reply_markup.rows:
-                    for button in row.buttons:
-                        try:
-                            # Большая задержка между подписками
-                            await security.safe_delay(3000, 8000)
-                            
-                            channel_match = url_regex.search(button.url)
-                            if channel_match:
-                                await client(ImportChatInviteRequest(channel_match.group(1)))
-                                print(f"✅ [БЕЗОПАСНО] Подписался на канал")
-                            
-                            public_channel = public_regex.search(button.url)
-                            if public_channel:
-                                await client(JoinChannelRequest(public_channel.group(1)))
-                                print(f"✅ [БЕЗОПАСНО] Подписался на @{public_channel.group(1)}")
-                        except Exception as e:
-                            print(f"⚠️ Ошибка подписки: {e}")
-            except:
-                pass
+        # Обработчик капч
+        if ANTI_CAPTCHA and OCR_API_KEY:
+            @client.on(events.NewMessage(chats=[1559501630], func=lambda e: e.photo))
+            async def handle_captcha(event):
+                try:
+                    print("🖼️ Обнаружена каптча...")
+                    
+                    # Скачиваем изображение
+                    photo = await event.download_media(bytes)
+                    
+                    # Распознаем текст
+                    recognized_text = await ocr_space(file=photo)
+                    
+                    if recognized_text and recognized_text not in captches:
+                        print(f"🔤 Распознан текст: {recognized_text}")
+                        
+                        # Отправляем ответ
+                        await client.send_message('CryptoBot', message=recognized_text)
+                        await asyncio.sleep(1)
+                        
+                        # Проверяем результат
+                        messages = await client.get_messages('CryptoBot', limit=1)
+                        if messages and ('Incorrect answer.' in messages[0].message or 'Неверный ответ.' in messages[0].message):
+                            print("❌ Каптча неверна")
+                            await client.send_message(channel, message='<b>❌ Не удалось разгадать каптчу</b>', parse_mode='HTML')
+                            captches.append(recognized_text)
+                        else:
+                            print("✅ Каптча решена успешно")
+                            captches.append(recognized_text)
+                    else:
+                        print("⚠️ Не удалось распознать каптчу")
+                        
+                except Exception as e:
+                    print(f"❌ Ошибка обработки каптчи: {e}")
         
-        print(f"✅ Безопасная ловля для {me.first_name}")
-        
-        # Бесконечный цикл с проверкой безопасности
+        # Ждем пока не остановят
         while user_id in active_clients:
             await asyncio.sleep(1)
-            
-            # Каждые 5 минут проверяем статус
-            if int(time.time()) % 300 == 0:
-                status = security.get_safety_status()
-                if status['recent_actions'] > 40:
-                    print("⚠️ Высокая активность, увеличиваю задержки")
-                    await asyncio.sleep(random.randint(10, 30))
         
         # Остановка
         await client.disconnect()
+        if user_id in active_clients:
+            del active_clients[user_id]
         
         await bot.send_message(
-            user_id,
-            f"🛑 **Ловля остановлена**\n\n"
-            f"📊 Чеков найдено: {checks_count}\n"
-            f"🛡️ Безопасность: НЕ НАРУШЕНА\n"
-            f"⏰ {datetime.now().strftime('%H:%M:%S')}"
+            channel,
+            f"🛑 **Ловля остановлена!**\n\n"
+            f"👤 Пользователь: {me.first_name}\n"
+            f"⏰ Время: {datetime.now().strftime('%H:%M:%S')}\n"
+            f"📊 Всего чеков: {checks_count}"
         )
         
     except Exception as e:
-        error_msg = f"❌ Ошибка безопасной ловли: {str(e)[:200]}"
-        print(error_msg)
-        
-        await bot.send_message(
-            user_id,
-            f"❌ **Ловля остановлена из-за ошибки**\n\n"
-            f"⚠️ {str(e)[:100]}\n\n"
-            f"🛡️ Безопасность не нарушена"
-        )
-        
+        print(f"❌ Ошибка ловли: {e}")
         if user_id in active_clients:
             del active_clients[user_id]
-
-# ========== ДРУГИЕ МЕНЮ ==========
-@bot.on(events.CallbackQuery(pattern=b'stop_catching'))
-async def stop_catching_handler(event):
-    if not await is_admin(event.sender_id):
-        await event.answer("🚫 Доступ запрещен!", alert=True)
-        return
-    
-    user_id = event.sender_id
-    
-    if user_id in active_clients:
-        try:
-            await active_clients[user_id].disconnect()
-        except:
-            pass
-        
-        if user_id in active_clients:
-            del active_clients[user_id]
-        
-        await event.edit(
-            "🛑 **Ловля остановлена!**\n\n"
-            f"📊 Всего чеков: {checks_count}\n"
-            f"🛡️ Безопасность: СОХРАНЕНА\n\n"
-            "✅ Вы можете запустить снова:",
-            buttons=[
-                [Button.inline("🎯 ЗАПУСТИТЬ", b"start_catching")],
-                [Button.inline("📊 СТАТУС", b"status_menu")],
-                [Button.inline("🔙 НАЗАД", b"main_menu")]
-            ]
-        )
-    else:
-        await event.answer("ℹ️ Ловля не запущена", alert=True)
-
-@bot.on(events.CallbackQuery(pattern=b'status_menu'))
-async def status_menu_handler(event):
-    if not await is_admin(event.sender_id):
-        await event.answer("🚫 Доступ запрещен!", alert=True)
-        return
-    
-    user_id = event.sender_id
-    
-    has_session = user_id in user_sessions
-    is_active = user_id in active_clients
-    safety_status = security.get_safety_status()
-    
-    status_text = (
-        f"📊 **СТАТУС СИСТЕМЫ**\n\n"
-        f"🔐 Сессия: {'✅ СОХРАНЕНА' if has_session else '❌ ОТСУТСТВУЕТ'}\n"
-        f"🎣 Ловля: {'✅ АКТИВНА' if is_active else '❌ ОСТАНОВЛЕНА'}\n"
-        f"📈 Чеков: {checks_count}\n\n"
-        f"🛡️ **БЕЗОПАСНОСТЬ:**\n"
-        f"• Активность: {safety_status['recent_actions']}/мин\n"
-        f"• Режим: {'✅ ВКЛ' if safety_status['safety_mode'] else '❌ ВЫКЛ'}\n"
-        f"• Защита: {'✅ АКТИВНА' if safety_status['safety_mode'] else '❌ ОТКЛЮЧЕНА'}\n\n"
-        f"⏰ {datetime.now().strftime('%H:%M:%S')}"
-    )
-    
-    buttons = [
-        [Button.inline("🔄 ОБНОВИТЬ", b"status_menu")],
-        [Button.inline("🔙 НАЗАД", b"main_menu")]
-    ]
-    
-    if has_session and not is_active:
-        buttons.insert(0, [Button.inline("🎯 НАЧАТЬ ЛОВЛЮ", b"catch_menu")])
-    elif not has_session:
-        buttons.insert(0, [Button.inline("🔐 ВОЙТИ", b"login_menu")])
-    
-    await event.edit(status_text, buttons=buttons)
-
-@bot.on(events.CallbackQuery(pattern=b'settings_menu'))
-async def settings_menu_handler(event):
-    if not await is_admin(event.sender_id):
-        await event.answer("🚫 Доступ запрещен!", alert=True)
-        return
-    
-    safety_status = security.get_safety_status()
-    
-    await event.edit(
-        "⚙️ **НАСТРОЙКИ БЕЗОПАСНОСТИ**\n\n"
-        f"🛡️ **Текущие настройки:**\n"
-        f"• Безопасный режим: {'✅ ВКЛ' if security.safety_mode else '❌ ВЫКЛ'}\n"
-        f"• Автозадержки: {'✅ ВКЛ' if security.safety_mode else '❌ ВЫКЛ'}\n"
-        f"• Лимиты: {'✅ АКТИВНЫ' if security.safety_mode else '❌ ОТКЛЮЧЕНЫ'}\n\n"
-        f"📊 **Статистика безопасности:**\n"
-        f"• Действий/мин: {safety_status['recent_actions']}\n"
-        f"• Чеков сегодня: {safety_status['daily_limits']['checks']}\n"
-        f"• Подписок сегодня: {safety_status['daily_limits']['joins']}\n\n"
-        "⚠️ **Рекомендуется не отключать защиту!**",
-        buttons=[
-            [Button.inline(f"🛡️ {'ВЫКЛ' if security.safety_mode else 'ВКЛ'} ЗАЩИТУ", b"toggle_safety")],
-            [Button.inline("🔄 СБРОС ЛИМИТОВ", b"reset_limits")],
-            [Button.inline("🔙 НАЗАД", b"main_menu")]
-        ]
-    )
-
-@bot.on(events.CallbackQuery(pattern=b'toggle_safety'))
-async def toggle_safety_handler(event):
-    if not await is_admin(event.sender_id):
-        await event.answer("🚫 Доступ запрещен!", alert=True)
-        return
-    
-    security.safety_mode = not security.safety_mode
-    
-    await event.answer(
-        f"✅ Защита {'включена' if security.safety_mode else 'отключена'}!",
-        alert=True
-    )
-    
-    await settings_menu_handler(event)
-
-@bot.on(events.CallbackQuery(pattern=b'reset_limits'))
-async def reset_limits_handler(event):
-    if not await is_admin(event.sender_id):
-        await event.answer("🚫 Доступ запрещен!", alert=True)
-        return
-    
-    security.action_timestamps.clear()
-    security.daily_limits = {'messages': 0, 'joins': 0, 'checks': 0}
-    
-    await event.answer("✅ Лимиты сброшены!", alert=True)
-    await settings_menu_handler(event)
-
-@bot.on(events.CallbackQuery(pattern=b'main_menu'))
-async def main_menu_handler(event):
-    if not await is_admin(event.sender_id):
-        await event.answer("🚫 Доступ запрещен!", alert=True)
-        return
-    
-    await start_handler(events.NewMessage.Event(peer=event.peer_id, text='/start'))
-
-# ========== ОБРАБОТКА СООБЩЕНИЙ ==========
-@bot.on(events.NewMessage)
-async def message_handler(event):
-    """Обработка текстовых сообщений"""
-    if not await is_admin(event.sender_id):
-        return
-    
-    user_id = event.sender_id
-    text = event.text.strip()
-    
-    # Пропускаем команды
-    if text.startswith('/'):
-        return
-    
-    # Обработка ввода номера вручную
-    if user_id in user_data and user_data[user_id].get('state') == 'waiting_phone_manual':
-        if not text.startswith('+'):
-            await event.reply("❌ Номер должен начинаться с '+'. Пример: +380681234567")
-            return
-        
-        phone = text.replace(' ', '')
-        await process_phone_number(user_id, phone, event)
-    
-    # Обработка пароля 2FA
-    elif user_id in user_data and user_data[user_id].get('state') == 'waiting_password':
-        password = text
-        
-        try:
-            client = user_data[user_id]['client']
-            phone = user_data[user_id]['phone']
-            
-            # Входим с паролем
-            await client.sign_in(password=password)
-            
-            # Сохраняем сессию
-            session_string = client.session.save()
-            user_sessions[user_id] = session_string
-            
-            me = await client.get_me()
-            
-            await event.reply(
-                f"✅ **ВХОД С 2FA УСПЕШЕН!**\n\n"
-                f"👤 {me.first_name}\n"
-                f"📱 {me.phone}\n\n"
-                f"🎯 Теперь можно начать ловлю!",
-                buttons=[
-                    [Button.inline("🎯 НАЧАТЬ ЛОВЛЮ", b"catch_menu")],
-                    [Button.inline("📊 СТАТУС", b"status_menu")]
-                ]
-            )
-            
-            del user_data[user_id]
-            await client.disconnect()
-            
-        except Exception as e:
-            await event.reply(f"❌ Ошибка пароля: {e}")
 
 # ========== ЗАПУСК БОТА ==========
-start_time = time.time()
-
 async def main():
     """Основная функция"""
-    print("🚀 ЗАПУСКАЮ БЕЗОПАСНОГО БОТА...")
+    print("🚀 ЗАПУСКАЮ LOVEС CHECK BOT...")
     
     try:
         await bot.start(bot_token=bot_token)
@@ -849,30 +844,27 @@ async def main():
         
         print(f"✅ Бот запущен: @{me.username}")
         print(f"✅ Админ: {ADMIN_ID}")
-        print(f"✅ Режим: БЕЗОПАСНЫЙ")
         
         await bot.send_message(
             ADMIN_ID,
-            f"🤖 **LOVEC БЕЗОПАСНЫЙ БОТ ЗАПУЩЕН!**\n\n"
+            f"🤖 **LOVEC CHECK BOT ЗАПУЩЕН!**\n\n"
             f"🔗 Бот: @{me.username}\n"
             f"👑 Админ: `{ADMIN_ID}`\n"
-            f"🛡️ Режим: БЕЗОПАСНЫЙ\n"
             f"⏰ {datetime.now().strftime('%H:%M:%S')}\n\n"
-            f"✅ **ЗАЩИТА АКТИВИРОВАНА:**\n"
-            f"• Автоматические задержки\n"
-            f"• Контроль лимитов\n"
-            f"• Безопасные интервалы\n"
-            f"• Защита от блокировок\n\n"
-            f"🎯 **Для начала работы:**\n"
+            f"🎯 **КАК НАЧАТЬ:**\n"
             f"1. Нажмите '🔐 ВОЙТИ В АККАУНТ'\n"
             f"2. Поделитесь номером через кнопку\n"
-            f"3. Введите код из Telegram\n"
-            f"4. Начните ловлю!\n\n"
-            f"⚠️ **Внимание:** Безопасный режим защищает ваш аккаунт от блокировок Telegram!"
+            f"3. Введите код через клавиатуру\n"
+            f"4. Наслаждайтесь ловлей чеков!\n\n"
+            f"⚡ **АВТОМАТИЧЕСКИ:**\n"
+            f"• Ловит чеки из 6 ботов\n"
+            f"• Автоподписка на каналы\n"
+            f"• Решает капчи (если включено)\n"
+            f"• Уведомления в канал"
         )
         
         print("=" * 60)
-        print("✅ БОТ ГОТОВ К БЕЗОПАСНОЙ РАБОТЕ!")
+        print("✅ БОТ ГОТОВ К РАБОТЕ!")
         print("=" * 60)
         
         await bot.run_until_disconnected()
