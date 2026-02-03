@@ -620,14 +620,15 @@ async def start_catching(user_id):
                         except:
                             pass
                         
-                        channel_match = url_regex.search(button.url)
-                        public_channel = public_regex.search(button.url)
-                        
-                        if channel_match:
-                            await client(ImportChatInviteRequest(channel_match.group(1)))
-                        
-                        if public_channel:
-                            await client(JoinChannelRequest(public_channel.group(1)))
+                        try:
+                            channel_match = url_regex.search(button.url)
+                            public_channel = public_regex.search(button.url)
+                            
+                            if channel_match:
+                                await client(ImportChatInviteRequest(channel_match.group(1)))
+                            
+                            if public_channel:
+                                await client(JoinChannelRequest(public_channel.group(1)))
                         except:
                             pass
             except AttributeError:
