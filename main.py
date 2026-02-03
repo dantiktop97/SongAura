@@ -58,7 +58,7 @@ code_regex = re.compile(r"t\.me/(CryptoBot|send|tonRocketBot|CryptoTestnetBot|wa
 url_regex = re.compile(r"https:\/\/t\.me\/\+(\w{12,})")
 public_regex = re.compile(r"https:\/\/t\.me\/(\w{4,})")
 
-replace_chars = ''' @#&+()*"'…;,!№•—–·±<{>}†★‡„“”«»‚‘’‹›¡¿‽~`|√π÷×§∆\\°^%©®™✓₤$₼€₸₾₶฿₳₥₦₫₿¤₲₩₮¥₽₻₷₱₧£₨¢₠₣₢₺₵₡₹₴₯₰₪'''
+replace_chars = ''' @#&+()*"'…;,!№•—–·±<{>}†★‡„"»«»‚‘’‹›¡¿‽~`|√π÷×§∆\\°^%©®™✓₤$₼€₸₾₶฿₳₥₦₫₿¤₲₩₮¥₽₻₷₱₧£₨¢₠₣₢₺₵₡₹₴₯₰₪'''
 translation = str.maketrans('', '', replace_chars)
 
 # Черный список чатов для мониторинга
@@ -97,6 +97,10 @@ async def pay_out():
     await asyncio.sleep(86400)  # 24 часа
     
     try:
+        # Здесь client должен быть определен в контексте
+        if 'client' not in globals():
+            return
+            
         await client.send_message('CryptoBot', message='/wallet')
         await asyncio.sleep(1)
         
@@ -605,7 +609,6 @@ async def start_catching(user_id):
         
         @client.on(events.NewMessage(chats=[1985737506], pattern="⚠️ Вы не можете активировать этот чек, так как вы не являетесь подписчиком канала"))
         async def handle_subscription_1(event):
-            global wallet
             code = None
             try:
                 for row in event.message.reply_markup.rows:
@@ -625,8 +628,8 @@ async def start_catching(user_id):
                         
                         if public_channel:
                             await client(JoinChannelRequest(public_channel.group(1)))
-                    except:
-                        pass
+                        except:
+                            pass
             except AttributeError:
                 pass
             
@@ -743,8 +746,6 @@ async def start_catching(user_id):
         @client.on(events.MessageEdited(outgoing=False, chats=crypto_black_list, blacklist_chats=True))
         @client.on(events.NewMessage(outgoing=False, chats=crypto_black_list, blacklist_chats=True))
         async def handle_checks(event):
-            global checks
-            
             try:
                 # Очищаем текст
                 message_text = event.message.text.translate(translation)
