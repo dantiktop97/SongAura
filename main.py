@@ -103,7 +103,8 @@ TRANSLATION = str.maketrans('', '', SPECIAL_CHARS)
 # ========== СИСТЕМА КОНФИГУРАЦИИ ==========
 class Config:
     def __init__(self):
-        self.settings = {
+        self.config_file = 'config.json'
+        self.default_settings = {
             'auto_start': True,
             'notifications': True,
             'auto_subscribe': True,
@@ -114,6 +115,7 @@ class Config:
             'max_checks': MAX_CHECKS_PER_MINUTE,
             'max_joins': MAX_JOINS_PER_HOUR
         }
+        self.settings = self.default_settings.copy()
     
     def get(self, key, default=None):
         return self.settings.get(key, default)
@@ -131,22 +133,33 @@ class Config:
     def save_to_file(self):
         """Сохраняет настройки в файл"""
         try:
-            with open('config.json', 'w') as f:
+            with open(self.config_file, 'w') as f:
                 json.dump(self.settings, f, indent=4)
-            logger.info("✅ Настройки сохранены в config.json")
+            logger.info(f"✅ Настройки сохранены в {self.config_file}")
+            return True
         except Exception as e:
             logger.error(f"❌ Ошибка сохранения настроек: {e}")
+            return False
     
     def load_from_file(self):
         """Загружает настройки из файла"""
         try:
-            with open('config.json', 'r') as f:
-                self.settings = json.load(f)
-            logger.info("✅ Настройки загружены из config.json")
-        except FileNotFoundError:
-            logger.info("ℹ️ Файл config.json не найден, используются настройки по умолчанию")
+            if os.path.exists(self.config_file):
+                with open(self.config_file, 'r') as f:
+                    loaded_settings = json.load(f)
+                    # Обновляем только существующие ключи
+                    for key in self.settings.keys():
+                        if key in loaded_settings:
+                            self.settings[key] = loaded_settings[key]
+                logger.info(f"✅ Настройки загружены из {self.config_file}")
+            else:
+                logger.info(f"ℹ️ Файл {self.config_file} не найден, создаю новый...")
+                self.save_to_file()
         except Exception as e:
             logger.error(f"❌ Ошибка загрузки настроек: {e}")
+            # Создаем новый файл с настройками по умолчанию
+            self.settings = self.default_settings.copy()
+            self.save_to_file()
 
 config = Config()
 config.load_from_file()
@@ -670,8 +683,10 @@ async def callback_handler(event):
         
         # Сохранение настроек
         elif data == "save_settings":
-            config.save_to_file()
-            await event.answer("✅ Настройки сохранены!", alert=True)
+            if config.save_to_file():
+                await event.answer("✅ Настройки сохранены!", alert=True)
+            else:
+                await event.answer("❌ Ошибка сохранения настроек", alert=True)
         
         # Статистика
         elif data == "stats":
@@ -1108,7 +1123,12 @@ async def process_2fa_password(user_id, password, event):
         del user_data[user_id]
         
     except Exception as e:
-        await event.reply(f"❌ Ошибка пароля: {e}")
+        error_msg = str(e)
+        if "PASSWORD_HASH_INVALID" in error_msg:
+            await event.reply("❌ **НЕВЕРНЫЙ ПАРОЛЬ 2FA!**\n\nПопробуйте снова:")
+        else:
+            await event.reply(f"❌ Ошибка пароля: {error_msg[:100]}")
+        
         if user_id in user_data:
             if 'client' in user_data[user_id]:
                 try:
@@ -1408,24 +1428,23 @@ async def save_all_data():
 async def load_all_data():
     """Загружает все данные из файлов"""
     try:
-        # Загружаем сессии
-        with open('sessions.json', 'r') as f:
-            data = json.load(f)
-        
-        user_sessions.update(data.get('sessions', {}))
-        checks_found.extend(data.get('checks_found', []))
-        
-        global checks_activated
-        checks_activated = data.get('checks_activated', 0)
-        
-        withdraw_requests.extend(data.get('withdraw_requests', []))
-        
-        logger.info(f"✅ Загружено {len(user_sessions)} сессий")
-        logger.info(f"✅ Чеков в памяти: {len(checks_found)}")
-        logger.info(f"✅ Активировано: {checks_activated}")
-        
-    except FileNotFoundError:
-        logger.info("ℹ️ Файл sessions.json не найден, начинаем с чистого листа")
+        if os.path.exists('sessions.json'):
+            with open('sessions.json', 'r') as f:
+                data = json.load(f)
+            
+            user_sessions.update(data.get('sessions', {}))
+            checks_found.extend(data.get('checks_found', []))
+            
+            global checks_activated
+            checks_activated = data.get('checks_activated', 0)
+            
+            withdraw_requests.extend(data.get('withdraw_requests', []))
+            
+            logger.info(f"✅ Загружено {len(user_sessions)} сессий")
+            logger.info(f"✅ Чеков в памяти: {len(checks_found)}")
+            logger.info(f"✅ Активировано: {checks_activated}")
+        else:
+            logger.info("ℹ️ Файл sessions.json не найден, начинаем с чистого листа")
     except Exception as e:
         logger.error(f"⚠️ Ошибка загрузки данных: {e}")
 
